@@ -29,13 +29,20 @@ tests/Portfolio.IntegrationTests/
 
 Dependencies point inward. `Portfolio.Domain` references nothing.
 
-## Agents
+## Agents and progress
 
-Delegate to the specialised agents rather than working across boundaries:
+**Read [tracker.md](tracker.md) at the start of every session** — it holds current phase
+status, blocking prerequisites, and the handoff log. Update it before ending a session.
+
+Work is split across terminal sessions, one agent per session. Delegate to the specialised
+agent that owns the area rather than working across boundaries:
 
 - **`backend-dotnet`** — anything under `src/Portfolio.{Domain,Application,Infrastructure,Api}` or `tests/`
 - **`frontend-angular`** — anything under `src/Portfolio.Web`
 - **`container-podman`** — `Containerfile.*`, `compose.yaml`, `nginx.conf`, Podman operations
+
+When a phase completes and the next belongs to a different agent, stop, update `tracker.md`,
+and issue a handoff prompt for the next terminal.
 
 ## Critical conventions
 
