@@ -9,6 +9,7 @@ public sealed record AssetDto(
     AssetClass AssetClass,
     string? Exchange,
     string Currency,
+    QuoteProviderKind QuoteProviderKind,
     string? ProviderSymbol,
     string? ProviderCoinId,
     bool IsActive);
@@ -19,5 +20,6 @@ public sealed record CreateAssetRequest(
     AssetClass AssetClass,
     string? Exchange,
     string Currency,
+    QuoteProviderKind QuoteProviderKind,
     string? ProviderSymbol,
     string? ProviderCoinId);

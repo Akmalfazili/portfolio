@@ -23,7 +23,19 @@ public class Asset
     /// <summary>ISO 4217 currency the asset natively trades in, e.g. "USD", "SGD".</summary>
     public required string Currency { get; set; }
 
-    /// <summary>Twelve Data symbol form, e.g. "AAPL" or "Z74:XSES". Null for crypto assets.</summary>
+    /// <summary>
+    /// Which market-data provider quotes this asset. The explicit dispatch key for
+    /// <c>IQuoteProviderRouter</c> — stocks are no longer a single provider (Twelve Data covers
+    /// US equities, Yahoo Finance covers SGX), so <see cref="AssetClass"/> alone cannot decide.
+    /// </summary>
+    public QuoteProviderKind QuoteProviderKind { get; set; }
+
+    /// <summary>
+    /// The provider-specific symbol: Twelve Data form (e.g. "AAPL") when
+    /// <see cref="QuoteProviderKind"/> is <see cref="QuoteProviderKind.TwelveData"/>, or the
+    /// Yahoo Finance form (e.g. "Z74.SI") when it is <see cref="QuoteProviderKind.Yahoo"/>.
+    /// Null for crypto assets, which are keyed by <see cref="ProviderCoinId"/> instead.
+    /// </summary>
     public string? ProviderSymbol { get; set; }
 
     /// <summary>CoinGecko coin id, e.g. "ethereum", "amp-token", "anvil". Null for stocks.</summary>

@@ -29,7 +29,7 @@ so each session stays focused and its context stays clean.
 | 1 | Backend scaffold | `backend-dotnet` | ✅ Done — verified |
 | 2 | Domain + EF Core | `backend-dotnet` | ✅ Done — verified |
 | 3 | Transactions CRUD API | `backend-dotnet` | ✅ Done — verified |
-| 4 | Market data providers | `backend-dotnet` | ⬜ Not started |
+| 4 | Market data providers | `backend-dotnet` | ✅ Done — verified |
 | 5 | Auto-refresh + SignalR | `backend-dotnet` | ⬜ Not started |
 | 6 | Portfolio calculations | `backend-dotnet` | ⬜ Not started |
 | 7 | Angular scaffold + shell | `frontend-angular` | ⬜ Not started |
@@ -38,15 +38,15 @@ so each session stays focused and its context stays clean.
 | 10 | Podman stack | `container-podman` | ⬜ Not started |
 | 11 | End-to-end verification | — | ⬜ Not started |
 
-**Currently active:** none — Phases 1–3 closed out and verified on 2026-07-26.
+**Currently active:** none — Phases 1–4 closed out and verified on 2026-07-26.
 
-> ✅ **Backend vertical slice is real.** `dotnet build portfolio.slnx` is clean with zero warnings
-> under `TreatWarningsAsErrors`, `dotnet test` is 21/21 green (18 unit + 3 integration), and the
-> API was run live and exercised end to end against SQLEXPRESS. Every box ticked below was
-> personally observed passing, not reported.
+> ✅ **Market data is live.** `dotnet build portfolio.slnx` is clean with zero warnings under
+> `TreatWarningsAsErrors` and `dotnet test portfolio.slnx` is 51/51 green (48 unit + 3
+> integration). All three providers were exercised against their real APIs, and every box ticked
+> below was personally observed passing, not reported.
 >
-> Phase 4 is the next backend phase but is **blocked on API keys**. Phase 7 (`frontend-angular`)
-> is unblocked and is the recommended next session.
+> **Nothing is blocked any more.** Phases 5 and 6 (`backend-dotnet`) and Phase 7
+> (`frontend-angular`) are all open. Phase 10 still needs Podman installed.
 
 ---
 
@@ -59,8 +59,8 @@ Blocking items you need to handle before the relevant phase can start.
 | Node.js 22.13.0 | ✅ Installed | Phase 7 | — |
 | `MSSQL$SQLEXPRESS` | ✅ Running | Phase 2 | — |
 | .NET 10 SDK | ✅ Installed (10.0.302) | Phase 1 | — |
-| **Twelve Data API key** | ❌ Missing | Phase 4 | Free, no card — https://twelvedata.com/pricing |
-| **CoinGecko Demo key** | ❌ Missing | Phase 4 | Free — https://www.coingecko.com/en/api |
+| **Twelve Data API key** | ✅ Set | Phase 4 | In `dotnet user-secrets` under `src/Portfolio.Api` as `TwelveData:ApiKey` |
+| **CoinGecko Demo key** | ✅ Not needed | Phase 4 | Keyless public API works — optional, see Decisions |
 | **Podman** | ❌ Missing | Phase 10 | `! winget install RedHat.Podman-Desktop` then `podman machine init && podman machine start` |
 
 .NET SDKs install side by side, so adding 10 will not disturb existing .NET 9 projects.
@@ -130,16 +130,30 @@ Verified 2026-07-26 by running the API and exercising every endpoint.
 `quantity: 1000000.0000000000`, `pricePerUnit: 0.0005326000`. No precision lost through EF, the
 DTO layer, or JSON serialization.
 
-### ⬜ Phase 4 — Market data providers · `backend-dotnet`
+### ✅ Phase 4 — Market data providers · `backend-dotnet`
 
-**Blocked by:** Twelve Data + CoinGecko API keys
+Verified 2026-07-26 against the real Twelve Data, CoinGecko and Yahoo APIs.
 
-- [ ] `IQuoteProvider` in Application; implementations in Infrastructure
-- [ ] `TwelveDataQuoteProvider` — batched `/quote`, `/time_series` for backfill
-- [ ] `CoinGeckoQuoteProvider` — all three coins in one `/simple/price` call
-- [ ] `TwelveDataFxProvider` — USD/SGD spot + daily history
-- [ ] Resilience via `Microsoft.Extensions.Http.Resilience`; API keys redacted from logs
-- [ ] Historical backfill job populating `PriceHistory` + `FxRate` from first trade date
+- [x] `IQuoteProvider` + `IFxRateProvider` + `IQuoteProviderRouter` in Application;
+      implementations in Infrastructure. No HTTP-client type leaks into Application
+- [x] `TwelveDataQuoteProvider` — batched `/quote`, `/time_series` for backfill
+- [x] `CoinGeckoQuoteProvider` — all three coins in one `/simple/price` call
+- [x] **`YahooQuoteProvider`** — Z74 in SGD, **not in the original plan**, see Decisions
+- [x] `TwelveDataFxProvider` — USD/SGD spot + daily history
+- [x] Resilience via `Microsoft.Extensions.Http.Resilience` — timeout, retry, circuit breaker;
+      Twelve Data deliberately does **not** retry 429 so a rate-limit can't burn more credits
+- [x] API keys redacted from logs — default handlers removed via `RemoveAllLoggers()`, replaced
+      with `RedactingLoggingHandler`. Grepped the tree: the key appears in no file
+- [x] Historical backfill populating `PriceHistory` + `FxRate` from first trade date, idempotent
+      against the unique indexes and bounded by `MaxProviderCallsPerRun` (default 20)
+- [x] `dotnet build portfolio.slnx` clean, `dotnet test portfolio.slnx` **51/51**
+
+**Live-verified values:** AAPL `333.019989`, MSFT `381.70001`, USD/SGD `1.29073`, Z74 `4.39` SGD,
+ETH `1885.08`, ANVL `0.00042369`, AMP `0.00042122`. Backfill re-run inserted 0 rows the second
+time — idempotency proven against real SQL Server, not just asserted.
+
+> ⚠️ The dev SQLEXPRESS database now holds 10 `PriceHistory` and 6 `FxRate` rows from that live
+> backfill test. Real market data, not test pollution; `Transactions` is back to 0.
 
 ### ⬜ Phase 5 — Auto-refresh + SignalR · `backend-dotnet`
 
@@ -224,6 +238,7 @@ DTO layer, or JSON serialization.
 | 2026-07-26 | — | 0 | Repo skeleton, three agent definitions, CLAUDE.md committed (`688b1aa`). Backend blocked on .NET 10 SDK. |
 | 2026-07-26 | `backend-dotnet` | 1–3 | **Incomplete.** .NET 10 SDK 10.0.302 confirmed installed, SQLEXPRESS confirmed running — Phase 1 unblocked. Agent launched for Phases 1–3, **stopped by the user part-way**. Last signal: initial migration applied to SQLEXPRESS with seed data; agent was about to rebuild. Working tree state was **never inspected** — no build, no test run, no endpoint check observed. Nothing committed; no boxes ticked. Next session starts with an audit. |
 | 2026-07-26 | `backend-dotnet` | 1–3 | **Complete and verified.** Audit first: the previous session's work turned out to be *committed* (`fa94714`), not uncommitted as the log above assumed, and the schema/migration/seed claims all held up. Two real defects found: `Portfolio.IntegrationTests` did not compile (`IAsyncLifetime` written against xUnit v3 `ValueTask` while the project pins xUnit 2.9.3), so the precision test had never once run; and `Portfolio.Application` was entirely empty with Phase 3 not started. Fixed the test signatures, removed a dead `quantity.Multiply(...)` line, and built Phase 3. Verified independently of the agent: solution build clean with 0 warnings, `dotnet test` 21/21, and the API run live with a sub-cent fractional round trip plus all three validation rejections. |
+| 2026-07-26 | `backend-dotnet` | 4 | **Complete and verified.** User supplied the Twelve Data key (stored in user-secrets, never written to a file) and pointed at CoinGecko's keyless API, which needs no key — Phase 4 unblocked. Smoke-testing the APIs *before* launching the agent caught that **Twelve Data's free tier cannot serve Z74** at all, invalidating the recorded "only free source covering both US and SGX" decision; user chose Yahoo Finance for Z74, so a fourth provider and an explicit `Asset.QuoteProviderKind` dispatch key were added. Agent reported honestly, including flagging CoinGecko's history endpoint as untested — live-testing that gap myself found the one real defect: keyless CoinGecko caps history at 365 days (HTTP 401, `error_code 10012`) and the provider swallowed it as an empty list, which would have silently backfilled nothing for any crypto held over a year. Fixed via `HistoryFetchResult`. Verified independently of the agent: build clean 0 warnings, 51/51 tests, key absent from the entire tree, `Program.cs` byte-identical to Phase 3 (temporary debug endpoints genuinely removed), migration applied and routing correct in SQLEXPRESS. |
 
 ---
 
@@ -231,8 +246,9 @@ DTO layer, or JSON serialization.
 
 Locked in during planning — see `C:\Users\akmal\.claude\plans\memoized-roaming-crane.md`.
 
-- **Stock data:** Twelve Data free tier (only free source covering both US and SGX)
-- **Crypto data:** CoinGecko Demo (verified to carry `anvil`/ANVL and `amp-token`)
+- ~~**Stock data:** Twelve Data free tier (only free source covering both US and SGX)~~
+  **Superseded 2026-07-26 — this was wrong**, see Phase 4 decisions below.
+- **Crypto data:** CoinGecko (verified to carry `anvil`/ANVL and `amp-token`)
 - **Reporting currency:** USD, with historical FX conversion for Z74
 - **Auth:** none, single user
 - **Database:** SQL Server — local SQLEXPRESS + Windows Auth for dev, `mssql/server` container
@@ -258,27 +274,93 @@ Added during Phase 3 (2026-07-26):
 - **FluentAssertions is pinned at 8.10.0.** Version 8 moved to a paid licence for commercial use.
   Fine for a personal project; worth a look before this goes anywhere near work.
 
+Added during Phase 4 (2026-07-26):
+
+- **Twelve Data's free tier cannot serve Z74.** The planning decision that it was "the only free
+  source covering both US and SGX" was **wrong**. `symbol=Z74&exchange=SGX` returns
+  `"This symbol is available starting with the Pro or Venture plan"`. The symbol *is* in their
+  catalogue (SGX, MIC `XSES`, SGD) — it is a plan gate, not a bad symbol string. Twelve Data is
+  now **US equities + FX only**.
+- **Z74 comes from Yahoo Finance** (`query1.finance.yahoo.com/v8/finance/chart/Z74.SI`), chosen by
+  the user over manual entry or a paid plan. Free, no key, serves quote *and* daily history in
+  SGD. It is **unofficial and undocumented with no SLA**, so it sits behind the same
+  `IQuoteProvider` seam and degrades to the last stored quote rather than failing a whole refresh.
+  It requires a browser-like `User-Agent` or it 403s.
+- **CoinGecko runs keyless — no API key at all.** Per the keyless docs the `x-cg-demo-api-key`
+  header is *ignored* on `api.coingecko.com`, so sending one is pointless. `CoinGecko:ApiKey`
+  remains optional: set it and the client switches to `pro-api.coingecko.com` + header.
+  Keyless limit is ~10–30 req/min IP-based — **lower than the 30/min CLAUDE.md assumes**, but
+  fine at one call per 2 minutes.
+- **CoinGecko keyless caps history at 365 days**, returning HTTP **401** with `error_code 10012`.
+  This was found by live-testing the one endpoint the agent had flagged as unverified, and it was
+  a real defect: the provider swallowed it as an empty list, so any crypto held over a year would
+  have silently backfilled *nothing*. `GetHistoryAsync` now returns **`HistoryFetchResult`**
+  (`Success` / `Truncated` / `RequestedFrom` / `EffectiveFrom` / `Error`) so "nothing requested",
+  "truncated by provider policy" and "actually failed" are three distinct outcomes.
+  **Phase 6 must read `EffectiveFrom`** — a crypto series legitimately starting a year back is not
+  a bug, and `PriceBackfillSummary.AssetsWithTruncatedHistory` reports it per asset.
+  A free CoinGecko Demo key lifts this cap if the annual-return chart needs deeper history.
+- **`Asset.QuoteProviderKind`** is the provider dispatch key, not `AssetClass` — stocks now span
+  two providers. Crypto is keyed by `ProviderCoinId` (`ethereum`), stocks by `ProviderSymbol`
+  (`AAPL`, `Z74.SI`). Migration `20260726103107_AddAssetQuoteProviderKind`; the seeded Z74 symbol
+  moved from the dead `Z74:XSES` to `Z74.SI`.
+- **Twelve Data JSON is internally inconsistent** — `/quote` returns numbers as *strings*
+  (`"close":"333.019989"`), `/exchange_rate` as a bare *number* (`"rate":1.29073`), a single-symbol
+  `/quote` is flat while a batch is keyed by symbol, and `/time_series` values come back
+  **descending** by date. Errors arrive as **HTTP 200** with `{"status":"error"}` bodies, and a
+  per-symbol failure nests inside an otherwise-successful batch — `IsSuccessStatusCode` alone will
+  hand you garbage. Yahoo's raw JSON also carries float noise (`4.440000057220459`), rounded to
+  6dp for Yahoo *only* — never on the crypto path, where sub-cent precision is the whole point.
+
 ---
 
 ## ▶ Next session
 
-**Terminal 1 — `frontend-angular` (Phase 7).** This is the recommended next session: it is the
-only unblocked phase, since Phases 4–6 need API keys you don't have yet. Paste:
+Nothing is blocked except Phase 10. **Terminal A is the recommended next session** — it continues
+straight on from the providers that were just built, while their quirks are still fresh in this
+file. Terminal B is independent and can run in parallel in its own terminal if you want: the two
+touch disjoint directories (`src/Portfolio.Web` vs. everything else) and cannot collide.
+
+**Terminal A — `backend-dotnet` (Phases 5 and 6).** Paste:
 
 ```
-Read tracker.md. Phases 1-3 are done and verified — the backend serves a working
-transactions/assets API on http://localhost:5100 (see src/Portfolio.Api/Properties/
-launchSettings.json), with 6 seeded assets.
+Read tracker.md. Phase 4 is done and verified — all four market-data providers work
+against their real APIs, keys are already in user-secrets, and dotnet test
+portfolio.slnx is 51/51.
+
+Use the backend-dotnet agent for Phase 5 (market-hours auto-refresh + SignalR), then
+Phase 6 (portfolio calculations).
+
+Read the Phase 4 entries under "Decisions" before writing any provider-facing code —
+especially that stocks span two providers routed by Asset.QuoteProviderKind (not
+AssetClass), and that CoinGecko's keyless history stops at 365 days. Phase 6 must read
+HistoryFetchResult.EffectiveFrom: a crypto series that legitimately starts a year back
+is not a gap to paper over, and the cost-vs-market chart must not imply data it does
+not have.
+
+Mind the rate limits in CLAUDE.md when the background service starts polling for real —
+Twelve Data is 800 credits/day and one credit per symbol per batch.
+
+Tick a box only for something you have personally seen pass, and say plainly what you
+did not verify. Then append to the handoff log, write the next session prompt, and stop.
+```
+
+**Terminal B — `frontend-angular` (Phase 7).** Paste:
+
+```
+Read tracker.md. The backend serves a working transactions/assets API on
+http://localhost:5100 (see src/Portfolio.Api/Properties/launchSettings.json), with 6
+seeded assets.
 
 Use the frontend-angular agent to do Phase 7 — the Angular scaffold and app shell.
 
 Two things from the backend that affect the client contract: enums cross the wire as
 strings ("Stock"/"Crypto", "Buy"/"Sell"), not ints; and quantities and prices come back
 as up-to-10-decimal-place values, so no model, validator, input step, or display pipe
-may assume two decimals.
+may assume two decimals. ANVL trades near $0.0004 — a two-decimal pipe renders it $0.00.
 
-Phase 5 (SignalR) does not exist yet, so build PriceStore against its polling fallback
-and leave the SignalR wiring behind a clean seam.
+Phase 5 (SignalR) may not exist yet — check the tracker. If it does not, build PriceStore
+against its polling fallback and leave the SignalR wiring behind a clean seam.
 
 Stop after Phase 7. Tick a box in tracker.md only for something you have personally seen
 pass — `ng build` clean is a minimum. Then append to the handoff log, write the next
@@ -287,6 +369,4 @@ session prompt, and commit.
 
 **Blocked, for later:**
 
-- **Phases 4–6** (`backend-dotnet`) need the Twelve Data and CoinGecko Demo API keys — both free,
-  no card. Once you have them: `dotnet user-secrets set` under `src/Portfolio.Api`.
 - **Phase 10** (`container-podman`) needs Podman installed.

@@ -27,6 +27,7 @@ public sealed class AssetService(IPortfolioDbContext db) : IAssetService
                 a.AssetClass,
                 a.Exchange,
                 a.Currency,
+                a.QuoteProviderKind,
                 a.ProviderSymbol,
                 a.ProviderCoinId,
                 a.IsActive))
@@ -43,6 +44,7 @@ public sealed class AssetService(IPortfolioDbContext db) : IAssetService
                 a.AssetClass,
                 a.Exchange,
                 a.Currency,
+                a.QuoteProviderKind,
                 a.ProviderSymbol,
                 a.ProviderCoinId,
                 a.IsActive))
@@ -85,6 +87,7 @@ public sealed class AssetService(IPortfolioDbContext db) : IAssetService
             AssetClass = request.AssetClass,
             Exchange = request.Exchange,
             Currency = request.Currency,
+            QuoteProviderKind = request.QuoteProviderKind,
             ProviderSymbol = request.ProviderSymbol,
             ProviderCoinId = request.ProviderCoinId,
             IsActive = true,
@@ -103,6 +106,7 @@ public sealed class AssetService(IPortfolioDbContext db) : IAssetService
         a.AssetClass,
         a.Exchange,
         a.Currency,
+        a.QuoteProviderKind,
         a.ProviderSymbol,
         a.ProviderCoinId,
         a.IsActive);

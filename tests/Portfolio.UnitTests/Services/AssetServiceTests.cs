@@ -27,7 +27,7 @@ public sealed class AssetServiceTests : IDisposable
     [Fact]
     public async Task CreateAsync_RejectsDuplicateSymbol()
     {
-        var request = new CreateAssetRequest("ETH", "Ethereum", AssetClass.Crypto, null, "USD", null, "ethereum");
+        var request = new CreateAssetRequest("ETH", "Ethereum", AssetClass.Crypto, null, "USD", QuoteProviderKind.CoinGecko, null, "ethereum");
 
         var first = await _sut.CreateAsync(request, CancellationToken.None);
         first.IsSuccess.Should().BeTrue();
@@ -41,7 +41,7 @@ public sealed class AssetServiceTests : IDisposable
     [Fact]
     public async Task CreateAsync_RejectsMissingRequiredFields()
     {
-        var request = new CreateAssetRequest(string.Empty, string.Empty, AssetClass.Stock, null, "US", null, null);
+        var request = new CreateAssetRequest(string.Empty, string.Empty, AssetClass.Stock, null, "US", QuoteProviderKind.TwelveData, null, null);
 
         var result = await _sut.CreateAsync(request, CancellationToken.None);
 
@@ -52,8 +52,8 @@ public sealed class AssetServiceTests : IDisposable
     [Fact]
     public async Task ListAsync_FiltersByAssetClass()
     {
-        await _sut.CreateAsync(new CreateAssetRequest("AAPL", "Apple Inc.", AssetClass.Stock, "NASDAQ", "USD", "AAPL", null), CancellationToken.None);
-        await _sut.CreateAsync(new CreateAssetRequest("ETH", "Ethereum", AssetClass.Crypto, null, "USD", null, "ethereum"), CancellationToken.None);
+        await _sut.CreateAsync(new CreateAssetRequest("AAPL", "Apple Inc.", AssetClass.Stock, "NASDAQ", "USD", QuoteProviderKind.TwelveData, "AAPL", null), CancellationToken.None);
+        await _sut.CreateAsync(new CreateAssetRequest("ETH", "Ethereum", AssetClass.Crypto, null, "USD", QuoteProviderKind.CoinGecko, null, "ethereum"), CancellationToken.None);
 
         var stocksOnly = await _sut.ListAsync(AssetClass.Stock, CancellationToken.None);
 

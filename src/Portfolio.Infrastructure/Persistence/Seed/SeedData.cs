@@ -20,6 +20,7 @@ public static class SeedData
             AssetClass = AssetClass.Stock,
             Exchange = "NASDAQ",
             Currency = "USD",
+            QuoteProviderKind = QuoteProviderKind.TwelveData,
             ProviderSymbol = "AAPL",
             ProviderCoinId = null,
             IsActive = true,
@@ -32,6 +33,7 @@ public static class SeedData
             AssetClass = AssetClass.Stock,
             Exchange = "NASDAQ",
             Currency = "USD",
+            QuoteProviderKind = QuoteProviderKind.TwelveData,
             ProviderSymbol = "MSFT",
             ProviderCoinId = null,
             IsActive = true,
@@ -44,7 +46,12 @@ public static class SeedData
             AssetClass = AssetClass.Stock,
             Exchange = "SGX",
             Currency = "SGD",
-            ProviderSymbol = "Z74:XSES",
+            // Twelve Data's free tier cannot serve Z74 ("available starting with the Pro or
+            // Venture plan"), so it is routed to Yahoo Finance instead. "Z74:XSES" was Twelve
+            // Data's (dead, for this asset) syntax; "Z74.SI" is the form Yahoo's chart endpoint
+            // resolves for the SGX listing.
+            QuoteProviderKind = QuoteProviderKind.Yahoo,
+            ProviderSymbol = "Z74.SI",
             ProviderCoinId = null,
             IsActive = true,
         },
@@ -56,6 +63,7 @@ public static class SeedData
             AssetClass = AssetClass.Crypto,
             Exchange = null,
             Currency = "USD",
+            QuoteProviderKind = QuoteProviderKind.CoinGecko,
             ProviderSymbol = null,
             ProviderCoinId = "ethereum",
             IsActive = true,
@@ -68,6 +76,7 @@ public static class SeedData
             AssetClass = AssetClass.Crypto,
             Exchange = null,
             Currency = "USD",
+            QuoteProviderKind = QuoteProviderKind.CoinGecko,
             ProviderSymbol = null,
             ProviderCoinId = "amp-token",
             IsActive = true,
@@ -80,6 +89,7 @@ public static class SeedData
             AssetClass = AssetClass.Crypto,
             Exchange = null,
             Currency = "USD",
+            QuoteProviderKind = QuoteProviderKind.CoinGecko,
             ProviderSymbol = null,
             ProviderCoinId = "anvil",
             IsActive = true,
