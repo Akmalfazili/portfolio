@@ -166,13 +166,30 @@ time — idempotency proven against real SQL Server, not just asserted.
 
 ### ⬜ Phase 6 — Portfolio calculations · `backend-dotnet`
 
+> ⚠️ **Crypto is gain/loss only — no time series.** Decided 2026-07-26, see Decisions. Everything
+> below marked *stocks only* must filter to `AssetClass.Stock`. Crypto needs no `PriceHistory` at
+> all: its numbers come from transactions plus the current quote.
+
+**Both classes:**
+
 - [ ] `ICostBasisCalculator` → `AverageCostCalculator` (fees capitalised into basis)
 - [ ] Unrealised and realised P&L, including partial sells
+- [ ] `GET /api/portfolio/{assetClass}/{summary,allocation}` — works for stocks *and* crypto,
+      since neither endpoint needs history
+
+**Stocks only:**
+
 - [ ] `PerformanceSeriesBuilder` — cost basis step series vs daily market value, USD-converted
       at each date's historical FX rate
 - [ ] `AnnualReturnCalculator` — time-weighted return per calendar year
-- [ ] `GET /api/assets/{id}/performance`, `/api/portfolio/{assetClass}/{summary,allocation,annual-returns}`
+- [ ] `GET /api/assets/{id}/performance`, `/api/portfolio/stock/annual-returns`
 - [ ] Heavy unit coverage — TWR verified against a hand-computed multi-year example
+- [ ] Requesting a series or annual returns for a **crypto** asset returns a clean `400`/`404`
+      rather than an empty chart that looks like a flat line at zero
+
+**Also:** exclude crypto from the historical backfill run — `PriceBackfillService` currently
+backfills every asset with transactions. Nothing consumes crypto `PriceHistory` any more, and
+every crypto backfill call spends rate limit for data no page will read.
 
 ---
 
@@ -200,11 +217,26 @@ time — idempotency proven against real SQL Server, not just asserted.
 
 - [ ] Load the `dataviz` skill before writing the first chart config
 - [ ] Shared `chart-theme.ts`
+> ⚠️ **The two asset classes get different pages.** Crypto is gain/loss only — no chart over time
+> anywhere. Do not render an empty or flat chart for crypto; omit the component entirely.
+
+**Stocks:**
+
 - [ ] `PortfolioOverviewPage` — summary tiles, **allocation pie** (cost ⇄ market value toggle),
       **annual return bar chart**, holdings table
 - [ ] `AssetDetailPage` — live price header, **cost vs market value line chart** (cost as a
       *step* series) with 1M/3M/1Y/All range selector, gain/loss card, per-asset transactions
+
+**Crypto:**
+
+- [ ] Overview — summary tiles, **allocation pie**, holdings table. **No annual return chart**
+- [ ] Detail — live price header, **gain/loss card only** (cost basis, market value, absolute and
+      percentage gain), per-asset transactions. **No line chart, no range selector**
+
+**Both:**
+
 - [ ] Gains/losses distinguishable without relying on colour alone
+- [ ] Sub-cent prices render correctly — ANVL near `$0.0004` must not display as `$0.00`
 
 ---
 
@@ -222,7 +254,7 @@ time — idempotency proven against real SQL Server, not just asserted.
 
 ### ⬜ Phase 11 — End-to-end verification
 
-- [ ] Enter a fractional crypto buy; confirm it persists and the detail chart redraws
+- [ ] Enter a fractional crypto buy; confirm it persists and the gain/loss card recalculates
 - [ ] `/stocks` and `/crypto` totals are fully independent
 - [ ] Timestamp updates across a scheduled refresh with no page reload
 - [ ] Z74 quote arrives in SGD and converts at the stored USD/SGD rate
@@ -297,13 +329,34 @@ Added during Phase 4 (2026-07-26):
   have silently backfilled *nothing*. `GetHistoryAsync` now returns **`HistoryFetchResult`**
   (`Success` / `Truncated` / `RequestedFrom` / `EffectiveFrom` / `Error`) so "nothing requested",
   "truncated by provider policy" and "actually failed" are three distinct outcomes.
-  **Phase 6 must read `EffectiveFrom`** — a crypto series legitimately starting a year back is not
-  a bug, and `PriceBackfillSummary.AssetsWithTruncatedHistory` reports it per asset.
-  A free CoinGecko Demo key lifts this cap if the annual-return chart needs deeper history.
+  **Largely moot as of the crypto scope decision below** — nothing consumes crypto history any
+  more. The type stays as a correctness guard, and it still matters for any provider that
+  truncates in future.
+- **A free CoinGecko Demo key probably does _not_ lift the 365-day cap** — an earlier note in this
+  file claimed it did, which was wrong. The 401 body says *"Public API users are limited to… the
+  past 365 days. Upgrade to a **paid** plan"*, and CoinGecko calls the free tier — keyless *and*
+  Demo key — the "Public API", with paid being the "Pro API". Their pricing page lists historical
+  depth only for paid plans (2 years on Basic/Analyst, from 2013 on Lite/Pro) and none for Demo.
+  **Unverified** — nobody has run a 2-year request with a Demo key. Do not plan around a Demo key
+  buying deeper history without testing it first.
 - **`Asset.QuoteProviderKind`** is the provider dispatch key, not `AssetClass` — stocks now span
   two providers. Crypto is keyed by `ProviderCoinId` (`ethereum`), stocks by `ProviderSymbol`
   (`AAPL`, `Z74.SI`). Migration `20260726103107_AddAssetQuoteProviderKind`; the seeded Z74 symbol
   moved from the dead `Z74:XSES` to `Z74.SI`.
+- **Crypto is gain/loss only — no performance over time.** Decided by the user 2026-07-26, after
+  the 365-day cap surfaced. Crypto gets cost basis, market value and overall gain/loss (absolute
+  and percentage) plus its share of the allocation pie; it gets **no** cost-vs-market line chart
+  and **no** year-on-year return chart. Stocks keep both, and are unaffected — Twelve Data serves
+  daily history back to at least 2019 on the free key, and Yahoo covers Z74.
+
+  Consequences, which are the point of the decision: crypto needs **no `PriceHistory` rows at
+  all**, so it drops out of the backfill job and out of `PerformanceSeriesBuilder` /
+  `AnnualReturnCalculator` entirely, and CoinGecko's 365-day limit stops mattering.
+
+  Reversible if wanted later: the refresh service records a daily close from the day it starts
+  running, so crypto history accumulates going forward regardless. The 365-day wall only blocks
+  backfilling the *past*. Leave it running a year and the data exists without a paid plan —
+  at which point the charts could be switched on, no re-architecture needed.
 - **Twelve Data JSON is internally inconsistent** — `/quote` returns numbers as *strings*
   (`"close":"333.019989"`), `/exchange_rate` as a bare *number* (`"rate":1.29073`), a single-symbol
   `/quote` is flat while a batch is keyed by symbol, and `/time_series` values come back
@@ -332,11 +385,14 @@ Use the backend-dotnet agent for Phase 5 (market-hours auto-refresh + SignalR), 
 Phase 6 (portfolio calculations).
 
 Read the Phase 4 entries under "Decisions" before writing any provider-facing code —
-especially that stocks span two providers routed by Asset.QuoteProviderKind (not
-AssetClass), and that CoinGecko's keyless history stops at 365 days. Phase 6 must read
-HistoryFetchResult.EffectiveFrom: a crypto series that legitimately starts a year back
-is not a gap to paper over, and the cost-vs-market chart must not imply data it does
-not have.
+especially that stocks span two providers routed by Asset.QuoteProviderKind, not by
+AssetClass.
+
+Note the crypto scope decision: crypto is gain/loss only. No time series, no annual
+returns, no PriceHistory. PerformanceSeriesBuilder and AnnualReturnCalculator are
+stocks only, and crypto should be excluded from the backfill run — it currently
+backfills every asset with transactions, spending rate limit on data nothing reads.
+Cost basis and P&L still cover both classes.
 
 Mind the rate limits in CLAUDE.md when the background service starts polling for real —
 Twelve Data is 800 credits/day and one credit per symbol per batch.
