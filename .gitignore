@@ -1,0 +1,43 @@
+## .NET
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+*.user
+*.suo
+*.userprefs
+.vs/
+artifacts/
+TestResults/
+*.trx
+*.coverage
+coverage*.json
+coverage*.xml
+
+## Secrets — never commit
+.env
+*.env
+!.env.example
+appsettings.*.local.json
+secrets.json
+
+## Angular / Node
+node_modules/
+dist/
+.angular/
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+## Editors
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+## SQL Server local files
+*.mdf
+*.ldf
+*.ndf
