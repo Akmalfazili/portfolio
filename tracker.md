@@ -26,9 +26,9 @@ so each session stays focused and its context stays clean.
 | # | Phase | Agent | Status |
 |---|---|---|---|
 | 0 | Repo skeleton + agents | — | ✅ Done |
-| 1 | Backend scaffold | `backend-dotnet` | ⬜ Not started |
-| 2 | Domain + EF Core | `backend-dotnet` | ⬜ Not started |
-| 3 | Transactions CRUD API | `backend-dotnet` | ⬜ Not started |
+| 1 | Backend scaffold | `backend-dotnet` | 🟡 In progress — **unverified** |
+| 2 | Domain + EF Core | `backend-dotnet` | 🟡 In progress — **unverified** |
+| 3 | Transactions CRUD API | `backend-dotnet` | ⬜ Not started (assumed) |
 | 4 | Market data providers | `backend-dotnet` | ⬜ Not started |
 | 5 | Auto-refresh + SignalR | `backend-dotnet` | ⬜ Not started |
 | 6 | Portfolio calculations | `backend-dotnet` | ⬜ Not started |
@@ -38,7 +38,15 @@ so each session stays focused and its context stays clean.
 | 10 | Podman stack | `container-podman` | ⬜ Not started |
 | 11 | End-to-end verification | — | ⬜ Not started |
 
-**Currently active:** none — awaiting prerequisites.
+**Currently active:** none — session ended mid-flight on 2026-07-26.
+
+> ⚠️ **Read before resuming.** A `backend-dotnet` agent was working Phases 1–3 and was stopped
+> part-way through. Its work is **on disk but uncommitted and unverified** — no checkbox below
+> has been ticked, because no build or test result was ever confirmed. The last signal from the
+> agent was that the initial migration applied to SQLEXPRESS with seed data.
+>
+> **The next session must audit the working tree before writing any code.** Treat every Phase 1–3
+> item as unproven until re-run. See ▶ Next session.
 
 ---
 
@@ -50,7 +58,7 @@ Blocking items you need to handle before the relevant phase can start.
 |---|---|---|---|
 | Node.js 22.13.0 | ✅ Installed | Phase 7 | — |
 | `MSSQL$SQLEXPRESS` | ✅ Running | Phase 2 | — |
-| **.NET 10 SDK** | ❌ **Missing** (9.0.302 present) | **Phase 1** | `! winget install Microsoft.DotNet.SDK.10` |
+| .NET 10 SDK | ✅ Installed (10.0.302) | Phase 1 | — |
 | **Twelve Data API key** | ❌ Missing | Phase 4 | Free, no card — https://twelvedata.com/pricing |
 | **CoinGecko Demo key** | ❌ Missing | Phase 4 | Free — https://www.coingecko.com/en/api |
 | **Podman** | ❌ Missing | Phase 10 | `! winget install RedHat.Podman-Desktop` then `podman machine init && podman machine start` |
@@ -72,9 +80,10 @@ Blocking items you need to handle before the relevant phase can start.
 
 ---
 
-### ⬜ Phase 1 — Backend scaffold · `backend-dotnet`
+### 🟡 Phase 1 — Backend scaffold · `backend-dotnet`
 
-**Blocked by:** .NET 10 SDK
+**Unblocked** — .NET 10 SDK 10.0.302 installed and verified 2026-07-26.
+**Attempted but unverified** — re-run `dotnet build` before ticking anything.
 
 - [ ] `global.json` pinning the .NET 10 SDK
 - [ ] `Directory.Build.props` — `net10.0`, nullable, implicit usings, warnings-as-errors
@@ -83,7 +92,10 @@ Blocking items you need to handle before the relevant phase can start.
 - [ ] Project references wired inward-only (Domain depends on nothing)
 - [ ] `dotnet build` clean
 
-### ⬜ Phase 2 — Domain + EF Core · `backend-dotnet`
+### 🟡 Phase 2 — Domain + EF Core · `backend-dotnet`
+
+**Attempted but unverified.** Reported (not confirmed): initial migration applied to SQLEXPRESS
+with seed data. The precision test was never observed passing — prove it before ticking.
 
 - [ ] Entities: `Asset`, `Transaction`, `PriceQuote`, `PriceHistory`, `FxRate`, `RefreshRun`
 - [ ] Enums: `AssetClass`, `TransactionType`, `RefreshTrigger`
@@ -193,6 +205,7 @@ Blocking items you need to handle before the relevant phase can start.
 | Date | Agent | Phases | Outcome |
 |---|---|---|---|
 | 2026-07-26 | — | 0 | Repo skeleton, three agent definitions, CLAUDE.md committed (`688b1aa`). Backend blocked on .NET 10 SDK. |
+| 2026-07-26 | `backend-dotnet` | 1–3 | **Incomplete.** .NET 10 SDK 10.0.302 confirmed installed, SQLEXPRESS confirmed running — Phase 1 unblocked. Agent launched for Phases 1–3, **stopped by the user part-way**. Last signal: initial migration applied to SQLEXPRESS with seed data; agent was about to rebuild. Working tree state was **never inspected** — no build, no test run, no endpoint check observed. Nothing committed; no boxes ticked. Next session starts with an audit. |
 
 ---
 
@@ -215,19 +228,25 @@ Locked in during planning — see `C:\Users\akmal\.claude\plans\memoized-roaming
 
 **Terminal 1 — `backend-dotnet`**
 
-First, install the .NET 10 SDK (this session or beforehand):
+Prerequisites are clear: .NET 10 SDK 10.0.302 installed, SQLEXPRESS running. Paste:
 
 ```
-! winget install Microsoft.DotNet.SDK.10
-```
+Read tracker.md. A previous backend-dotnet session was interrupted part-way through
+Phases 1-3, leaving uncommitted and unverified work on disk.
 
-Then paste:
+First, audit what actually exists before writing anything: git status, the project and
+solution files present, whether `dotnet build` is clean, whether `dotnet test` passes,
+and whether the initial migration is really applied to SQLEXPRESS with seed data.
+Report that state to me.
 
-```
-Read tracker.md. Use the backend-dotnet agent to complete Phases 1 through 3
-(backend scaffold, domain + EF Core, transactions CRUD API).
+Then use the backend-dotnet agent to finish Phases 1 through 3 from wherever that audit
+lands — keeping sound existing work, fixing what's broken.
 
 Stop after Phase 3 — do not start Phase 4, it needs API keys I haven't obtained yet.
-When done, tick the boxes in tracker.md, append to the handoff log, write the next
-session prompt, and commit.
+Tick a box in tracker.md only for something you have personally seen pass. When done,
+append to the handoff log, write the next session prompt, and commit.
 ```
+
+**Still blocked, for later:** Phases 4–6 need the Twelve Data and CoinGecko Demo API keys
+(both free, no card). Phase 10 needs Podman. Phase 7 (`frontend-angular`) is *not* blocked and
+could run in a parallel terminal if you'd rather start the UI first.
