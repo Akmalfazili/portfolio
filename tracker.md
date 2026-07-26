@@ -164,6 +164,23 @@ time — idempotency proven against real SQL Server, not just asserted.
 - [ ] `GET /api/prices/status`
 - [ ] Calendar tests across DST boundaries and weekends in both time zones
 
+> ❓ **Open question — decide before building this phase.** Should the refresh service persist a
+> **daily close** into `PriceHistory`, or only upsert the live `PriceQuote`?
+>
+> As specified it does the latter, which means it overwrites the same row each cycle and no
+> history is ever recorded. Combined with crypto being dropped from the backfill, **crypto would
+> have no historical data, ever** — the 365-day cap makes the past unreachable and nothing writes
+> the present. The gain/loss-only decision would become permanent rather than revisitable.
+>
+> Persisting a close is close to free *at this point in the build*: the service already fetches
+> every quote for the live price, so it costs no extra API call and no rate limit — just one row
+> per asset per day. Deciding it later means a year of unrecorded prices that cannot be recovered
+> for crypto at any price short of a paid CoinGecko plan.
+>
+> Not a recommendation to widen scope: it builds no chart and no endpoint. It only decides whether
+> the door stays open. Stocks are unaffected either way — Twelve Data and Yahoo both backfill the
+> past on demand.
+
 ### ⬜ Phase 6 — Portfolio calculations · `backend-dotnet`
 
 > ⚠️ **Crypto is gain/loss only — no time series.** Decided 2026-07-26, see Decisions. Everything
@@ -353,10 +370,18 @@ Added during Phase 4 (2026-07-26):
   all**, so it drops out of the backfill job and out of `PerformanceSeriesBuilder` /
   `AnnualReturnCalculator` entirely, and CoinGecko's 365-day limit stops mattering.
 
-  Reversible if wanted later: the refresh service records a daily close from the day it starts
-  running, so crypto history accumulates going forward regardless. The 365-day wall only blocks
-  backfilling the *past*. Leave it running a year and the data exists without a paid plan —
-  at which point the charts could be switched on, no re-architecture needed.
+  **Reversibility is not automatic — it needs one deliberate task.** An earlier draft of this
+  entry claimed crypto history would accumulate going forward on its own. That was wrong:
+  `PriceBackfillService` is the *only* writer of `PriceHistory` in the codebase, and Phase 5's
+  refresh service as specified only upserts the current `PriceQuote`, overwriting it each cycle.
+  Exclude crypto from the backfill and nothing writes crypto history at all — the past stays
+  unreachable past 365 days *and* the future is never recorded, so the decision would harden into
+  a permanent one.
+
+  If optionality is wanted, it has to be bought explicitly: have the refresh service persist one
+  daily close per asset per day from the quotes **it already fetches**. That is the cheap moment —
+  zero extra API calls, no rate-limit cost, one row per asset per day. See the open question in
+  Phase 5.
 - **Twelve Data JSON is internally inconsistent** — `/quote` returns numbers as *strings*
   (`"close":"333.019989"`), `/exchange_rate` as a bare *number* (`"rate":1.29073`), a single-symbol
   `/quote` is flat while a batch is keyed by symbol, and `/time_series` values come back
