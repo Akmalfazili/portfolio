@@ -26,9 +26,9 @@ so each session stays focused and its context stays clean.
 | # | Phase | Agent | Status |
 |---|---|---|---|
 | 0 | Repo skeleton + agents | — | ✅ Done |
-| 1 | Backend scaffold | `backend-dotnet` | 🟡 In progress — **unverified** |
-| 2 | Domain + EF Core | `backend-dotnet` | 🟡 In progress — **unverified** |
-| 3 | Transactions CRUD API | `backend-dotnet` | ⬜ Not started (assumed) |
+| 1 | Backend scaffold | `backend-dotnet` | ✅ Done — verified |
+| 2 | Domain + EF Core | `backend-dotnet` | ✅ Done — verified |
+| 3 | Transactions CRUD API | `backend-dotnet` | ✅ Done — verified |
 | 4 | Market data providers | `backend-dotnet` | ⬜ Not started |
 | 5 | Auto-refresh + SignalR | `backend-dotnet` | ⬜ Not started |
 | 6 | Portfolio calculations | `backend-dotnet` | ⬜ Not started |
@@ -38,15 +38,15 @@ so each session stays focused and its context stays clean.
 | 10 | Podman stack | `container-podman` | ⬜ Not started |
 | 11 | End-to-end verification | — | ⬜ Not started |
 
-**Currently active:** none — session ended mid-flight on 2026-07-26.
+**Currently active:** none — Phases 1–3 closed out and verified on 2026-07-26.
 
-> ⚠️ **Read before resuming.** A `backend-dotnet` agent was working Phases 1–3 and was stopped
-> part-way through. Its work is **on disk but uncommitted and unverified** — no checkbox below
-> has been ticked, because no build or test result was ever confirmed. The last signal from the
-> agent was that the initial migration applied to SQLEXPRESS with seed data.
+> ✅ **Backend vertical slice is real.** `dotnet build portfolio.slnx` is clean with zero warnings
+> under `TreatWarningsAsErrors`, `dotnet test` is 21/21 green (18 unit + 3 integration), and the
+> API was run live and exercised end to end against SQLEXPRESS. Every box ticked below was
+> personally observed passing, not reported.
 >
-> **The next session must audit the working tree before writing any code.** Treat every Phase 1–3
-> item as unproven until re-run. See ▶ Next session.
+> Phase 4 is the next backend phase but is **blocked on API keys**. Phase 7 (`frontend-angular`)
+> is unblocked and is the recommended next session.
 
 ---
 
@@ -80,38 +80,55 @@ Blocking items you need to handle before the relevant phase can start.
 
 ---
 
-### 🟡 Phase 1 — Backend scaffold · `backend-dotnet`
+### ✅ Phase 1 — Backend scaffold · `backend-dotnet`
 
-**Unblocked** — .NET 10 SDK 10.0.302 installed and verified 2026-07-26.
-**Attempted but unverified** — re-run `dotnet build` before ticking anything.
+Verified 2026-07-26. .NET 10 SDK 10.0.302.
 
-- [ ] `global.json` pinning the .NET 10 SDK
-- [ ] `Directory.Build.props` — `net10.0`, nullable, implicit usings, warnings-as-errors
-- [ ] `portfolio.sln` with `Portfolio.Domain`, `.Application`, `.Infrastructure`, `.Api`
-- [ ] `tests/Portfolio.UnitTests`, `tests/Portfolio.IntegrationTests`
-- [ ] Project references wired inward-only (Domain depends on nothing)
-- [ ] `dotnet build` clean
+- [x] `global.json` pinning the .NET 10 SDK
+- [x] `Directory.Build.props` — `net10.0`, nullable, implicit usings, warnings-as-errors
+- [x] `portfolio.slnx` with `Portfolio.Domain`, `.Application`, `.Infrastructure`, `.Api`
+      *(`.slnx`, the .NET 10 XML solution format — not `.sln`)*
+- [x] `tests/Portfolio.UnitTests`, `tests/Portfolio.IntegrationTests`
+- [x] Project references wired inward-only — `Portfolio.Domain` has **zero** references
+- [x] `dotnet build portfolio.slnx` clean — 0 warnings, 0 errors
 
-### 🟡 Phase 2 — Domain + EF Core · `backend-dotnet`
+### ✅ Phase 2 — Domain + EF Core · `backend-dotnet`
 
-**Attempted but unverified.** Reported (not confirmed): initial migration applied to SQLEXPRESS
-with seed data. The precision test was never observed passing — prove it before ticking.
+Verified 2026-07-26 against the live `Portfolio` database on `localhost\SQLEXPRESS`.
 
-- [ ] Entities: `Asset`, `Transaction`, `PriceQuote`, `PriceHistory`, `FxRate`, `RefreshRun`
-- [ ] Enums: `AssetClass`, `TransactionType`, `RefreshTrigger`
-- [ ] `PortfolioDbContext` with **explicit decimal precision on every decimal column**
-- [ ] Unique indexes on `(AssetId, Date)` and `(Date, Base, Quote)`
-- [ ] Initial migration applied to local SQLEXPRESS
-- [ ] Seed: US holdings, `Z74:XSES`, `ethereum`, `amp-token`, `anvil`
-- [ ] **Precision test** — round-trip `0.000123456` units and a `$0.0005326` price unchanged
+- [x] Entities: `Asset`, `Transaction`, `PriceQuote`, `PriceHistory`, `FxRate`, `RefreshRun`
+- [x] Enums: `AssetClass`, `TransactionType`, `RefreshTrigger`
+- [x] `PortfolioDbContext` with **explicit decimal precision on every decimal column** —
+      confirmed by querying `INFORMATION_SCHEMA.COLUMNS`, not just by reading the config
+- [x] Unique indexes on `(AssetId, Date)` and `(Date, Base, Quote)`
+- [x] Initial migration applied — `20260726063301_InitialCreate` present in `__EFMigrationsHistory`
+- [x] Seed: AAPL, MSFT, `Z74:XSES`, `ethereum`, `amp-token`, `anvil` (via `HasData`, so
+      `EnsureCreated` picks it up too — the integration tests depend on this)
+- [x] **Precision test** — 3 tests green against real SQL Server: `0.000123456` units,
+      `$0.0005326` price × 1,000,000 units = `532.6000` exactly, and an 8-dp FX rate
 
-### ⬜ Phase 3 — Transactions CRUD API · `backend-dotnet`
+**Live schema precision, as verified:**
 
-- [ ] `GET/POST /api/assets`, `GET /api/assets/{id}`
-- [ ] `GET/POST/PUT/DELETE /api/transactions`
-- [ ] Validation: positive quantity, sell cannot exceed units held, trade date not in future
-- [ ] DTOs as records; no EF entities leak past the endpoint boundary
-- [ ] Unit tests + `dotnet test` green — first runnable vertical slice
+| Column | Type |
+|---|---|
+| `Transactions.Quantity`, `.PricePerUnit`, `PriceQuotes.Price`, `PriceHistories.Close` | `decimal(28,10)` |
+| `Transactions.Fees` | `decimal(19,4)` |
+| `FxRates.Rate` | `decimal(18,8)` |
+
+### ✅ Phase 3 — Transactions CRUD API · `backend-dotnet`
+
+Verified 2026-07-26 by running the API and exercising every endpoint.
+
+- [x] `GET/POST /api/assets`, `GET /api/assets/{id}` (`404` on unknown id confirmed)
+- [x] `GET/POST/PUT/DELETE /api/transactions`, with `assetClass` and `assetId` filters
+- [x] Validation, all confirmed returning `400` + `ValidationProblemDetails`:
+      positive quantity, sell cannot exceed units held, trade date not in future
+- [x] DTOs as records; no EF entities leak past the endpoint boundary
+- [x] Unit tests + `dotnet test` green — **18 unit + 3 integration, 0 failed**
+
+**Live round-trip proof** — `POST` of 1,000,000 ANVL @ `0.0005326`, read back from SQL Server as
+`quantity: 1000000.0000000000`, `pricePerUnit: 0.0005326000`. No precision lost through EF, the
+DTO layer, or JSON serialization.
 
 ### ⬜ Phase 4 — Market data providers · `backend-dotnet`
 
@@ -206,6 +223,7 @@ with seed data. The precision test was never observed passing — prove it befor
 |---|---|---|---|
 | 2026-07-26 | — | 0 | Repo skeleton, three agent definitions, CLAUDE.md committed (`688b1aa`). Backend blocked on .NET 10 SDK. |
 | 2026-07-26 | `backend-dotnet` | 1–3 | **Incomplete.** .NET 10 SDK 10.0.302 confirmed installed, SQLEXPRESS confirmed running — Phase 1 unblocked. Agent launched for Phases 1–3, **stopped by the user part-way**. Last signal: initial migration applied to SQLEXPRESS with seed data; agent was about to rebuild. Working tree state was **never inspected** — no build, no test run, no endpoint check observed. Nothing committed; no boxes ticked. Next session starts with an audit. |
+| 2026-07-26 | `backend-dotnet` | 1–3 | **Complete and verified.** Audit first: the previous session's work turned out to be *committed* (`fa94714`), not uncommitted as the log above assumed, and the schema/migration/seed claims all held up. Two real defects found: `Portfolio.IntegrationTests` did not compile (`IAsyncLifetime` written against xUnit v3 `ValueTask` while the project pins xUnit 2.9.3), so the precision test had never once run; and `Portfolio.Application` was entirely empty with Phase 3 not started. Fixed the test signatures, removed a dead `quantity.Multiply(...)` line, and built Phase 3. Verified independently of the agent: solution build clean with 0 warnings, `dotnet test` 21/21, and the API run live with a sub-cent fractional round trip plus all three validation rejections. |
 
 ---
 
@@ -222,31 +240,53 @@ Locked in during planning — see `C:\Users\akmal\.claude\plans\memoized-roaming
 - **Cost basis:** average cost, behind `ICostBasisCalculator` so FIFO can drop in later
 - **Annual performance:** time-weighted return, so deposits aren't counted as gains
 
+Added during Phase 3 (2026-07-26):
+
+- **Solution format is `.slnx`**, the .NET 10 XML solution format. `dotnet build` / `dotnet test`
+  with no argument will not find it — always pass `portfolio.slnx` explicitly.
+- **`IPortfolioDbContext`** in `Portfolio.Application/Abstractions` exposes `IQueryable<T>` plus
+  save/find, and `PortfolioDbContext` implements it. This keeps services testable and free of the
+  SQL Server provider, at the cost of `Portfolio.Application` taking a package reference on
+  provider-agnostic `Microsoft.EntityFrameworkCore`. A deliberate trade — revisit if the
+  Application layer should stay strictly persistence-ignorant.
+- **`JsonStringEnumConverter` is registered globally.** `AssetClass` and `TransactionType` cross
+  the wire as strings (`"Crypto"`, `"Buy"`), not ints. The Angular client in Phase 7+ must type
+  them as string unions to match.
+- **Unit tests use the EF Core InMemory provider**, which does *not* enforce decimal precision.
+  Precision is only genuinely proven by `tests/Portfolio.IntegrationTests` against real SQL
+  Server — keep that project green, it is the actual tripwire.
+- **FluentAssertions is pinned at 8.10.0.** Version 8 moved to a paid licence for commercial use.
+  Fine for a personal project; worth a look before this goes anywhere near work.
+
 ---
 
 ## ▶ Next session
 
-**Terminal 1 — `backend-dotnet`**
-
-Prerequisites are clear: .NET 10 SDK 10.0.302 installed, SQLEXPRESS running. Paste:
+**Terminal 1 — `frontend-angular` (Phase 7).** This is the recommended next session: it is the
+only unblocked phase, since Phases 4–6 need API keys you don't have yet. Paste:
 
 ```
-Read tracker.md. A previous backend-dotnet session was interrupted part-way through
-Phases 1-3, leaving uncommitted and unverified work on disk.
+Read tracker.md. Phases 1-3 are done and verified — the backend serves a working
+transactions/assets API on http://localhost:5100 (see src/Portfolio.Api/Properties/
+launchSettings.json), with 6 seeded assets.
 
-First, audit what actually exists before writing anything: git status, the project and
-solution files present, whether `dotnet build` is clean, whether `dotnet test` passes,
-and whether the initial migration is really applied to SQLEXPRESS with seed data.
-Report that state to me.
+Use the frontend-angular agent to do Phase 7 — the Angular scaffold and app shell.
 
-Then use the backend-dotnet agent to finish Phases 1 through 3 from wherever that audit
-lands — keeping sound existing work, fixing what's broken.
+Two things from the backend that affect the client contract: enums cross the wire as
+strings ("Stock"/"Crypto", "Buy"/"Sell"), not ints; and quantities and prices come back
+as up-to-10-decimal-place values, so no model, validator, input step, or display pipe
+may assume two decimals.
 
-Stop after Phase 3 — do not start Phase 4, it needs API keys I haven't obtained yet.
-Tick a box in tracker.md only for something you have personally seen pass. When done,
-append to the handoff log, write the next session prompt, and commit.
+Phase 5 (SignalR) does not exist yet, so build PriceStore against its polling fallback
+and leave the SignalR wiring behind a clean seam.
+
+Stop after Phase 7. Tick a box in tracker.md only for something you have personally seen
+pass — `ng build` clean is a minimum. Then append to the handoff log, write the next
+session prompt, and commit.
 ```
 
-**Still blocked, for later:** Phases 4–6 need the Twelve Data and CoinGecko Demo API keys
-(both free, no card). Phase 10 needs Podman. Phase 7 (`frontend-angular`) is *not* blocked and
-could run in a parallel terminal if you'd rather start the UI first.
+**Blocked, for later:**
+
+- **Phases 4–6** (`backend-dotnet`) need the Twelve Data and CoinGecko Demo API keys — both free,
+  no card. Once you have them: `dotnet user-secrets set` under `src/Portfolio.Api`.
+- **Phase 10** (`container-podman`) needs Podman installed.

@@ -1,3 +1,4 @@
+using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Portfolio.Domain.Entities;
 using Portfolio.Domain.Enums;
@@ -30,14 +31,14 @@ public sealed class PrecisionRoundTripTests : IAsyncLifetime
         return new PortfolioDbContext(options);
     }
 
-    public async ValueTask InitializeAsync()
+    public async Task InitializeAsync()
     {
         await using var context = CreateContext();
         await context.Database.EnsureDeletedAsync();
         await context.Database.EnsureCreatedAsync();
     }
 
-    public async ValueTask DisposeAsync()
+    public async Task DisposeAsync()
     {
         await using var context = CreateContext();
         await context.Database.EnsureDeletedAsync();
@@ -81,8 +82,6 @@ public sealed class PrecisionRoundTripTests : IAsyncLifetime
         const decimal quantity = 1_000_000m;
         const decimal pricePerUnit = 0.0005326m;
         const decimal expectedTotal = 532.6000m;
-
-        quantity.Multiply(pricePerUnit); // sanity check on the in-memory decimal math itself
 
         (quantity * pricePerUnit).Should().Be(expectedTotal);
 

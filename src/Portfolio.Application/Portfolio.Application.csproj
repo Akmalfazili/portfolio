@@ -4,4 +4,14 @@
     <ProjectReference Include="..\Portfolio.Domain\Portfolio.Domain.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      Provider-agnostic EF Core abstractions only (no SqlServer/InMemory provider reference here).
+      This gives IQueryable/Select projection support and the async LINQ operators
+      (ToListAsync, SumAsync, ...) used against IPortfolioDbContext, while the concrete provider
+      stays a Portfolio.Infrastructure concern.
+    -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.10" />
+  </ItemGroup>
+
 </Project>

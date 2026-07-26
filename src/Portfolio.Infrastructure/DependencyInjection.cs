@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Portfolio.Application.Abstractions;
 using Portfolio.Infrastructure.Persistence;
 
 namespace Portfolio.Infrastructure;
@@ -25,6 +26,8 @@ public static class DependencyInjection
         services.AddDbContext<PortfolioDbContext>(options => options.UseSqlServer(
             connectionString,
             sql => sql.MigrationsAssembly(typeof(PortfolioDbContext).Assembly.FullName)));
+
+        services.AddScoped<IPortfolioDbContext>(sp => sp.GetRequiredService<PortfolioDbContext>());
 
         return services;
     }
