@@ -36,6 +36,10 @@ public class PortfolioDbContext(DbContextOptions<PortfolioDbContext> options) : 
 
     IQueryable<FxRate> IPortfolioDbContext.FxRates => FxRates;
 
+    IQueryable<PriceQuote> IPortfolioDbContext.PriceQuotes => PriceQuotes;
+
+    IQueryable<RefreshRun> IPortfolioDbContext.RefreshRuns => RefreshRuns;
+
     public void AddAsset(Asset asset) => Assets.Add(asset);
 
     public void AddTransaction(Transaction transaction) => Transactions.Add(transaction);
@@ -45,6 +49,10 @@ public class PortfolioDbContext(DbContextOptions<PortfolioDbContext> options) : 
     public void AddPriceHistory(PriceHistory priceHistory) => PriceHistories.Add(priceHistory);
 
     public void AddFxRate(FxRate fxRate) => FxRates.Add(fxRate);
+
+    public void AddPriceQuote(PriceQuote priceQuote) => PriceQuotes.Add(priceQuote);
+
+    public void AddRefreshRun(RefreshRun refreshRun) => RefreshRuns.Add(refreshRun);
 
     public ValueTask<Asset?> FindAssetAsync(int id, CancellationToken cancellationToken) =>
         Assets.FindAsync([id], cancellationToken);

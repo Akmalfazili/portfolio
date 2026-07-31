@@ -30,7 +30,7 @@ so each session stays focused and its context stays clean.
 | 2 | Domain + EF Core | `backend-dotnet` | ✅ Done — verified |
 | 3 | Transactions CRUD API | `backend-dotnet` | ✅ Done — verified |
 | 4 | Market data providers | `backend-dotnet` | ✅ Done — verified |
-| 5 | Auto-refresh + SignalR | `backend-dotnet` | ⬜ Not started |
+| 5 | Auto-refresh + SignalR | `backend-dotnet` | ✅ Done — verified |
 | 6 | Portfolio calculations | `backend-dotnet` | ⬜ Not started |
 | 7 | Angular scaffold + shell | `frontend-angular` | ⬜ Not started |
 | 8 | Transactions UI | `frontend-angular` | ⬜ Not started |
@@ -38,15 +38,15 @@ so each session stays focused and its context stays clean.
 | 10 | Podman stack | `container-podman` | ⬜ Not started |
 | 11 | End-to-end verification | — | ⬜ Not started |
 
-**Currently active:** none — Phases 1–4 closed out and verified on 2026-07-26.
+**Currently active:** none — Phases 1–5 closed out and verified, Phase 5 on 2026-07-31.
 
-> ✅ **Market data is live.** `dotnet build portfolio.slnx` is clean with zero warnings under
-> `TreatWarningsAsErrors` and `dotnet test portfolio.slnx` is 51/51 green (48 unit + 3
-> integration). All three providers were exercised against their real APIs, and every box ticked
-> below was personally observed passing, not reported.
+> ✅ **Prices refresh themselves and push over SignalR.** `dotnet build portfolio.slnx` is clean
+> with zero warnings under `TreatWarningsAsErrors` and `dotnet test portfolio.slnx` is 85/85 green
+> (81 unit + 4 integration). Push delivery was verified with a real SignalR client against a
+> running API, not asserted from unit tests.
 >
-> **Nothing is blocked any more.** Phases 5 and 6 (`backend-dotnet`) and Phase 7
-> (`frontend-angular`) are all open. Phase 10 still needs Podman installed.
+> **Nothing is blocked any more.** Phase 6 (`backend-dotnet`) and Phase 7 (`frontend-angular`) are
+> both open and touch disjoint directories. Phase 10 still needs Podman installed.
 
 ---
 
@@ -155,14 +155,39 @@ time — idempotency proven against real SQL Server, not just asserted.
 > ⚠️ The dev SQLEXPRESS database now holds 10 `PriceHistory` and 6 `FxRate` rows from that live
 > backfill test. Real market data, not test pollution; `Transactions` is back to 0.
 
-### ⬜ Phase 5 — Auto-refresh + SignalR · `backend-dotnet`
+### ✅ Phase 5 — Auto-refresh + SignalR · `backend-dotnet`
 
-- [ ] `IMarketCalendar` — NYSE and SGX hours, weekends, holidays, DST-safe
-- [ ] `PriceRefreshService : BackgroundService` — 5 min open / 60 min closed / 2 min crypto
-- [ ] `PricesHub` at `/hubs/prices` broadcasting quote + last-refresh updates
-- [ ] `POST /api/prices/refresh` with 30s cooldown returning `429` + seconds remaining
-- [ ] `GET /api/prices/status`
-- [ ] Calendar tests across DST boundaries and weekends in both time zones
+Verified 2026-07-31 against a running API with a real SignalR client.
+
+- [x] `IMarketCalendar` — NYSE and SGX hours, weekends, holidays, DST-safe via `TimeZoneInfo`,
+      no hardcoded UTC offsets. SGX's 12:00–13:00 lunch break is modelled
+- [x] `PriceRefreshService` + `PriceRefreshBackgroundService : BackgroundService` — 5 min open /
+      60 min closed / 2 min crypto. Grouped by `Asset.QuoteProviderKind`, one batched call per
+      provider. A throwing provider is caught and degrades to the last stored quote
+- [x] `PricesHub` at `/hubs/prices` broadcasting `QuoteUpdated` + `RefreshStatus`, plus a status
+      snapshot on connect so a fresh tab isn't blank until the next tick
+- [x] `POST /api/prices/refresh` with 30s cooldown returning `429` + seconds remaining
+- [x] `GET /api/prices/status`
+- [x] Calendar tests across both 2026 DST boundaries, weekends, holidays and the SGX lunch break
+- [x] `dotnet build portfolio.slnx` clean, `dotnet test portfolio.slnx` **85/85** (81 unit + 4
+      integration)
+
+**Live-verified, 04:0x ET on a Friday** — NYSE closed and SGX inside its lunch break, so both
+equity providers were gated and **0 Twelve Data credits** were spent. Over one SignalR connection:
+on-connect snapshot, then `QuoteUpdated` for ETH/AMP/ANVL and a `RefreshStatus`, 5 messages total.
+Sub-cent precision survived the hub — AMP `0.00039273`, ANVL `0.00051468`. `POST` returned `200`
+then `429` with `secondsRemaining: 22`. The background loop ticked on its own before any manual
+trigger.
+
+> ⚠️ **SGX holidays are only partially modelled.** Fixed-date Gregorian holidays (New Year, Good
+> Friday, Labour Day, National Day, Christmas) are handled; the **lunar ones are not** — Chinese
+> New Year, Vesak, Hari Raya, Deepavali. The calendar will report SGX open on those days and the
+> refresh will call Yahoo for Z74 anyway. Harmless in credit terms (Yahoo is free and unmetered)
+> and it just returns a stale close, but it is a real gap, deliberately left rather than hidden
+> behind a per-year table nobody would maintain. NYSE holidays *are* fully rule-based.
+
+> ⚠️ The dev SQLEXPRESS database now holds live `PriceQuote` rows for the three coins and several
+> `RefreshRun` rows from the verification runs above. Real data, not test pollution.
 
 > ✅ **Resolved 2026-07-26 — the refresh service writes no history.** It upserts the live
 > `PriceQuote` only. `PriceHistory` is written solely by `PriceBackfillService`, for stocks.
@@ -284,6 +309,7 @@ every crypto backfill call spends rate limit for data no page will read.
 | 2026-07-26 | `backend-dotnet` | 1–3 | **Incomplete.** .NET 10 SDK 10.0.302 confirmed installed, SQLEXPRESS confirmed running — Phase 1 unblocked. Agent launched for Phases 1–3, **stopped by the user part-way**. Last signal: initial migration applied to SQLEXPRESS with seed data; agent was about to rebuild. Working tree state was **never inspected** — no build, no test run, no endpoint check observed. Nothing committed; no boxes ticked. Next session starts with an audit. |
 | 2026-07-26 | `backend-dotnet` | 1–3 | **Complete and verified.** Audit first: the previous session's work turned out to be *committed* (`fa94714`), not uncommitted as the log above assumed, and the schema/migration/seed claims all held up. Two real defects found: `Portfolio.IntegrationTests` did not compile (`IAsyncLifetime` written against xUnit v3 `ValueTask` while the project pins xUnit 2.9.3), so the precision test had never once run; and `Portfolio.Application` was entirely empty with Phase 3 not started. Fixed the test signatures, removed a dead `quantity.Multiply(...)` line, and built Phase 3. Verified independently of the agent: solution build clean with 0 warnings, `dotnet test` 21/21, and the API run live with a sub-cent fractional round trip plus all three validation rejections. |
 | 2026-07-26 | `backend-dotnet` | 4 | **Complete and verified.** User supplied the Twelve Data key (stored in user-secrets, never written to a file) and pointed at CoinGecko's keyless API, which needs no key — Phase 4 unblocked. Smoke-testing the APIs *before* launching the agent caught that **Twelve Data's free tier cannot serve Z74** at all, invalidating the recorded "only free source covering both US and SGX" decision; user chose Yahoo Finance for Z74, so a fourth provider and an explicit `Asset.QuoteProviderKind` dispatch key were added. Agent reported honestly, including flagging CoinGecko's history endpoint as untested — live-testing that gap myself found the one real defect: keyless CoinGecko caps history at 365 days (HTTP 401, `error_code 10012`) and the provider swallowed it as an empty list, which would have silently backfilled nothing for any crypto held over a year. Fixed via `HistoryFetchResult`. Verified independently of the agent: build clean 0 warnings, 51/51 tests, key absent from the entire tree, `Program.cs` byte-identical to Phase 3 (temporary debug endpoints genuinely removed), migration applied and routing correct in SQLEXPRESS. |
+| 2026-07-31 | `backend-dotnet` | 5 | **Complete and verified.** Calendar, refresh service, hub, both endpoints built; agent reported honestly and flagged SignalR wire delivery as unverified. Live-testing that flag found the one real defect: **SignalR does not inherit `ConfigureHttpJsonOptions`**, so `QuoteProviderKind` crossed the hub as `"source":0` while REST sent `"source":"TwelveData"` — the exact payload Phase 7 merges, and invisible to every unit test. Fixed at `AddSignalR()` with a regression test the agent confirmed fails when reverted. Verified independently of the agent: build 0 warnings, 85/85 tests, no pending EF model changes, no SignalR type outside `Portfolio.Api`, and a real SignalR client run against the live API — on-connect snapshot plus `QuoteUpdated`/`RefreshStatus` over the wire, sub-cent precision intact (ANVL `0.00051468`), `200` then `429 secondsRemaining: 22`. NYSE closed and SGX in its lunch break during the run, so **0 Twelve Data credits** were spent, and the background loop was observed ticking unprompted. Left knowingly: SGX lunar holidays unmodelled. |
 
 ---
 
@@ -385,40 +411,75 @@ Added during Phase 4 (2026-07-26):
   hand you garbage. Yahoo's raw JSON also carries float noise (`4.440000057220459`), rounded to
   6dp for Yahoo *only* — never on the crypto path, where sub-cent precision is the whole point.
 
+Added during Phase 5 (2026-07-31):
+
+- **SignalR does NOT inherit `ConfigureHttpJsonOptions`.** It has its own protocol serializer, so
+  the globally registered `JsonStringEnumConverter` did not reach the hub: `QuoteProviderKind`
+  crossed the wire as `"source":0` while the REST endpoint sent `"source":"TwelveData"` — one
+  field, two encodings, in payloads the Phase 7 `PriceStore` has to merge. Found by connecting a
+  real SignalR client, *not* by any unit test. Fixed at the source with
+  `AddSignalR().AddJsonProtocol(o => o.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter()))`
+  and guarded by `tests/Portfolio.IntegrationTests/SignalR/PricesHubProtocolTests.cs`, which
+  resolves the real `IHubProtocol` from DI and was confirmed to fail when the fix is reverted.
+  **Any future hub payload carrying an enum depends on that one line.** The Phase 3 rule now holds
+  on both transports: enums are strings everywhere.
+- **Manual refresh still respects the market gate.** `POST /api/prices/refresh` bypasses the
+  *interval*, not the *calendar* — only crypto is unconditional. Clicking refresh at 3am will not
+  spend a Twelve Data credit on a closed NYSE. Deliberate: the button means "don't wait for the
+  next tick", not "call every provider regardless".
+- **Refresh status is in-memory, `RefreshRun` is durable.** `PriceRefreshStatusStore` (singleton)
+  holds per-provider next-due/last-success and **resets on restart**; persisted `RefreshRun` rows
+  are the audit trail and back the 30s cooldown. So `GET /api/prices/status` reads a little empty
+  right after a restart until the first cycle completes — accepted for a "since I last looked"
+  indicator, and worth knowing before it looks like a bug.
+- **`BackgroundService` lives in `Portfolio.Application`**, via a
+  `Microsoft.Extensions.Hosting.Abstractions` package reference. Pure hosting lifecycle, no HTTP or
+  SignalR types, so the inward-only rule still holds — the same trade already made for
+  `Microsoft.EntityFrameworkCore`. It opens a DI scope per tick, since `IPortfolioDbContext` is
+  scoped while the hosted service is a singleton.
+- **Edge case, known and left:** if a portfolio ever had zero crypto assets *and* every equity
+  market was closed, a manual refresh would return `NothingDue` without writing a `RefreshRun`, so
+  the cooldown would not engage and the endpoint could be hammered. Cannot happen with the seeded
+  data, where crypto is always present and never gated. Noted in code.
+
 ---
 
 ## ▶ Next session
 
-Nothing is blocked except Phase 10. **Terminal A is the recommended next session** — it continues
-straight on from the providers that were just built, while their quirks are still fresh in this
-file. Terminal B is independent and can run in parallel in its own terminal if you want: the two
-touch disjoint directories (`src/Portfolio.Web` vs. everything else) and cannot collide.
+Nothing is blocked except Phase 10. **Terminal A is the recommended next session.** Terminal B is
+independent and can run in parallel in its own terminal if you want: the two touch disjoint
+directories (`src/Portfolio.Web` vs. everything else) and cannot collide. The backend is now a
+genuinely useful target for the frontend — live prices push over SignalR, so Phase 7 no longer has
+to build against a polling fallback alone.
 
-**Terminal A — `backend-dotnet` (Phases 5 and 6).** Paste:
+**Terminal A — `backend-dotnet` (Phase 6).** Paste:
 
 ```
-Read tracker.md. Phase 4 is done and verified — all four market-data providers work
-against their real APIs, keys are already in user-secrets, and dotnet test
-portfolio.slnx is 51/51.
+Read tracker.md. Phase 5 is done and verified — the market calendar, background refresh
+service, SignalR hub and both prices endpoints all work against a live API, and dotnet
+test portfolio.slnx is 85/85.
 
-Use the backend-dotnet agent for Phase 5 (market-hours auto-refresh + SignalR), then
-Phase 6 (portfolio calculations).
+Use the backend-dotnet agent for Phase 6 (portfolio calculations).
 
-Read the Phase 4 entries under "Decisions" before writing any provider-facing code —
-especially that stocks span two providers routed by Asset.QuoteProviderKind, not by
-AssetClass.
+Read the crypto scope decision under "Decisions" before writing anything: crypto is
+gain/loss only. No time series, no annual returns, no PriceHistory. PerformanceSeriesBuilder
+and AnnualReturnCalculator are stocks only and must filter to AssetClass.Stock; a series
+or annual-returns request for a crypto asset returns a clean 400/404, never an empty chart
+that looks like a flat line at zero. Cost basis and P&L cover both classes, and the
+summary/allocation endpoints work for both since neither needs history.
 
-Note the crypto scope decision: crypto is gain/loss only. No time series, no annual
-returns, no PriceHistory. PerformanceSeriesBuilder and AnnualReturnCalculator are
-stocks only, and crypto should be excluded from the backfill run — it currently
-backfills every asset with transactions, spending rate limit on data nothing reads.
-Cost basis and P&L still cover both classes.
+Also in scope: exclude crypto from PriceBackfillService. It currently backfills every asset
+with transactions, spending rate limit on data nothing reads any more.
 
-Mind the rate limits in CLAUDE.md when the background service starts polling for real —
-Twelve Data is 800 credits/day and one credit per symbol per batch.
+TWR is the agreed method for annual returns, so deposits are not counted as gains — verify
+it against a hand-computed multi-year example, not just a self-consistent test.
 
-Tick a box only for something you have personally seen pass, and say plainly what you
-did not verify. Then append to the handoff log, write the next session prompt, and stop.
+Mind decimal precision throughout: quantities and prices are decimal(28,10), money is
+decimal(19,4). Historical USD conversion must use the FX rate for that date, not today's.
+
+Tick a box only for something you have personally seen pass, and say plainly what you did
+not verify — that flag is what caught the real defects in Phases 4 and 5 both. Then append
+to the handoff log, write the next session prompt, and stop.
 ```
 
 **Terminal B — `frontend-angular` (Phase 7).** Paste:
@@ -431,12 +492,20 @@ seeded assets.
 Use the frontend-angular agent to do Phase 7 — the Angular scaffold and app shell.
 
 Two things from the backend that affect the client contract: enums cross the wire as
-strings ("Stock"/"Crypto", "Buy"/"Sell"), not ints; and quantities and prices come back
-as up-to-10-decimal-place values, so no model, validator, input step, or display pipe
-may assume two decimals. ANVL trades near $0.0004 — a two-decimal pipe renders it $0.00.
+strings ("Stock"/"Crypto", "Buy"/"Sell", "TwelveData"/"Yahoo"/"CoinGecko"), not ints, on
+BOTH the REST API and the SignalR hub; and quantities and prices come back as up-to-10-
+decimal-place values, so no model, validator, input step, or display pipe may assume two
+decimals. ANVL trades near $0.0004 — a two-decimal pipe renders it $0.00.
 
-Phase 5 (SignalR) may not exist yet — check the tracker. If it does not, build PriceStore
-against its polling fallback and leave the SignalR wiring behind a clean seam.
+Phase 5 is done, so SignalR is real: connect PriceStore to http://localhost:5100/hubs/prices.
+The hub is push-only — never call a method on it. Listen for "QuoteUpdated"
+({assetId, symbol, price, currency, asOf}) and "RefreshStatus", and note the hub pushes a
+RefreshStatus snapshot on connect, so the toolbar indicator can render immediately instead
+of waiting for the first tick. Keep the polling fallback for when the socket drops.
+
+RefreshIndicator maps onto GET /api/prices/status and POST /api/prices/refresh. The POST
+returns 429 with a secondsRemaining field on its ProblemDetails during the 30s cooldown —
+drive the countdown off that number rather than timing it client-side.
 
 Stop after Phase 7. Tick a box in tracker.md only for something you have personally seen
 pass — `ng build` clean is a minimum. Then append to the handoff log, write the next

@@ -12,6 +12,12 @@
       stays a Portfolio.Infrastructure concern.
     -->
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.10" />
+    <!--
+      BackgroundService/IHostedService only — pure hosting-lifecycle abstractions, not ASP.NET
+      Core. No HTTP-client or SignalR type is pulled in by this package, so the "nothing web-y
+      leaks into Application" rule still holds for PriceRefreshBackgroundService.
+    -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0" />
   </ItemGroup>
 
 </Project>

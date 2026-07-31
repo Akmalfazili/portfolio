@@ -60,6 +60,7 @@ public static class DependencyInjection
         // has no IConfiguration package reference (kept persistence/config-ignorant, matching the
         // Phase 3 decision to keep it thin) while Portfolio.Infrastructure already does.
         services.Configure<PriceBackfillOptions>(configuration.GetSection(PriceBackfillOptions.SectionName));
+        services.Configure<PriceRefreshOptions>(configuration.GetSection(PriceRefreshOptions.SectionName));
 
         services.AddTransient<RedactingLoggingHandler>();
 

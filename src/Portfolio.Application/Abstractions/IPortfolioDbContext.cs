@@ -19,6 +19,10 @@ public interface IPortfolioDbContext
 
     IQueryable<FxRate> FxRates { get; }
 
+    IQueryable<PriceQuote> PriceQuotes { get; }
+
+    IQueryable<RefreshRun> RefreshRuns { get; }
+
     void AddAsset(Asset asset);
 
     void AddTransaction(Transaction transaction);
@@ -28,6 +32,10 @@ public interface IPortfolioDbContext
     void AddPriceHistory(PriceHistory priceHistory);
 
     void AddFxRate(FxRate fxRate);
+
+    void AddPriceQuote(PriceQuote priceQuote);
+
+    void AddRefreshRun(RefreshRun refreshRun);
 
     ValueTask<Asset?> FindAssetAsync(int id, CancellationToken cancellationToken);
 
