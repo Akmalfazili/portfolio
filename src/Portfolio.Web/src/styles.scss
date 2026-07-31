@@ -1,0 +1,73 @@
+// Include theming for Angular Material with `mat.theme()`.
+// This Sass mixin will define CSS variables that are used for styling Angular Material
+// components according to the Material 3 design spec.
+// Learn more about theming and how to use it for your application's
+// custom components at https://material.angular.dev/guide/theming
+@use '@angular/material' as mat;
+@use 'ui.tokens';
+
+// `mat.theme()` supplies the M3 *structural* scaffold — elevation, shape,
+// state and typography mechanics — Material has no lower-level API to derive
+// that scaffold from an arbitrary hex seed in this package version. The seed
+// palette below is only a starting point: every colour Material actually
+// paints is repointed to `ui.tokens.scss` immediately after, in the
+// `--mat-sys-*` override block. That block, not this mixin call, is the real
+// source of Material's colour — see the "one source of truth" note there.
+html {
+  height: 100%;
+  @include mat.theme(
+    (
+      color: (
+        primary: mat.$azure-palette,
+        tertiary: mat.$orange-palette,
+      ),
+      typography: (
+        plain-family: var(--ui-font-family-sans),
+        brand-family: var(--ui-font-family-sans),
+      ),
+      density: 0,
+    )
+  );
+}
+
+// One source of truth: pin the handful of --mat-sys-* roles components
+// actually key off of to this app's own tokens, so Material renders the
+// Stocks/Crypto accent decided in ui.tokens.scss rather than the seed
+// palette's own blue/orange tonal steps. Swaps with --ui-color-accent when
+// [data-section] changes — no component overrides this again.
+:root {
+  --mat-sys-primary: var(--ui-color-accent);
+  --mat-sys-on-primary: var(--ui-color-on-accent);
+  --mat-sys-secondary: var(--ui-color-accent);
+  --mat-sys-on-secondary: var(--ui-color-on-accent);
+  --mat-sys-surface: var(--ui-color-surface);
+  --mat-sys-on-surface: var(--ui-color-on-surface);
+  --mat-sys-surface-container: var(--ui-color-surface-alt);
+  --mat-sys-outline: var(--ui-color-border);
+  --mat-sys-outline-variant: var(--ui-color-gridline);
+}
+
+body {
+  // Default the application to a light colour theme. `prefers-color-scheme`
+  // and `[data-theme]` in ui.tokens.scss drive the actual palette values;
+  // this only sets the browser's own chrome (scrollbars, form controls) to
+  // match, and is overridden by ui.tokens.scss's own color-scheme rules.
+  color-scheme: light;
+
+  // Set a default background, font and text colors for the application using
+  // Angular Material's system-level CSS variables, themselves now sourced
+  // from ui.tokens.scss above.
+  background-color: var(--mat-sys-surface);
+  color: var(--mat-sys-on-surface);
+  font: var(--mat-sys-body-medium);
+  font-family: var(--ui-font-family-sans);
+
+  // Reset the user agent margin.
+  margin: 0;
+  height: 100%;
+}
+
+* {
+  box-sizing: border-box;
+}
+/* You can add global styles to this file, and also import other style files */

@@ -1,0 +1,71 @@
+// =============================================================================
+// ui.mixins.scss — small SCSS helpers layered on top of ui.tokens.scss
+// =============================================================================
+//
+// Breakpoints and elevation/focus helpers only. This is not a component
+// library — if you need something more than a thin wrapper around the tokens,
+// it probably belongs as a shared component in `src/app/shared/`, not here.
+//
+// Usage: `@use 'ui.mixins' as ui;` (works from anywhere once
+// `stylePreprocessorOptions.includePaths` in angular.json includes `src/styles`).
+// =============================================================================
+
+@use 'sass:map';
+
+// Breakpoints are SCSS variables, not custom properties — `@media` cannot
+// read a custom property, so these are the one exception to "everything is a
+// token." Keep the actual pixel values here and nowhere else.
+$ui-breakpoints: (
+  sm: 600px,
+  md: 960px,
+  lg: 1280px,
+  xl: 1920px,
+);
+
+@mixin ui-breakpoint-up($name) {
+  $width: map.get($ui-breakpoints, $name);
+
+  @if $width == null {
+    @error 'Unknown breakpoint `#{$name}`. Expected one of #{map.keys($ui-breakpoints)}.';
+  }
+
+  @media (min-width: $width) {
+    @content;
+  }
+}
+
+@mixin ui-breakpoint-down($name) {
+  $width: map.get($ui-breakpoints, $name);
+
+  @if $width == null {
+    @error 'Unknown breakpoint `#{$name}`. Expected one of #{map.keys($ui-breakpoints)}.';
+  }
+
+  @media (max-width: $width - 1) {
+    @content;
+  }
+}
+
+// Elevation — apply one of the --ui-elevation-* tokens as a box-shadow.
+@mixin ui-elevation($level) {
+  box-shadow: var(--ui-elevation-#{$level});
+}
+
+// Keyboard-focus ring, drawn from the current section's accent token.
+@mixin ui-focus-ring {
+  outline: 2px solid var(--ui-color-accent);
+  outline-offset: 2px;
+}
+
+// Visually hide content while keeping it in the accessibility tree.
+@mixin ui-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

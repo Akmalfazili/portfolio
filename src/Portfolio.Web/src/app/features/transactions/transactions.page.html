@@ -1,0 +1,49 @@
+<section class="transactions">
+  <h1 class="transactions__title">Transactions</h1>
+
+  @if (isLoading()) {
+    <app-state-message variant="loading" title="Loading transactions…" />
+  } @else if (hasError()) {
+    <app-state-message
+      variant="error"
+      title="Couldn't load transactions"
+      description="Check that the API is running, then try again."
+      actionLabel="Retry"
+      (action)="retry()"
+    />
+  } @else if (isEmpty()) {
+    <app-state-message
+      variant="empty"
+      title="No transactions yet"
+      description="Record your first buy to start tracking cost basis and gain/loss."
+    />
+  } @else {
+    <table class="transactions__table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Symbol</th>
+          <th>Type</th>
+          <th>Quantity</th>
+          <th>Price</th>
+          <th>Fees</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (transaction of transactions(); track transaction.id) {
+          <tr>
+            <td>{{ transaction.tradeDate }}</td>
+            <td>{{ transaction.assetSymbol }}</td>
+            <td>{{ transaction.type }}</td>
+            <td>{{ transaction.quantity | quantity }}</td>
+            <td>{{ transaction.pricePerUnit | money: transaction.currency }}</td>
+            <td>{{ transaction.fees | money: transaction.currency }}</td>
+          </tr>
+        }
+      </tbody>
+    </table>
+    <p class="transactions__note">
+      The asset-class filter and the create/edit/delete form land in Phase 8.
+    </p>
+  }
+</section>

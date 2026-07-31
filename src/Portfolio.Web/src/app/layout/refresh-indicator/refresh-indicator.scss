@@ -1,0 +1,28 @@
+.refresh-indicator {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  font-size: var(--ui-font-size-sm);
+  color: var(--ui-color-on-surface-secondary);
+  font-variant-numeric: var(--ui-font-numeric-variant);
+}
+
+.refresh-indicator--stale {
+  color: var(--ui-color-status-warning);
+}
+
+.refresh-indicator__warning {
+  color: var(--ui-color-status-warning);
+  width: var(--ui-size-icon-sm);
+  height: var(--ui-size-icon-sm);
+  font-size: var(--ui-size-icon-sm);
+}
+
+.refresh-indicator__label {
+  white-space: nowrap;
+}
+
+.refresh-indicator__cooldown {
+  font-size: var(--ui-font-size-xs);
+  font-weight: var(--ui-font-weight-semibold);
+}

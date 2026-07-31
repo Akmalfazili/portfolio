@@ -1,0 +1,25 @@
+<div class="state-message" [class]="'state-message--' + variant()">
+  @switch (variant()) {
+    @case ('loading') {
+      <mat-spinner diameter="32" />
+    }
+    @case ('error') {
+      <mat-icon aria-hidden="true">error_outline</mat-icon>
+    }
+    @case ('empty') {
+      <mat-icon aria-hidden="true">inbox</mat-icon>
+    }
+  }
+
+  <h3 class="state-message__title">{{ title() }}</h3>
+
+  @if (description()) {
+    <p class="state-message__description">{{ description() }}</p>
+  }
+
+  @if (actionLabel()) {
+    <button mat-stroked-button type="button" (click)="action.emit()">
+      {{ actionLabel() }}
+    </button>
+  }
+</div>

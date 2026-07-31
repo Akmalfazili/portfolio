@@ -1,0 +1,284 @@
+// =============================================================================
+// ui.tokens.scss — the single source of design truth for Portfolio.Web
+// =============================================================================
+//
+// THE RULE: new UI reads tokens; it does not introduce values.
+//
+// Every colour, spacing value, radius, shadow, font size, z-index and motion
+// curve the app uses lives here as a CSS custom property. A component, page or
+// shared style must reference `var(--ui-…)` (or the small set of SCSS helpers
+// in `ui.mixins.scss`) — it must never hardcode a hex colour or a raw `px`
+// spacing value. If a value you need is missing, add a token for it here first;
+// do not inline it at the call site "just this once".
+//
+// Angular Material's theme (see `styles.scss`) is derived from this file, not
+// configured independently — `mat.theme()` supplies Material's structural M3
+// scaffold (elevation/shape/state/typography mechanics), and this file's
+// `--ui-color-accent-*` tokens are then written on top of the resulting
+// `--mat-sys-primary` family so the colour Material actually paints is always
+// the one decided here, never a second, parallel colour decision.
+//
+// Palette source: the `dataviz` skill's validated default palette (OKLab CVD
+// checks run, see the skill's `references/palette.md`) — categorical slot 1
+// (blue) is the Stocks accent, slot 2 (orange) is the Crypto accent, and
+// gain/loss reuse the skill's status "good"/"critical" steps rather than the
+// blue↔red *diverging* pair, because gain/loss has an inherent positive/
+// negative valence (a status), not a neutral polarity.
+//
+// Light/dark: values are declared under `:root` (light default), overridden
+// under `@media (prefers-color-scheme: dark)` for the OS setting, and again
+// under `:root[data-theme="dark"]` / `:root[data-theme="light"]` so a manual
+// in-app toggle can win in both directions regardless of the OS setting.
+//
+// Section accent: `--ui-color-accent` is a alias that resolves to the Stocks
+// or Crypto accent depending on a `data-section="stock" | "crypto"` attribute
+// set on a shell-level element from the active route's `assetClass` — never by
+// forking component styles per section.
+// =============================================================================
+
+:root {
+  color-scheme: light;
+
+  // ---------------------------------------------------------------------------
+  // Chart / chrome surfaces & ink (also consumed by chart-theme.ts in Phase 9)
+  // ---------------------------------------------------------------------------
+  --ui-color-surface: #fcfcfb;
+  --ui-color-surface-alt: #f9f9f7; // page plane, behind cards
+  --ui-color-on-surface: #0b0b0b; // primary ink
+  --ui-color-on-surface-secondary: #52514e;
+  --ui-color-on-surface-muted: #898781; // axis/labels
+  --ui-color-border: rgba(11, 11, 11, 0.1);
+  --ui-color-gridline: #e1e0d9;
+  --ui-color-baseline: #c3c2b7; // chart axis/baseline line
+
+  // ---------------------------------------------------------------------------
+  // Section accents — Stocks vs Crypto (categorical slots 1 & 2)
+  // ---------------------------------------------------------------------------
+  --ui-color-accent-stock: #2a78d6;
+  --ui-color-on-accent-stock: #ffffff;
+  --ui-color-accent-crypto: #eb6834;
+  --ui-color-on-accent-crypto: #ffffff;
+
+  // Alias resolved per-section by [data-section] below — read this, not the
+  // per-section variables above, from shared/shell code.
+  --ui-color-accent: var(--ui-color-accent-stock);
+  --ui-color-on-accent: var(--ui-color-on-accent-stock);
+
+  // ---------------------------------------------------------------------------
+  // Gain / loss — status "good"/"critical" steps, never colour alone in the UI
+  // (pair with a sign, arrow glyph, or label at the call site)
+  // ---------------------------------------------------------------------------
+  --ui-color-gain: #006300;
+  --ui-color-loss: #d03b3b;
+
+  // ---------------------------------------------------------------------------
+  // Status palette — fixed, never themed, reserved for state (not series)
+  // ---------------------------------------------------------------------------
+  --ui-color-status-good: #0ca30c;
+  --ui-color-status-warning: #fab219;
+  --ui-color-status-serious: #ec835a;
+  --ui-color-status-critical: #d03b3b;
+
+  // ---------------------------------------------------------------------------
+  // Categorical chart series (fixed order — never cycle, never reassign by rank)
+  // ---------------------------------------------------------------------------
+  --ui-chart-series-1: #2a78d6; // blue
+  --ui-chart-series-2: #eb6834; // orange
+  --ui-chart-series-3: #1baf7a; // aqua
+  --ui-chart-series-4: #eda100; // yellow
+  --ui-chart-series-5: #e87ba4; // magenta
+  --ui-chart-series-6: #008300; // green
+  --ui-chart-series-7: #4a3aa7; // violet
+  --ui-chart-series-8: #e34948; // red
+
+  // Sequential (single-hue, magnitude) ramp — blue, light → dark
+  --ui-chart-sequential-100: #cde2fb;
+  --ui-chart-sequential-200: #9ec5f4;
+  --ui-chart-sequential-300: #6da7ec;
+  --ui-chart-sequential-400: #3987e5;
+  --ui-chart-sequential-500: #256abf;
+  --ui-chart-sequential-600: #184f95;
+  --ui-chart-sequential-700: #0d366b;
+
+  // Diverging pair (neutral polarity, e.g. "vs benchmark") — NOT for gain/loss
+  --ui-chart-diverging-pos: #2a78d6;
+  --ui-chart-diverging-mid: #f0efec;
+  --ui-chart-diverging-neg: #e34948;
+
+  // ---------------------------------------------------------------------------
+  // Spacing scale (4px base unit)
+  // ---------------------------------------------------------------------------
+  --ui-space-1: 4px;
+  --ui-space-2: 8px;
+  --ui-space-3: 12px;
+  --ui-space-4: 16px;
+  --ui-space-5: 20px;
+  --ui-space-6: 24px;
+  --ui-space-8: 32px;
+  --ui-space-10: 40px;
+  --ui-space-12: 48px;
+  --ui-space-16: 64px;
+
+  // ---------------------------------------------------------------------------
+  // Layout & sizing — app chrome dimensions and content measure. These are
+  // design decisions, not incidental numbers, so they live here rather than
+  // being inlined in a component stylesheet.
+  //
+  // --ui-layout-toolbar-height must track Angular Material's own toolbar
+  // height (64px, dropping to 56px below the 600px breakpoint) — it is what
+  // the content pane subtracts to fill the remaining viewport, so a mismatch
+  // shows up as a scrollbar or a clipped page rather than as a style nit.
+  // ---------------------------------------------------------------------------
+  --ui-layout-sidenav-width: 240px;
+  --ui-layout-toolbar-height: 64px;
+  --ui-layout-content-max: 720px; // reading measure — overview, asset detail
+  --ui-layout-content-max-wide: 960px; // tabular measure — transactions
+
+  --ui-size-icon-sm: 20px;
+  --ui-size-icon-md: 24px;
+
+  // ---------------------------------------------------------------------------
+  // Radii
+  // ---------------------------------------------------------------------------
+  --ui-radius-xs: 4px;
+  --ui-radius-sm: 8px;
+  --ui-radius-md: 12px;
+  --ui-radius-lg: 16px;
+  --ui-radius-pill: 999px;
+  --ui-radius-circle: 50%;
+
+  // ---------------------------------------------------------------------------
+  // Elevation (for shared/, non-Material surfaces — Material components use
+  // mat.theme()'s own --mat-sys-level-* shadows automatically)
+  // ---------------------------------------------------------------------------
+  --ui-elevation-0: none;
+  --ui-elevation-1: 0 1px 2px rgba(11, 11, 11, 0.08), 0 1px 1px rgba(11, 11, 11, 0.04);
+  --ui-elevation-2: 0 2px 6px rgba(11, 11, 11, 0.1), 0 1px 2px rgba(11, 11, 11, 0.06);
+  --ui-elevation-3: 0 6px 16px rgba(11, 11, 11, 0.12), 0 2px 4px rgba(11, 11, 11, 0.08);
+  --ui-elevation-4: 0 12px 28px rgba(11, 11, 11, 0.16), 0 4px 8px rgba(11, 11, 11, 0.1);
+
+  // ---------------------------------------------------------------------------
+  // Typography
+  // ---------------------------------------------------------------------------
+  --ui-font-family-sans: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --ui-font-family-mono: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+  --ui-font-numeric-variant: tabular-nums; // apply to columns that must align vertically
+
+  --ui-font-size-xs: 0.75rem; // 12px
+  --ui-font-size-sm: 0.875rem; // 14px
+  --ui-font-size-base: 1rem; // 16px
+  --ui-font-size-md: 1.125rem; // 18px
+  --ui-font-size-lg: 1.25rem; // 20px
+  --ui-font-size-xl: 1.5rem; // 24px
+  --ui-font-size-2xl: 2rem; // 32px
+  --ui-font-size-display: 2.5rem; // 40px
+
+  --ui-line-height-tight: 1.2;
+  --ui-line-height-normal: 1.5;
+  --ui-line-height-relaxed: 1.6;
+
+  --ui-font-weight-regular: 400;
+  --ui-font-weight-medium: 500;
+  --ui-font-weight-semibold: 600;
+  --ui-font-weight-bold: 700;
+
+  // ---------------------------------------------------------------------------
+  // Z-index layers (app shell chrome — CDK overlays manage their own stack)
+  // ---------------------------------------------------------------------------
+  --ui-z-base: 0;
+  --ui-z-sticky: 100;
+  --ui-z-dropdown: 200;
+  --ui-z-overlay: 300;
+  --ui-z-modal: 400;
+  --ui-z-toast: 500;
+  --ui-z-tooltip: 600;
+
+  // ---------------------------------------------------------------------------
+  // Motion
+  // ---------------------------------------------------------------------------
+  --ui-motion-duration-fast: 120ms;
+  --ui-motion-duration-base: 200ms;
+  --ui-motion-duration-slow: 320ms;
+  --ui-motion-easing-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ui-motion-easing-decelerate: cubic-bezier(0, 0, 0, 1);
+  --ui-motion-easing-accelerate: cubic-bezier(0.3, 0, 1, 1);
+}
+
+// Section accent — set data-section="crypto" on a shell-level host element,
+// driven by the active route's `data.assetClass`. Stocks is the default, so
+// no attribute (or data-section="stock") is needed for it.
+:root[data-section='crypto'] {
+  --ui-color-accent: var(--ui-color-accent-crypto);
+  --ui-color-on-accent: var(--ui-color-on-accent-crypto);
+}
+
+// Material's toolbar is 64px, dropping to 56px below the sm breakpoint. The
+// token tracks it so `calc(100dvh - var(--ui-layout-toolbar-height))` stays
+// correct on small screens instead of leaving an 8px overflow.
+@media (max-width: 599px) {
+  :root {
+    --ui-layout-toolbar-height: 56px;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Dark mode — same roles, dark-stepped values (not a filter).
+//
+// Two selectors need identical declarations: the OS preference, and the manual
+// `[data-theme="dark"]` override that has to beat an OS set to light. They are
+// emitted from one mixin rather than written twice, so a token added to dark
+// mode cannot land in one and be forgotten in the other.
+// -----------------------------------------------------------------------------
+@mixin ui-dark-tokens {
+  color-scheme: dark;
+
+  --ui-color-surface: #1a1a19;
+  --ui-color-surface-alt: #0d0d0d;
+  --ui-color-on-surface: #ffffff;
+  --ui-color-on-surface-secondary: #c3c2b7;
+  --ui-color-on-surface-muted: #898781;
+  --ui-color-border: rgba(255, 255, 255, 0.1);
+  --ui-color-gridline: #2c2c2a;
+  --ui-color-baseline: #383835;
+
+  --ui-color-accent-stock: #3987e5;
+  --ui-color-accent-crypto: #d95926;
+
+  --ui-color-gain: #0ca30c;
+  --ui-color-loss: #d03b3b;
+
+  --ui-chart-series-1: #3987e5;
+  --ui-chart-series-2: #d95926;
+  --ui-chart-series-3: #199e70;
+  --ui-chart-series-4: #c98500;
+  --ui-chart-series-5: #d55181;
+  --ui-chart-series-6: #008300;
+  --ui-chart-series-7: #9085e9;
+  --ui-chart-series-8: #e66767;
+
+  --ui-chart-diverging-pos: #3987e5;
+  --ui-chart-diverging-mid: #383835;
+  --ui-chart-diverging-neg: #e66767;
+
+  --ui-elevation-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 1px rgba(0, 0, 0, 0.24);
+  --ui-elevation-2: 0 2px 6px rgba(0, 0, 0, 0.44), 0 1px 2px rgba(0, 0, 0, 0.28);
+  --ui-elevation-3: 0 6px 16px rgba(0, 0, 0, 0.48), 0 2px 4px rgba(0, 0, 0, 0.32);
+  --ui-elevation-4: 0 12px 28px rgba(0, 0, 0, 0.56), 0 4px 8px rgba(0, 0, 0, 0.36);
+}
+
+// OS preference, unless the app has been explicitly switched to light.
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme='light'])) {
+    @include ui-dark-tokens;
+  }
+}
+
+// Manual override — wins over an OS set to light.
+:root[data-theme='dark'] {
+  @include ui-dark-tokens;
+}
+
+// [data-theme="light"] needs no overrides of its own — the :root defaults
+// above already are the light values; its only job is to exist as a selector
+// so the `:not([data-theme='light'])` guard in the dark media query has
+// something to beat.

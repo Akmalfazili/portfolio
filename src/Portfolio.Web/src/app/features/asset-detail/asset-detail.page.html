@@ -1,0 +1,39 @@
+<section class="detail">
+  @if (isLoading()) {
+    <app-state-message variant="loading" title="Loading asset…" />
+  } @else if (hasError()) {
+    <app-state-message
+      variant="error"
+      title="Couldn't load this asset"
+      description="Check that the API is running, then try again."
+      actionLabel="Retry"
+      (action)="retry()"
+    />
+  } @else if (isNotFound()) {
+    <app-state-message
+      variant="empty"
+      [title]="symbol() + ' was not found'"
+      description="It may not be tracked yet, or belongs to the other section."
+      actionLabel="Back to overview"
+      (action)="goBackToOverview()"
+    />
+  } @else if (asset(); as found) {
+    <header class="detail__header">
+      <h1 class="detail__symbol">{{ found.symbol }}</h1>
+      <p class="detail__name">{{ found.name }}</p>
+      @if (quote(); as q) {
+        <p class="detail__price">{{ q.price | money: q.currency }}</p>
+      } @else {
+        <p class="detail__price detail__price--pending">Waiting for a live quote…</p>
+      }
+    </header>
+
+    <p class="detail__note">
+      @if (isCrypto()) {
+        The gain/loss card lands in Phase 9 — crypto is gain/loss only, with no historical chart.
+      } @else {
+        The cost-vs-market line chart, gain/loss card and per-asset transactions land in Phase 9.
+      }
+    </p>
+  }
+</section>

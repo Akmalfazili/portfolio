@@ -1,0 +1,51 @@
+@use '../../../styles/ui.mixins' as ui;
+
+.shell {
+  height: 100dvh;
+}
+
+.shell__sidenav {
+  width: var(--ui-layout-sidenav-width);
+  background: var(--ui-color-surface);
+  border-right: 1px solid var(--ui-color-border);
+}
+
+.shell__toolbar {
+  position: sticky;
+  top: 0;
+  z-index: var(--ui-z-sticky);
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-3);
+  background: var(--ui-color-surface);
+  color: var(--ui-color-on-surface);
+  border-bottom: 1px solid var(--ui-color-border);
+}
+
+.shell__title {
+  font-size: var(--ui-font-size-md);
+  font-weight: var(--ui-font-weight-semibold);
+}
+
+.shell__spacer {
+  flex: 1 1 auto;
+}
+
+.shell__content {
+  padding: var(--ui-space-6);
+  background: var(--ui-color-surface-alt);
+  min-height: calc(100dvh - var(--ui-layout-toolbar-height));
+
+  @include ui.ui-breakpoint-down(sm) {
+    padding: var(--ui-space-4);
+  }
+}
+
+:host ::ng-deep .shell__nav-link--active {
+  background: color-mix(in srgb, var(--ui-color-accent) 12%, transparent);
+  color: var(--ui-color-accent);
+
+  mat-icon {
+    color: var(--ui-color-accent);
+  }
+}

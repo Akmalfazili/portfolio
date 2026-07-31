@@ -1,0 +1,43 @@
+<section class="overview">
+  <h1 class="overview__title">{{ sectionLabel() }} overview</h1>
+
+  @if (isLoading()) {
+    <app-state-message variant="loading" title="Loading your holdings…" />
+  } @else if (hasError()) {
+    <app-state-message
+      variant="error"
+      title="Couldn't load your holdings"
+      description="Check that the API is running, then try again."
+      actionLabel="Retry"
+      (action)="retry()"
+    />
+  } @else if (isEmpty()) {
+    <app-state-message
+      variant="empty"
+      [title]="sectionLabel() === 'Crypto' ? 'No crypto holdings yet' : 'No stock holdings yet'"
+      description="Record a buy transaction to see it appear here."
+      actionLabel="Add a transaction"
+      (action)="goToTransactions()"
+    />
+  } @else {
+    <ul class="overview__list">
+      @for (asset of assetsForSection(); track asset.id) {
+        <li class="overview__row">
+          <a class="overview__link" [routerLink]="[basePath(), asset.symbol]">
+            <span class="overview__symbol">{{ asset.symbol }}</span>
+            <span class="overview__name">{{ asset.name }}</span>
+            @if (priceFor(asset.id); as quote) {
+              <span class="overview__price">{{ quote.price | money: quote.currency }}</span>
+            } @else {
+              <span class="overview__price overview__price--pending">—</span>
+            }
+          </a>
+        </li>
+      }
+    </ul>
+    <p class="overview__note">
+      Allocation pie, annual-return chart and summary tiles land in Phase 9 — this list proves the
+      live routing, section accent and prices are wired up.
+    </p>
+  }
+</section>

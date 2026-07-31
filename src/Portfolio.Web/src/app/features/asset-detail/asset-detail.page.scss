@@ -1,0 +1,43 @@
+.detail {
+  max-width: var(--ui-layout-content-max);
+  margin: 0 auto;
+}
+
+.detail__header {
+  background: var(--ui-color-surface);
+  border: 1px solid var(--ui-color-border);
+  border-radius: var(--ui-radius-lg);
+  padding: var(--ui-space-6);
+  box-shadow: var(--ui-elevation-1);
+}
+
+.detail__symbol {
+  margin: 0;
+  font-size: var(--ui-font-size-2xl);
+  font-weight: var(--ui-font-weight-bold);
+  color: var(--ui-color-accent);
+}
+
+.detail__name {
+  margin: var(--ui-space-1) 0 var(--ui-space-4);
+  color: var(--ui-color-on-surface-secondary);
+}
+
+.detail__price {
+  margin: 0;
+  font-size: var(--ui-font-size-xl);
+  font-weight: var(--ui-font-weight-semibold);
+  font-variant-numeric: var(--ui-font-numeric-variant);
+}
+
+.detail__price--pending {
+  font-size: var(--ui-font-size-sm);
+  font-weight: var(--ui-font-weight-regular);
+  color: var(--ui-color-on-surface-muted);
+}
+
+.detail__note {
+  margin-top: var(--ui-space-6);
+  font-size: var(--ui-font-size-sm);
+  color: var(--ui-color-on-surface-muted);
+}

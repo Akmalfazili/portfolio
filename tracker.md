@@ -32,20 +32,24 @@ so each session stays focused and its context stays clean.
 | 4 | Market data providers | `backend-dotnet` | ✅ Done — verified |
 | 5 | Auto-refresh + SignalR | `backend-dotnet` | ✅ Done — verified |
 | 6 | Portfolio calculations | `backend-dotnet` | ⬜ Not started |
-| 7 | Angular scaffold + shell | `frontend-angular` | ⬜ Not started |
+| 7 | Angular scaffold + shell | `frontend-angular` | ✅ Done — verified |
 | 8 | Transactions UI | `frontend-angular` | ⬜ Not started |
 | 9 | Overview + detail pages | `frontend-angular` | ⬜ Not started |
 | 10 | Podman stack | `container-podman` | ⬜ Not started |
 | 11 | End-to-end verification | — | ⬜ Not started |
 
-**Currently active:** none — Phases 1–5 closed out and verified, Phase 5 on 2026-07-31.
+**Currently active:** none — Phases 1–5 and 7 closed out and verified, Phase 7 on 2026-07-31.
 
 > ✅ **Prices refresh themselves and push over SignalR.** `dotnet build portfolio.slnx` is clean
 > with zero warnings under `TreatWarningsAsErrors` and `dotnet test portfolio.slnx` is 95/95 green
 > (91 unit + 4 integration). Push delivery was verified with a real SignalR client against a
 > running API, not asserted from unit tests.
 >
-> **Nothing is blocked any more.** Phase 6 (`backend-dotnet`) and Phase 7 (`frontend-angular`) are
+> ✅ **The Angular shell is up and talking to the live API.** `ng build` clean, `ng test` 68/68,
+> and the dev proxy plus the SignalR hub were verified against a running API over a real
+> **WebSocket** transport — not long-polling fallback, and not mocks.
+>
+> **Nothing is blocked any more.** Phase 6 (`backend-dotnet`) and Phase 8 (`frontend-angular`) are
 > both open and touch disjoint directories. Phase 10 still needs Podman installed.
 
 ---
@@ -56,7 +60,7 @@ Blocking items you need to handle before the relevant phase can start.
 
 | Item | Status | Needed by | How |
 |---|---|---|---|
-| Node.js 22.13.0 | ✅ Installed | Phase 7 | — |
+| Node.js 22.13.0 | ⚠️ Works, but patched | Phase 7 | Angular 22's CLI refuses Node `< 22.22.3`; a `postinstall` script widens the gate. See **D9** — `winget upgrade OpenJS.NodeJS.LTS` then delete `src/Portfolio.Web/scripts/patch-ng-cli-node-check.js` and its hook |
 | `MSSQL$SQLEXPRESS` | ✅ Running | Phase 2 | — |
 | .NET 10 SDK | ✅ Installed (10.0.302) | Phase 1 | — |
 | **Twelve Data API key** | ✅ Set | Phase 4 | In `dotnet user-secrets` under `src/Portfolio.Api` as `TwelveData:ApiKey` |
@@ -234,20 +238,56 @@ every crypto backfill call spends rate limit for data no page will read.
 
 ---
 
-### ⬜ Phase 7 — Angular scaffold + shell · `frontend-angular`
+### ✅ Phase 7 — Angular scaffold + shell · `frontend-angular`
 
-- [ ] `ng new` Angular 22 workspace at `src/Portfolio.Web` (standalone, zoneless, SCSS)
-- [ ] Angular Material + ngx-echarts + `@microsoft/signalr`
-- [ ] `AppShell` — sidenav (Stocks / Crypto / Transactions) + toolbar
-- [ ] Lazy routes: `/stocks`, `/stocks/:symbol`, `/crypto`, `/crypto/:symbol`, `/transactions`,
-      parameterised by `assetClass` from route `data`
-- [ ] Distinct accent colour per section
-- [ ] `PriceStore` — signal-based, SignalR-fed, with polling fallback
-- [ ] `RefreshIndicator` in the toolbar top-right — relative timestamp, manual button,
-      cooldown countdown on `429`, stale-data warning state
-- [ ] Dev proxy to the API; `ng build` clean
+Verified 2026-07-31 against a running API through the dev proxy.
+
+- [x] Angular 22.1.2 workspace at `src/Portfolio.Web` — standalone, **zoneless** (no `zone.js`
+      dependency at all), SCSS, Vitest, strict templates
+- [x] Angular Material 22 + ngx-echarts (installed and provided; charts are Phase 9) +
+      `@microsoft/signalr`
+- [x] **Central design system — `src/styles/ui.tokens.scss`** plus `ui.mixins.scss`. Every colour,
+      space, radius, elevation, type step, layout dimension, z-layer and motion curve is a CSS
+      custom property; light/dark via `prefers-color-scheme` **and** a `[data-theme]` override that
+      wins in both directions. Material is **derived from** it — `mat.theme()` supplies only the M3
+      structural scaffold, then a `--mat-sys-*` block repoints every rendered colour at the tokens,
+      so Material never makes a second, parallel colour decision. Grepped clean: no component
+      stylesheet contains a hex colour or a raw `px` dimension, only `1px` hairline borders
+- [x] `AppShell` — responsive sidenav (Stocks / Crypto / Transactions) + toolbar, via
+      `BreakpointObserver`
+- [x] Lazy routes `/stocks`, `/stocks/:symbol`, `/crypto`, `/crypto/:symbol`, `/transactions`;
+      `/` redirects to `/stocks`. One shared page component per pair, parameterised by `assetClass`
+      from route `data` through `withComponentInputBinding()` — pinned by a `RouterTestingHarness`
+      test that drives both routes onto the *same* component
+- [x] Distinct accent per section — `data-section` on `<html>` swaps one token alias; no forked
+      component styles. Pinned by a test that asserts the attribute flips on navigation
+- [x] `PriceStore` — signal-based, SignalR-fed, automatic reconnect, 60s HTTP polling fallback only
+      once the hub genuinely fails, with a background retry that recovers the push connection.
+      Degraded state surfaced in the UI. State machine tested against a fake hub via a DI seam
+- [x] `RefreshIndicator` — ticking relative timestamp, manual button, cooldown countdown driven by
+      the `secondsRemaining` field on the `429`, stale/degraded warning, and D5 messaging
+- [x] `MoneyPipe` / `QuantityPipe` — sub-cent prices never floor to `$0.00`, quantities carry 10 dp
+      without trailing-zero noise. Tested over the real values `0.0005326`, `0.00042369`,
+      `1000000.0000000000`, `333.019989`
+- [x] Dev proxy (`proxy.conf.json`, `ws: true` on `/hubs`); `ng build` clean, `ng test` **68/68**
+
+**Live-verified through the proxy on port 4200, 16:1x SGT Friday** — `GET /api/assets` returned all
+6 seeded assets; a real SignalR client connected over **`WebSocketTransport`** (confirmed by name,
+so the `ws: true` upgrade genuinely works rather than silently degrading to long polling); the
+on-connect `RefreshStatus` snapshot arrived; a manual refresh pushed 4 `QuoteUpdated` frames with
+sub-cent precision intact (AMP `0.00039261`, ANVL `0.00050864`); and `POST /api/prices/refresh`
+returned `200` then `429` with `secondsRemaining: 22`. NYSE was closed and TwelveData gated, so
+**0 Twelve Data credits** were spent.
+
+> ⚠️ **`ng` is patched to run on this machine's Node.** Angular 22's CLI hard-refuses Node below
+> `^22.22.3`; this machine has 22.13.0. `scripts/patch-ng-cli-node-check.js` widens that gate in
+> `node_modules` and a `postinstall` hook reapplies it. See **D9** — the real fix is a Node patch
+> upgrade, and this must not survive into the Phase 10 container build.
 
 ### ⬜ Phase 8 — Transactions UI · `frontend-angular`
+
+> Everything new reads `ui.tokens.scss` — it does not introduce values. See the rule stated at the
+> top of that file. Adding a token is fine; inlining a hex or a raw `px` at the call site is not.
 
 - [ ] Transactions list with asset-class filter
 - [ ] `TransactionFormDialog` — typed reactive form, **quantity to 10 decimal places**
@@ -316,10 +356,12 @@ so the list stays a record and not just a to-do.
 | D2 | ~~Background refresh loop had no automated test~~ **Fixed 2026-07-31** | 5 | — | — |
 | D3 | ~~Refresh status was in-memory and reset on restart~~ **Fixed 2026-07-31** | 5 | — | — |
 | D4 | **SGX lunar holidays are not modelled** | 5 | Calendar reports SGX open on Chinese New Year, Vesak, Hari Raya and Deepavali. Yahoo is called anyway and returns the previous close, which is then stored with a fresh-looking timestamp — Z74 silently looks current on days it isn't. No credit cost (Yahoo is unmetered). NYSE holidays *are* fully rule-based. | Medium — needs a maintained per-year table or a holiday API. Deliberately not faked with an approximation. |
-| D5 | **Manual refresh is a no-op for stocks outside market hours** | 5 | Deliberate: the button bypasses the interval, not the calendar, so a 3am click can't burn Twelve Data credits. But it returns `200 Completed` having touched only crypto, which reads as broken. | Low — a UI concern for Phase 7: say *why* nothing moved rather than showing a silent success. |
+| D5 | ~~Manual refresh is a no-op for stocks outside market hours~~ **Fixed 2026-07-31** (frontend messaging, Phase 7) | 5 | — | — |
 | D6 | **The 5/60-minute cadence has never run over a real window** | 5 | Only single cycles and one 2-minute crypto interval have been observed live. The NYSE-open 5-minute cadence, the 60-minute closed cadence and an open→close transition are all unobserved, so "well under 800 credits/day" is still arithmetic rather than measurement. | Low, but needs a real trading day — belongs to Phase 11. |
 | D7 | **Two serializer configurations still exist** | 5 | The enum-as-int bug is fixed, but REST and SignalR agree only because their defaults happen to coincide (both camelCase). Changing a naming policy on one side, or adding a MessagePack protocol, reintroduces the same class of bug. The regression test only covers enums on the JSON protocol. | Low — assert the two configurations agree, or build both from one shared options factory. |
-| D8 | **`decimal(28,10)` over JSON is unproven in a JS client** | 3 | Values cross the wire as JSON numbers and JavaScript parses them as doubles (~15–17 significant digits). `1000000.0000000000` is 17. Nothing has been tested end to end in a browser, so this is a question, not a known bug. Applies to the REST contract from Phase 3, not just Phase 5. | Unknown until measured. If real, the fix is serialising affected values as strings. **Check this early in Phase 8**, before the 10-decimal quantity input is built on top of it. |
+| D8 | **`decimal(28,10)` over JSON is unproven in a JS client** | 3 | Values cross the wire as JSON numbers and JavaScript parses them as doubles (~15–17 significant digits). `1000000.0000000000` is 17. Sub-cent *prices* are now confirmed intact end to end (ANVL `0.00050864` survived the hub into a real JS client, Phase 7), but a 10-dp **quantity** has still never round-tripped through a browser. Applies to the REST contract from Phase 3. | Unknown until measured. If real, the fix is serialising affected values as strings. **Check this first in Phase 8**, before the 10-decimal quantity input is built on top of it. |
+| D9 | **Angular CLI's Node check is patched in `node_modules`** | 7 | Angular 22's CLI hard-refuses Node `< 22.22.3`; this machine runs 22.13.0, so `ng` will not start at all without it. `scripts/patch-ng-cli-node-check.js` widens the gate and a `postinstall` hook reapplies it after every install. It works and is documented, but it edits a dependency's source — a genuinely unpleasant thing to carry. It also **must not reach the Phase 10 container**: `Containerfile.web` should use a Node image ≥ 22.22.3 so the patch is a no-op there rather than load-bearing. | Low — `winget upgrade OpenJS.NodeJS.LTS` (or nvm) to a current 22.x, then delete the script and its `postinstall` hook. Nothing else depends on it. |
+| D10 | **A gated provider vanishes from `PriceRefreshCycleResult.sources`** | 5 | `SourceRefreshOutcome.Attempted` is documented as "false when the source's market was closed", but `RunCycleAsync` records that outcome to the status store and then `continue`s **without adding it to the returned list** — so a closed market yields no entry at all, not an `attempted: false` one. Any client reading the skipped set off `sources` gets nothing; the Phase 7 UI derives it from `nyseOpen`/`sgxOpen` instead, which is authoritative. Not a bug in behaviour, but the DTO's own doc comment describes a shape the API never emits. | Low — either add the gated outcome to `outcomes` or correct the doc comment. A `backend-dotnet` call. |
 
 ---
 
@@ -334,6 +376,7 @@ so the list stays a record and not just a to-do.
 | 2026-07-31 | `backend-dotnet` | 5 | **Complete and verified.** Calendar, refresh service, hub, both endpoints built; agent reported honestly and flagged SignalR wire delivery as unverified. Live-testing that flag found the one real defect: **SignalR does not inherit `ConfigureHttpJsonOptions`**, so `QuoteProviderKind` crossed the hub as `"source":0` while REST sent `"source":"TwelveData"` — the exact payload Phase 7 merges, and invisible to every unit test. Fixed at `AddSignalR()` with a regression test the agent confirmed fails when reverted. Verified independently of the agent: build 0 warnings, 85/85 tests, no pending EF model changes, no SignalR type outside `Portfolio.Api`, and a real SignalR client run against the live API — on-connect snapshot plus `QuoteUpdated`/`RefreshStatus` over the wire, sub-cent precision intact (ANVL `0.00051468`), `200` then `429 secondsRemaining: 22`. NYSE closed and SGX in its lunch break during the run, so **0 Twelve Data credits** were spent, and the background loop was observed ticking unprompted. Left knowingly: SGX lunar holidays unmodelled. |
 | 2026-07-31 | — | 5 (follow-up) | **Two Phase 5 drawbacks closed.** (1) The manual-cooldown edge case is fixed — a manual cycle now persists its `RefreshRun` even when every source was gated, so `POST /api/prices/refresh` can no longer be hammered with zero crypto assets and all markets closed; the scheduled path still writes nothing there, so the 30-second poll doesn't flood the audit table. (2) The background loop now has tests: survives a throwing cycle and keeps polling, fresh DI scope per tick, clean shutdown — needing `Microsoft.Extensions.TimeProvider.Testing`'s `FakeTimeProvider`, since the loop waits via `Task.Delay(…, TimeProvider, …)` and `MutableTimeProvider` only overrides `GetUtcNow`. Both new tests were confirmed to **fail when their fix is reverted** (missing `RefreshRun`; loop exits instead of retrying) rather than trusted because they were green. 90/90, build clean. |
 | 2026-07-31 | — | 5 (follow-up) | **Refresh status made durable (D3), and the drawback register added.** `PriceRefreshStatusStore` now reads and writes a new `SourceRefreshState` table — one upserted row per provider, three rows forever — instead of a process-lifetime dictionary; it became scoped, and `LastRefreshedAt` is derived from the newest `LastSuccessAt` rather than stored separately. The original "it's only a UI indicator" reasoning was wrong: `NextDueAt` gates the cadence, so every restart made all providers due immediately and re-spent Twelve Data credits. Migration `20260731044754_AddSourceRefreshState` applied to SQLEXPRESS. **Live-proven with a real restart**: status survived (`lastRefreshedAt` 04:50:51 from before the restart), CoinGecko was *not* re-called on startup, and the next cycle fired exactly at the persisted due time 04:52:51 — which also verified the 2-minute crypto cadence over a real interval for the first time. The restart test was confirmed to fail when next-due is not persisted. 95/95, build clean. Remaining drawbacks D4–D8 recorded in the new register rather than left in conversation. |
+| 2026-07-31 | `frontend-angular` | 7 | **Complete and verified.** Angular 22 workspace scaffolded with the central design system the user asked for: `ui.tokens.scss` + `ui.mixins.scss`, with Material *derived from* the tokens rather than themed alongside them. Agent reported honestly and flagged the proxy and hub as never exercised live — testing that flag found **two real defects**. (1) **Ids were typed `string` across `models.ts`** while the backend sends C# `int` as JSON numbers; since the API sets no `AllowReadingFromString`, the Phase 8 transaction form would have `POST`ed `"assetId": "3"` and got a 400. The specs passed only because their fixtures (`'a1'`, `'t1'`) matched the wrong type. Fixed to `number`, then confirmed against the live API (`"id":1`) and the live hub (`"assetId":3`). (2) **The D5 "why nothing moved" logic was dead code** — it filtered `sources` for `attempted: false`, but `RunCycleAsync` drops a gated provider from that list entirely, so the filter could never match and a click with NYSE closed would have said a cheerful "Refreshed 4 symbols" with no explanation. Rewritten to derive closed markets from `nyseOpen`/`sgxOpen`, and its spec rebuilt around a payload captured verbatim from the live API instead of a fabricated one; recorded as **D10**. Also closed the design-system gaps the agent left: raw `px` layout values inlined in five component stylesheets despite the token file's own rule (now `--ui-layout-*` / `--ui-size-icon-*` tokens, with the toolbar height tracking Material's 64→56px breakpoint so the content `calc()` stays right on mobile), and the dark-mode block duplicated between the media query and `[data-theme]` (now one `ui-dark-tokens` mixin, so a token cannot be added to one and forgotten in the other). Verified independently of the agent: `ng build` clean, `ng test` **68/68**, no hex or raw `px` anywhere outside the token files, and a **live run through the dev proxy** — 6 assets over `/api`, a real SignalR client on `WebSocketTransport` (not long-polling), on-connect snapshot, 4 `QuoteUpdated` frames with sub-cent precision intact, `200` then `429 secondsRemaining: 26`. NYSE closed throughout, so 0 Twelve Data credits spent. Left knowingly: the `@angular/cli` Node-check patch (**D9**), and D8's 10-dp *quantity* round trip still unmeasured. |
 
 ---
 
@@ -483,15 +526,47 @@ Added during Phase 5 (2026-07-31):
   nothing in that case: the loop polls every 30 seconds and would otherwise flood the audit table
   with thousands of no-op rows a day. Both halves are pinned by tests.
 
+Added during Phase 7 (2026-07-31):
+
+- **`src/styles/ui.tokens.scss` is the single source of design truth.** New UI *reads* tokens; it
+  does not introduce values. Colour, spacing, radius, elevation, type scale, layout dimensions,
+  z-layers and motion all live there as CSS custom properties. **Angular Material is derived from
+  it, not configured beside it** — `mat.theme()` contributes only the M3 structural scaffold
+  (elevation/shape/state/typography mechanics, which this Material version exposes no API to seed
+  from an arbitrary hex), and a `--mat-sys-*` override block immediately repoints every colour
+  Material actually paints at the `--ui-*` tokens. Without that block there would be two
+  independent palettes drifting apart.
+  The one deliberate exception: **breakpoints are SCSS variables, not custom properties**, because
+  `@media` cannot read a custom property. They live in `ui.mixins.scss` and nowhere else.
+- **The section accent is a token swap, not a forked stylesheet.** `AppShell` sets
+  `data-section="stock" | "crypto"` on `<html>` from the active route's `assetClass`;
+  `--ui-color-accent` re-aliases and Material follows, because `--mat-sys-primary` points at it.
+- **Ids cross the wire as JSON numbers — model them as `number`, not `string`.** `Asset.Id`,
+  `Transaction.Id` and `Transaction.AssetId` are C# `int`. The API registers no
+  `JsonNumberHandling.AllowReadingFromString`, so `POST`ing `"assetId": "3"` is **rejected with a
+  400** rather than coerced. This is the mirror image of the enum rule and easy to get backwards:
+  **enums are strings, ids are numbers.** Confirmed against the live API (`"id":1`) and the live
+  hub (`"assetId":3`).
+- **Never derive "which market was skipped" from `PriceRefreshCycleResult.sources`.** A gated
+  provider is omitted from that list entirely rather than reported with `attempted: false` — see
+  **D10**. The closed-market set comes from the status snapshot's `nyseOpen` / `sgxOpen` flags.
+  `attempted` remains reliable for exactly one thing: telling a provider that was called and failed
+  from one that was never called.
+- **The hub is the only source of live prices.** There is no "current quotes" REST endpoint, so the
+  60-second polling fallback keeps refresh *status* alive (timestamp, market-open flags, stale
+  warning) but **cannot** keep per-asset prices current. `PriceStore.connectionState` exposes
+  `'polling-fallback'` so the UI says so rather than going quietly stale. If live prices must
+  survive a dropped socket, the backend needs a `GET /api/prices` — a Phase 6 decision, not a
+  frontend workaround.
+
 ---
 
 ## ▶ Next session
 
-Nothing is blocked except Phase 10. **Terminal A is the recommended next session.** Terminal B is
+Nothing is blocked except Phase 10. **Terminal A is the recommended next session** — Phase 9's
+charts need the calculation endpoints, so the backend is now the critical path. Terminal B is
 independent and can run in parallel in its own terminal if you want: the two touch disjoint
-directories (`src/Portfolio.Web` vs. everything else) and cannot collide. The backend is now a
-genuinely useful target for the frontend — live prices push over SignalR, so Phase 7 no longer has
-to build against a polling fallback alone.
+directories (`src/Portfolio.Web` vs. everything else) and cannot collide.
 
 **Terminal A — `backend-dotnet` (Phase 6).** Paste:
 
@@ -523,36 +598,45 @@ not verify — that flag is what caught the real defects in Phases 4 and 5 both.
 to the handoff log, write the next session prompt, and stop.
 ```
 
-**Terminal B — `frontend-angular` (Phase 7).** Paste:
+**Terminal B — `frontend-angular` (Phase 8).** Paste:
 
 ```
-Read tracker.md. The backend serves a working transactions/assets API on
-http://localhost:5100 (see src/Portfolio.Api/Properties/launchSettings.json), with 6
-seeded assets.
+Read tracker.md. Phase 7 is done and verified — the Angular shell, routing, design
+tokens, PriceStore and RefreshIndicator all work, ng test is 68/68, and the dev proxy
+plus the SignalR hub were confirmed live against a running API over a real WebSocket.
 
-Use the frontend-angular agent to do Phase 7 — the Angular scaffold and app shell.
+Use the frontend-angular agent for Phase 8 — the transactions UI.
 
-Two things from the backend that affect the client contract: enums cross the wire as
-strings ("Stock"/"Crypto", "Buy"/"Sell", "TwelveData"/"Yahoo"/"CoinGecko"), not ints, on
-BOTH the REST API and the SignalR hub; and quantities and prices come back as up-to-10-
-decimal-place values, so no model, validator, input step, or display pipe may assume two
-decimals. ANVL trades near $0.0004 — a two-decimal pipe renders it $0.00.
+Do D8 FIRST, before building the quantity input on top of it. Quantities are
+decimal(28,10) and cross the wire as JSON numbers, which JavaScript parses as doubles
+(~15-17 significant digits); 1000000.0000000000 is 17. Sub-cent prices are already
+confirmed intact end to end, but a 10-decimal quantity has never round-tripped through
+a browser. POST one, read it back, compare exactly. If it loses precision the fix is
+serialising those values as strings, and that changes the contract — so find out before
+the form exists, not after.
 
-Phase 5 is done, so SignalR is real: connect PriceStore to http://localhost:5100/hubs/prices.
-The hub is push-only — never call a method on it. Listen for "QuoteUpdated"
-({assetId, symbol, price, currency, asOf}) and "RefreshStatus", and note the hub pushes a
-RefreshStatus snapshot on connect, so the toolbar indicator can render immediately instead
-of waiting for the first tick. Keep the polling fallback for when the socket drops.
+Contract rules that are easy to get backwards, both confirmed against the live API:
+enums are STRINGS ("Stock"/"Crypto", "Buy"/"Sell"), ids are NUMBERS (assetId is a C#
+int and the API rejects "3" with a 400 — it sets no AllowReadingFromString). tradeDate
+is a DateOnly, serialised "YYYY-MM-DD" — never round-trip it through toISOString(),
+which shifts it by the timezone offset.
 
-RefreshIndicator maps onto GET /api/prices/status and POST /api/prices/refresh. The POST
-returns 429 with a secondsRemaining field on its ProblemDetails during the 30s cooldown —
-drive the countdown off that number rather than timing it client-side.
+Everything visual reads src/styles/ui.tokens.scss. Add a token if one is missing; do
+not inline a hex or a raw px at the call site.
 
-Stop after Phase 7. Tick a box in tracker.md only for something you have personally seen
-pass — `ng build` clean is a minimum. Then append to the handoff log, write the next
-session prompt, and commit.
+Use a typed reactive form (FormGroup<{...}>), quantity to 10 decimal places, and handle
+the three backend validation rejections explicitly — they return 400 with
+ValidationProblemDetails: positive quantity, sell cannot exceed units held, trade date
+not in the future.
+
+Stop after Phase 8. Tick a box only for something you have personally seen pass, and
+say plainly what you did not verify — that flag is what caught the real defects in
+Phases 4, 5 and 7. Then append to the handoff log, write the next session prompt, and
+commit.
 ```
 
 **Blocked, for later:**
 
-- **Phase 10** (`container-podman`) needs Podman installed.
+- **Phase 10** (`container-podman`) needs Podman installed. When it happens, note **D9**:
+  `Containerfile.web` must use a Node image ≥ 22.22.3 so the `@angular/cli` Node-check patch is a
+  no-op inside the container rather than load-bearing.
