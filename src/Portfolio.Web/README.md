@@ -23,14 +23,15 @@ can `@use 'ui.mixins' as ui;` from anywhere without a relative path.
 policy, so this proxy is required, not optional. Services call relative URLs only
 (`core/api/api-routes.ts`); never hardcode the API's origin.
 
-## Node version note
+## Node version
 
-The Angular 22 CLI hard-requires Node `^22.22.3 || ^24.15.0 || >=26.0.0` and refuses to run below
-that. This workspace's pinned dev environment is Node 22.13.0, a fully capable Node 22 LTS release
-that is otherwise compatible — the CLI's gate is stricter than the actual runtime requirement.
-`scripts/patch-ng-cli-node-check.js` widens that check in the local `@angular/cli` install and runs
-automatically via the `postinstall` hook after every `npm install`, so a clean install never
-regresses it. Delete both once the machine runs a supported Node version — they become a no-op.
+The Angular 22 CLI refuses to run on anything outside `^22.22.3 || ^24.15.0 || >=26.0.0`, and it is
+a hard error, not a warning. That range is mirrored in `package.json`'s `engines` field so a wrong
+Node fails at install time with a clear message rather than at the first `ng` invocation.
+
+Dev is on **Node 22.23.2**, deliberately staying on the 22 line rather than jumping to the 24 LTS,
+so it matches the `node:22-alpine` base image the Phase 10 container build uses — one Node major
+across dev and the container. If you bump the container image, keep it at 22.22.3 or newer.
 
 ## Development server
 

@@ -6,11 +6,13 @@
     "start": "ng serve",
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
-    "test": "ng test",
-    "postinstall": "node scripts/patch-ng-cli-node-check.js"
+    "test": "ng test"
   },
   "private": true,
-  "packageManager": "npm@10.9.2",
+  "packageManager": "npm@10.9.8",
+  "engines": {
+    "node": "^22.22.3 || ^24.15.0 || >=26.0.0"
+  },
   "dependencies": {
     "@angular/animations": "^22.1.0",
     "@angular/cdk": "^22.1.0",

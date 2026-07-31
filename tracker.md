@@ -60,7 +60,7 @@ Blocking items you need to handle before the relevant phase can start.
 
 | Item | Status | Needed by | How |
 |---|---|---|---|
-| Node.js 22.13.0 | ⚠️ Works, but patched | Phase 7 | Angular 22's CLI refuses Node `< 22.22.3`; a `postinstall` script widens the gate. See **D9** — `winget upgrade OpenJS.NodeJS.LTS` then delete `src/Portfolio.Web/scripts/patch-ng-cli-node-check.js` and its hook |
+| Node.js 22.23.2 | ✅ Installed | Phase 7 | Upgraded from 22.13.0 on 2026-07-31 to clear Angular 22's `^22.22.3` CLI gate. Stayed on the 22 line rather than the 24 LTS, to match Phase 10's `node:22-alpine`. Range pinned in `package.json` `engines` |
 | `MSSQL$SQLEXPRESS` | ✅ Running | Phase 2 | — |
 | .NET 10 SDK | ✅ Installed (10.0.302) | Phase 1 | — |
 | **Twelve Data API key** | ✅ Set | Phase 4 | In `dotnet user-secrets` under `src/Portfolio.Api` as `TwelveData:ApiKey` |
@@ -279,10 +279,10 @@ sub-cent precision intact (AMP `0.00039261`, ANVL `0.00050864`); and `POST /api/
 returned `200` then `429` with `secondsRemaining: 22`. NYSE was closed and TwelveData gated, so
 **0 Twelve Data credits** were spent.
 
-> ⚠️ **`ng` is patched to run on this machine's Node.** Angular 22's CLI hard-refuses Node below
-> `^22.22.3`; this machine has 22.13.0. `scripts/patch-ng-cli-node-check.js` widens that gate in
-> `node_modules` and a `postinstall` hook reapplies it. See **D9** — the real fix is a Node patch
-> upgrade, and this must not survive into the Phase 10 container build.
+> ✅ **Node upgraded to 22.23.2** (2026-07-31), clearing Angular 22's `^22.22.3` CLI gate. The
+> `node_modules` patch that had worked around it is deleted and the range is pinned in
+> `package.json` `engines`. Stayed on the 22 line rather than the 24 LTS so dev matches the
+> `node:22-alpine` image Phase 10 plans to use — **keep that image at 22.22.3 or newer.**
 
 ### ⬜ Phase 8 — Transactions UI · `frontend-angular`
 
@@ -360,7 +360,7 @@ so the list stays a record and not just a to-do.
 | D6 | **The 5/60-minute cadence has never run over a real window** | 5 | Only single cycles and one 2-minute crypto interval have been observed live. The NYSE-open 5-minute cadence, the 60-minute closed cadence and an open→close transition are all unobserved, so "well under 800 credits/day" is still arithmetic rather than measurement. | Low, but needs a real trading day — belongs to Phase 11. |
 | D7 | **Two serializer configurations still exist** | 5 | The enum-as-int bug is fixed, but REST and SignalR agree only because their defaults happen to coincide (both camelCase). Changing a naming policy on one side, or adding a MessagePack protocol, reintroduces the same class of bug. The regression test only covers enums on the JSON protocol. | Low — assert the two configurations agree, or build both from one shared options factory. |
 | D8 | **`decimal(28,10)` over JSON is unproven in a JS client** | 3 | Values cross the wire as JSON numbers and JavaScript parses them as doubles (~15–17 significant digits). `1000000.0000000000` is 17. Sub-cent *prices* are now confirmed intact end to end (ANVL `0.00050864` survived the hub into a real JS client, Phase 7), but a 10-dp **quantity** has still never round-tripped through a browser. Applies to the REST contract from Phase 3. | Unknown until measured. If real, the fix is serialising affected values as strings. **Check this first in Phase 8**, before the 10-decimal quantity input is built on top of it. |
-| D9 | **Angular CLI's Node check is patched in `node_modules`** | 7 | Angular 22's CLI hard-refuses Node `< 22.22.3`; this machine runs 22.13.0, so `ng` will not start at all without it. `scripts/patch-ng-cli-node-check.js` widens the gate and a `postinstall` hook reapplies it after every install. It works and is documented, but it edits a dependency's source — a genuinely unpleasant thing to carry. It also **must not reach the Phase 10 container**: `Containerfile.web` should use a Node image ≥ 22.22.3 so the patch is a no-op there rather than load-bearing. | Low — `winget upgrade OpenJS.NodeJS.LTS` (or nvm) to a current 22.x, then delete the script and its `postinstall` hook. Nothing else depends on it. |
+| D9 | ~~Angular CLI's Node check is patched in `node_modules`~~ **Fixed 2026-07-31** — Node upgraded to 22.23.2, patch and `postinstall` hook deleted, pristine CLI gate confirmed restored | 7 | — | — |
 | D10 | **A gated provider vanishes from `PriceRefreshCycleResult.sources`** | 5 | `SourceRefreshOutcome.Attempted` is documented as "false when the source's market was closed", but `RunCycleAsync` records that outcome to the status store and then `continue`s **without adding it to the returned list** — so a closed market yields no entry at all, not an `attempted: false` one. Any client reading the skipped set off `sources` gets nothing; the Phase 7 UI derives it from `nyseOpen`/`sgxOpen` instead, which is authoritative. Not a bug in behaviour, but the DTO's own doc comment describes a shape the API never emits. | Low — either add the gated outcome to `outcomes` or correct the doc comment. A `backend-dotnet` call. |
 
 ---
@@ -637,6 +637,6 @@ commit.
 
 **Blocked, for later:**
 
-- **Phase 10** (`container-podman`) needs Podman installed. When it happens, note **D9**:
-  `Containerfile.web` must use a Node image ≥ 22.22.3 so the `@angular/cli` Node-check patch is a
-  no-op inside the container rather than load-bearing.
+- **Phase 10** (`container-podman`) needs Podman installed. `Containerfile.web`'s Node base image
+  must be **22.22.3 or newer** — Angular 22's CLI hard-refuses anything older, so a plain
+  `node:22-alpine` tag is only safe if it currently resolves above that. Pin it explicitly.
