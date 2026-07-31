@@ -10,8 +10,11 @@ public enum PriceRefreshOutcome
     /// was recorded.</summary>
     Completed,
 
-    /// <summary>Nothing was due yet — every source's next scheduled check is still in the
-    /// future. No <see cref="Domain.Entities.RefreshRun"/> was written; this is not an error.</summary>
+    /// <summary>Nothing was due yet — every source's next scheduled check is still in the future,
+    /// or every one of them was gated by a closed market. Not an error. A scheduled cycle writes no
+    /// <see cref="Domain.Entities.RefreshRun"/> in this case; a <em>manual</em> one does, so that
+    /// <see cref="Services.PriceRefreshOptions.ManualCooldown"/> still has an attempt to measure
+    /// from and the endpoint cannot be hammered while everything is gated.</summary>
     NothingDue,
 
     /// <summary>A manual refresh was requested within <see cref="Services.PriceRefreshOptions.ManualCooldown"/>

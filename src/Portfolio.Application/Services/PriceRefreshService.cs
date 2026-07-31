@@ -104,22 +104,24 @@ public sealed class PriceRefreshService(
             totalSymbolsRefreshed += outcome.SymbolsRefreshed;
         }
 
+        // Nothing ran. A scheduled tick simply returns — recording a row every PollInterval would
+        // flood the audit trail with no-ops. A *manual* trigger still records its run, because the
+        // cooldown in RefreshNowAsync is derived from persisted manual RefreshRuns: skipping the
+        // write whenever every source happened to be gated would leave the endpoint with no
+        // cooldown at all and open to being hammered. The outcome reported to the caller is still
+        // NothingDue — the run row exists to mark the attempt, not to claim work was done.
         if (outcomes.Count == 0)
         {
+            if (force)
+            {
+                db.AddRefreshRun(BuildRun(force, outcomes, now, totalSymbolsRefreshed));
+                await db.SaveChangesAsync(cancellationToken);
+            }
+
             return new PriceRefreshCycleResult(PriceRefreshOutcome.NothingDue, null, [], 0);
         }
 
-        var run = new RefreshRun
-        {
-            Trigger = force ? RefreshTrigger.Manual : RefreshTrigger.Scheduled,
-            AssetClass = InferAssetClass(outcomes),
-            StartedAt = now,
-            CompletedAt = timeProvider.GetUtcNow(),
-            Success = outcomes.All(o => o.Success),
-            ErrorMessage = BuildErrorSummary(outcomes),
-            SymbolsRefreshed = totalSymbolsRefreshed,
-        };
-        db.AddRefreshRun(run);
+        db.AddRefreshRun(BuildRun(force, outcomes, now, totalSymbolsRefreshed));
         await db.SaveChangesAsync(cancellationToken);
 
         var status = statusStore.GetSnapshot(
@@ -203,6 +205,22 @@ public sealed class PriceRefreshService(
             existing.AsOf = asOf;
         }
     }
+
+    /// <summary>Builds the durable audit row for one cycle. Valid for an empty outcome list too —
+    /// that is the manual-trigger-but-everything-gated case, which records a run with no asset
+    /// class, no error and zero symbols so the cooldown still has something to measure from.</summary>
+    private RefreshRun BuildRun(
+        bool force, IReadOnlyList<SourceRefreshOutcome> outcomes, DateTimeOffset startedAt, int totalSymbolsRefreshed) =>
+        new()
+        {
+            Trigger = force ? RefreshTrigger.Manual : RefreshTrigger.Scheduled,
+            AssetClass = InferAssetClass(outcomes),
+            StartedAt = startedAt,
+            CompletedAt = timeProvider.GetUtcNow(),
+            Success = outcomes.All(o => o.Success),
+            ErrorMessage = BuildErrorSummary(outcomes),
+            SymbolsRefreshed = totalSymbolsRefreshed,
+        };
 
     private static AssetClass? InferAssetClass(IReadOnlyList<SourceRefreshOutcome> outcomes)
     {

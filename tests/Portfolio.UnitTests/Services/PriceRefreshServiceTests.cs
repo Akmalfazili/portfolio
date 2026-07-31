@@ -364,6 +364,61 @@ public sealed class PriceRefreshServiceTests : IDisposable
         result.Sources.Should().NotContain(s => s.Source == QuoteProviderKind.TwelveData);
         await twelveData.DidNotReceive().GetQuotesAsync(Arg.Any<IReadOnlyCollection<Asset>>(), Arg.Any<CancellationToken>());
     }
+
+    [Fact]
+    public async Task RefreshNowAsync_EngagesTheCooldown_EvenWhenEverySourceWasGated()
+    {
+        // The one arrangement where the cooldown used to fail open: no crypto to refresh
+        // unconditionally, and every equity market closed. Every group is gated, so the cycle
+        // does no work — but the attempt must still be recorded, or the cooldown has nothing to
+        // measure from and the endpoint can be hammered.
+        _calendar.IsOpen(Arg.Any<Market>(), Arg.Any<DateTimeOffset>()).Returns(false);
+
+        var twelveData = FakeProvider(QuoteProviderKind.TwelveData);
+        var yahoo = FakeProvider(QuoteProviderKind.Yahoo);
+        var router = RouterFor((_aapl, twelveData), (_z74, yahoo));
+        _db.Assets.Remove(_eth);
+        await _db.SaveChangesAsync();
+
+        var sut = CreateSut(router);
+
+        var first = await sut.RefreshNowAsync(CancellationToken.None);
+        first.Outcome.Should().Be(PriceRefreshOutcome.NothingDue);
+
+        // The attempt is on record even though nothing was fetched.
+        (await _db.RefreshRuns.CountAsync(r => r.Trigger == RefreshTrigger.Manual)).Should().Be(1);
+
+        var second = await sut.RefreshNowAsync(CancellationToken.None);
+        second.Outcome.Should().Be(PriceRefreshOutcome.CooldownActive);
+        second.CooldownSecondsRemaining.Should().BePositive();
+
+        // Still no provider touched, and the blocked attempt added no second row.
+        await twelveData.DidNotReceive().GetQuotesAsync(Arg.Any<IReadOnlyCollection<Asset>>(), Arg.Any<CancellationToken>());
+        await yahoo.DidNotReceive().GetQuotesAsync(Arg.Any<IReadOnlyCollection<Asset>>(), Arg.Any<CancellationToken>());
+        (await _db.RefreshRuns.CountAsync()).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task RefreshDueAsync_GatedByClosedMarkets_StillRecordsNoRefreshRun()
+    {
+        // The counterpart to the test above: the same all-gated situation on the *scheduled* path
+        // must stay silent. The background loop polls every 30 seconds, so recording a row here
+        // would write thousands of no-op rows a day.
+        _calendar.IsOpen(Arg.Any<Market>(), Arg.Any<DateTimeOffset>()).Returns(false);
+
+        var twelveData = FakeProvider(QuoteProviderKind.TwelveData);
+        var yahoo = FakeProvider(QuoteProviderKind.Yahoo);
+        var router = RouterFor((_aapl, twelveData), (_z74, yahoo));
+        _db.Assets.Remove(_eth);
+        await _db.SaveChangesAsync();
+
+        var sut = CreateSut(router);
+
+        var result = await sut.RefreshDueAsync(CancellationToken.None);
+
+        result.Outcome.Should().Be(PriceRefreshOutcome.NothingDue);
+        (await _db.RefreshRuns.CountAsync()).Should().Be(0);
+    }
 }
 
 file static class SubstituteExtensions
