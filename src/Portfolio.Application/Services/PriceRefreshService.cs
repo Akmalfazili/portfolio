@@ -80,14 +80,15 @@ public sealed class PriceRefreshService(
             // manual trigger. Crypto has no market entry here, so it is never gated.
             if (market is { } gatedMarket && !calendar.IsOpen(gatedMarket, now))
             {
-                statusStore.RecordOutcome(
+                await statusStore.RecordOutcomeAsync(
                     new SourceRefreshOutcome(source, Attempted: false, Success: true, SymbolsRefreshed: 0, Error: null),
                     now,
-                    now + options.Value.StockClosedInterval);
+                    now + options.Value.StockClosedInterval,
+                    cancellationToken);
                 continue;
             }
 
-            var nextDueAt = statusStore.GetNextDueAt(source);
+            var nextDueAt = await statusStore.GetNextDueAtAsync(source, cancellationToken);
             var due = force || nextDueAt is null || now >= nextDueAt;
             if (!due)
             {
@@ -98,7 +99,7 @@ public sealed class PriceRefreshService(
             var outcome = await RefreshGroupAsync(source, groupAssets, cancellationToken);
 
             var interval = market is not null ? options.Value.StockOpenInterval : options.Value.CryptoInterval;
-            statusStore.RecordOutcome(outcome, now, now + interval);
+            await statusStore.RecordOutcomeAsync(outcome, now, now + interval, cancellationToken);
 
             outcomes.Add(outcome);
             totalSymbolsRefreshed += outcome.SymbolsRefreshed;
@@ -124,9 +125,10 @@ public sealed class PriceRefreshService(
         db.AddRefreshRun(BuildRun(force, outcomes, now, totalSymbolsRefreshed));
         await db.SaveChangesAsync(cancellationToken);
 
-        var status = statusStore.GetSnapshot(
+        var status = await statusStore.GetSnapshotAsync(
             calendar.IsOpen(Market.Nyse, now),
-            calendar.IsOpen(Market.Sgx, now));
+            calendar.IsOpen(Market.Sgx, now),
+            cancellationToken);
         await broadcaster.BroadcastRefreshStatusAsync(status, cancellationToken);
 
         return new PriceRefreshCycleResult(PriceRefreshOutcome.Completed, null, outcomes, totalSymbolsRefreshed);

@@ -14,7 +14,11 @@ public static class DependencyInjection
         services.AddScoped<IPriceBackfillService, PriceBackfillService>();
 
         services.AddSingleton<IMarketCalendar, MarketCalendar>();
-        services.AddSingleton<PriceRefreshStatusStore>();
+
+        // Scoped, not singleton: the status store now reads and writes SourceRefreshState through
+        // the scoped IPortfolioDbContext, so it must share the ambient scope's DbContext rather
+        // than capturing one for the process lifetime.
+        services.AddScoped<PriceRefreshStatusStore>();
         services.AddScoped<IPriceRefreshService, PriceRefreshService>();
         services.AddHostedService<PriceRefreshBackgroundService>();
 

@@ -23,6 +23,8 @@ public interface IPortfolioDbContext
 
     IQueryable<RefreshRun> RefreshRuns { get; }
 
+    IQueryable<SourceRefreshState> SourceRefreshStates { get; }
+
     void AddAsset(Asset asset);
 
     void AddTransaction(Transaction transaction);
@@ -36,6 +38,8 @@ public interface IPortfolioDbContext
     void AddPriceQuote(PriceQuote priceQuote);
 
     void AddRefreshRun(RefreshRun refreshRun);
+
+    void AddSourceRefreshState(SourceRefreshState state);
 
     ValueTask<Asset?> FindAssetAsync(int id, CancellationToken cancellationToken);
 

@@ -29,15 +29,17 @@ public static class PricesEndpoints
             return TypedResults.Ok(result);
         });
 
-        group.MapGet("/status", (
+        group.MapGet("/status", async (
             PriceRefreshStatusStore statusStore,
             IMarketCalendar calendar,
-            TimeProvider timeProvider) =>
+            TimeProvider timeProvider,
+            CancellationToken cancellationToken) =>
         {
             var now = timeProvider.GetUtcNow();
-            var status = statusStore.GetSnapshot(
+            var status = await statusStore.GetSnapshotAsync(
                 calendar.IsOpen(Market.Nyse, now),
-                calendar.IsOpen(Market.Sgx, now));
+                calendar.IsOpen(Market.Sgx, now),
+                cancellationToken);
 
             return TypedResults.Ok(status);
         });

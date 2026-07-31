@@ -75,7 +75,7 @@ public sealed class PriceRefreshServiceTests : IDisposable
         _timeProvider = new MutableTimeProvider(new DateTimeOffset(2026, 7, 29, 15, 0, 0, TimeSpan.Zero)); // Wed 15:00 UTC
         _calendar = Substitute.For<IMarketCalendar>();
         _broadcaster = Substitute.For<IPriceUpdateBroadcaster>();
-        _statusStore = new PriceRefreshStatusStore();
+        _statusStore = new PriceRefreshStatusStore(_db);
         _options = new PriceRefreshOptions();
     }
 

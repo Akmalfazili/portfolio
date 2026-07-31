@@ -41,8 +41,8 @@ so each session stays focused and its context stays clean.
 **Currently active:** none — Phases 1–5 closed out and verified, Phase 5 on 2026-07-31.
 
 > ✅ **Prices refresh themselves and push over SignalR.** `dotnet build portfolio.slnx` is clean
-> with zero warnings under `TreatWarningsAsErrors` and `dotnet test portfolio.slnx` is 90/90 green
-> (86 unit + 4 integration). Push delivery was verified with a real SignalR client against a
+> with zero warnings under `TreatWarningsAsErrors` and `dotnet test portfolio.slnx` is 95/95 green
+> (91 unit + 4 integration). Push delivery was verified with a real SignalR client against a
 > running API, not asserted from unit tests.
 >
 > **Nothing is blocked any more.** Phase 6 (`backend-dotnet`) and Phase 7 (`frontend-angular`) are
@@ -172,7 +172,7 @@ Verified 2026-07-31 against a running API with a real SignalR client.
 - [x] Background-loop tests: survives a throwing cycle and keeps polling, creates a fresh DI scope
       per tick, shuts down cleanly on cancellation. Uses `FakeTimeProvider`, since the loop waits
       via `Task.Delay(…, TimeProvider, …)` and `MutableTimeProvider` only overrides `GetUtcNow`
-- [x] `dotnet build portfolio.slnx` clean, `dotnet test portfolio.slnx` **90/90** (86 unit + 4
+- [x] `dotnet build portfolio.slnx` clean, `dotnet test portfolio.slnx` **95/95** (91 unit + 4
       integration)
 
 **Live-verified, 04:0x ET on a Friday** — NYSE closed and SGX inside its lunch break, so both
@@ -304,6 +304,25 @@ every crypto backfill call spends rate limit for data no page will read.
 
 ---
 
+## Known drawbacks — revisit later
+
+Things that are wrong, incomplete, or unproven, kept here so they are decided about rather than
+rediscovered. None of these block the next phase. Anything fixed gets struck through with the date,
+so the list stays a record and not just a to-do.
+
+| # | Drawback | Phase | Impact | Cost to fix |
+|---|---|---|---|---|
+| D1 | ~~Manual cooldown could fail to engage when every source was gated~~ **Fixed 2026-07-31** | 5 | — | — |
+| D2 | ~~Background refresh loop had no automated test~~ **Fixed 2026-07-31** | 5 | — | — |
+| D3 | ~~Refresh status was in-memory and reset on restart~~ **Fixed 2026-07-31** | 5 | — | — |
+| D4 | **SGX lunar holidays are not modelled** | 5 | Calendar reports SGX open on Chinese New Year, Vesak, Hari Raya and Deepavali. Yahoo is called anyway and returns the previous close, which is then stored with a fresh-looking timestamp — Z74 silently looks current on days it isn't. No credit cost (Yahoo is unmetered). NYSE holidays *are* fully rule-based. | Medium — needs a maintained per-year table or a holiday API. Deliberately not faked with an approximation. |
+| D5 | **Manual refresh is a no-op for stocks outside market hours** | 5 | Deliberate: the button bypasses the interval, not the calendar, so a 3am click can't burn Twelve Data credits. But it returns `200 Completed` having touched only crypto, which reads as broken. | Low — a UI concern for Phase 7: say *why* nothing moved rather than showing a silent success. |
+| D6 | **The 5/60-minute cadence has never run over a real window** | 5 | Only single cycles and one 2-minute crypto interval have been observed live. The NYSE-open 5-minute cadence, the 60-minute closed cadence and an open→close transition are all unobserved, so "well under 800 credits/day" is still arithmetic rather than measurement. | Low, but needs a real trading day — belongs to Phase 11. |
+| D7 | **Two serializer configurations still exist** | 5 | The enum-as-int bug is fixed, but REST and SignalR agree only because their defaults happen to coincide (both camelCase). Changing a naming policy on one side, or adding a MessagePack protocol, reintroduces the same class of bug. The regression test only covers enums on the JSON protocol. | Low — assert the two configurations agree, or build both from one shared options factory. |
+| D8 | **`decimal(28,10)` over JSON is unproven in a JS client** | 3 | Values cross the wire as JSON numbers and JavaScript parses them as doubles (~15–17 significant digits). `1000000.0000000000` is 17. Nothing has been tested end to end in a browser, so this is a question, not a known bug. Applies to the REST contract from Phase 3, not just Phase 5. | Unknown until measured. If real, the fix is serialising affected values as strings. **Check this early in Phase 8**, before the 10-decimal quantity input is built on top of it. |
+
+---
+
 ## Handoff log
 
 | Date | Agent | Phases | Outcome |
@@ -314,6 +333,7 @@ every crypto backfill call spends rate limit for data no page will read.
 | 2026-07-26 | `backend-dotnet` | 4 | **Complete and verified.** User supplied the Twelve Data key (stored in user-secrets, never written to a file) and pointed at CoinGecko's keyless API, which needs no key — Phase 4 unblocked. Smoke-testing the APIs *before* launching the agent caught that **Twelve Data's free tier cannot serve Z74** at all, invalidating the recorded "only free source covering both US and SGX" decision; user chose Yahoo Finance for Z74, so a fourth provider and an explicit `Asset.QuoteProviderKind` dispatch key were added. Agent reported honestly, including flagging CoinGecko's history endpoint as untested — live-testing that gap myself found the one real defect: keyless CoinGecko caps history at 365 days (HTTP 401, `error_code 10012`) and the provider swallowed it as an empty list, which would have silently backfilled nothing for any crypto held over a year. Fixed via `HistoryFetchResult`. Verified independently of the agent: build clean 0 warnings, 51/51 tests, key absent from the entire tree, `Program.cs` byte-identical to Phase 3 (temporary debug endpoints genuinely removed), migration applied and routing correct in SQLEXPRESS. |
 | 2026-07-31 | `backend-dotnet` | 5 | **Complete and verified.** Calendar, refresh service, hub, both endpoints built; agent reported honestly and flagged SignalR wire delivery as unverified. Live-testing that flag found the one real defect: **SignalR does not inherit `ConfigureHttpJsonOptions`**, so `QuoteProviderKind` crossed the hub as `"source":0` while REST sent `"source":"TwelveData"` — the exact payload Phase 7 merges, and invisible to every unit test. Fixed at `AddSignalR()` with a regression test the agent confirmed fails when reverted. Verified independently of the agent: build 0 warnings, 85/85 tests, no pending EF model changes, no SignalR type outside `Portfolio.Api`, and a real SignalR client run against the live API — on-connect snapshot plus `QuoteUpdated`/`RefreshStatus` over the wire, sub-cent precision intact (ANVL `0.00051468`), `200` then `429 secondsRemaining: 22`. NYSE closed and SGX in its lunch break during the run, so **0 Twelve Data credits** were spent, and the background loop was observed ticking unprompted. Left knowingly: SGX lunar holidays unmodelled. |
 | 2026-07-31 | — | 5 (follow-up) | **Two Phase 5 drawbacks closed.** (1) The manual-cooldown edge case is fixed — a manual cycle now persists its `RefreshRun` even when every source was gated, so `POST /api/prices/refresh` can no longer be hammered with zero crypto assets and all markets closed; the scheduled path still writes nothing there, so the 30-second poll doesn't flood the audit table. (2) The background loop now has tests: survives a throwing cycle and keeps polling, fresh DI scope per tick, clean shutdown — needing `Microsoft.Extensions.TimeProvider.Testing`'s `FakeTimeProvider`, since the loop waits via `Task.Delay(…, TimeProvider, …)` and `MutableTimeProvider` only overrides `GetUtcNow`. Both new tests were confirmed to **fail when their fix is reverted** (missing `RefreshRun`; loop exits instead of retrying) rather than trusted because they were green. 90/90, build clean. |
+| 2026-07-31 | — | 5 (follow-up) | **Refresh status made durable (D3), and the drawback register added.** `PriceRefreshStatusStore` now reads and writes a new `SourceRefreshState` table — one upserted row per provider, three rows forever — instead of a process-lifetime dictionary; it became scoped, and `LastRefreshedAt` is derived from the newest `LastSuccessAt` rather than stored separately. The original "it's only a UI indicator" reasoning was wrong: `NextDueAt` gates the cadence, so every restart made all providers due immediately and re-spent Twelve Data credits. Migration `20260731044754_AddSourceRefreshState` applied to SQLEXPRESS. **Live-proven with a real restart**: status survived (`lastRefreshedAt` 04:50:51 from before the restart), CoinGecko was *not* re-called on startup, and the next cycle fired exactly at the persisted due time 04:52:51 — which also verified the 2-minute crypto cadence over a real interval for the first time. The restart test was confirmed to fail when next-due is not persisted. 95/95, build clean. Remaining drawbacks D4–D8 recorded in the new register rather than left in conversation. |
 
 ---
 
@@ -431,11 +451,21 @@ Added during Phase 5 (2026-07-31):
   *interval*, not the *calendar* — only crypto is unconditional. Clicking refresh at 3am will not
   spend a Twelve Data credit on a closed NYSE. Deliberate: the button means "don't wait for the
   next tick", not "call every provider regardless".
-- **Refresh status is in-memory, `RefreshRun` is durable.** `PriceRefreshStatusStore` (singleton)
-  holds per-provider next-due/last-success and **resets on restart**; persisted `RefreshRun` rows
-  are the audit trail and back the 30s cooldown. So `GET /api/prices/status` reads a little empty
-  right after a restart until the first cycle completes — accepted for a "since I last looked"
-  indicator, and worth knowing before it looks like a bug.
+- ~~**Refresh status is in-memory, `RefreshRun` is durable.** `PriceRefreshStatusStore` resets on
+  restart, accepted for a "since I last looked" indicator.~~ **Superseded 2026-07-31** — it was not
+  only a UI concern, see below.
+- **Refresh status is persisted in `SourceRefreshState`; `RefreshRun` stays the audit trail.**
+  `PriceRefreshStatusStore` is now scoped and backed by a table holding **one upserted row per
+  provider** — three rows, forever, never growing. It was originally in-memory on the reasoning
+  that nothing outside the process needed it, which missed that `NextDueAt` **gates the cadence**:
+  losing it on restart made every provider due immediately, so each restart re-called every
+  provider and re-spent Twelve Data credits that had been spent moments earlier. A debugging
+  session with a dozen restarts could take a real bite out of the 800/day budget. Persisting it
+  fixes the credit burn and the blank indicator together. `RecordOutcomeAsync` saves immediately
+  rather than relying on the caller, because a cycle where every source is gated writes nothing
+  else at all and would otherwise lose the closed-market backoff. `LastRefreshedAt` is **derived**
+  as the newest `LastSuccessAt` rather than stored, so it cannot drift from the rows it summarises.
+  Migration `20260731044754_AddSourceRefreshState`.
 - **`BackgroundService` lives in `Portfolio.Application`**, via a
   `Microsoft.Extensions.Hosting.Abstractions` package reference. Pure hosting lifecycle, no HTTP or
   SignalR types, so the inward-only rule still holds — the same trade already made for
@@ -468,7 +498,7 @@ to build against a polling fallback alone.
 ```
 Read tracker.md. Phase 5 is done and verified — the market calendar, background refresh
 service, SignalR hub and both prices endpoints all work against a live API, and dotnet
-test portfolio.slnx is 90/90.
+test portfolio.slnx is 95/95.
 
 Use the backend-dotnet agent for Phase 6 (portfolio calculations).
 

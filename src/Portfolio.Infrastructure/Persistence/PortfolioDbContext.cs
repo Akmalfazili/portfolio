@@ -28,6 +28,8 @@ public class PortfolioDbContext(DbContextOptions<PortfolioDbContext> options) : 
 
     public DbSet<RefreshRun> RefreshRuns => Set<RefreshRun>();
 
+    public DbSet<SourceRefreshState> SourceRefreshStates => Set<SourceRefreshState>();
+
     IQueryable<Asset> IPortfolioDbContext.Assets => Assets;
 
     IQueryable<Transaction> IPortfolioDbContext.Transactions => Transactions;
@@ -39,6 +41,8 @@ public class PortfolioDbContext(DbContextOptions<PortfolioDbContext> options) : 
     IQueryable<PriceQuote> IPortfolioDbContext.PriceQuotes => PriceQuotes;
 
     IQueryable<RefreshRun> IPortfolioDbContext.RefreshRuns => RefreshRuns;
+
+    IQueryable<SourceRefreshState> IPortfolioDbContext.SourceRefreshStates => SourceRefreshStates;
 
     public void AddAsset(Asset asset) => Assets.Add(asset);
 
@@ -53,6 +57,8 @@ public class PortfolioDbContext(DbContextOptions<PortfolioDbContext> options) : 
     public void AddPriceQuote(PriceQuote priceQuote) => PriceQuotes.Add(priceQuote);
 
     public void AddRefreshRun(RefreshRun refreshRun) => RefreshRuns.Add(refreshRun);
+
+    public void AddSourceRefreshState(SourceRefreshState state) => SourceRefreshStates.Add(state);
 
     public ValueTask<Asset?> FindAssetAsync(int id, CancellationToken cancellationToken) =>
         Assets.FindAsync([id], cancellationToken);

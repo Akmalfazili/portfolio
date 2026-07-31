@@ -19,9 +19,10 @@ public sealed class PricesHub(
     public override async Task OnConnectedAsync()
     {
         var now = timeProvider.GetUtcNow();
-        var status = statusStore.GetSnapshot(
+        var status = await statusStore.GetSnapshotAsync(
             calendar.IsOpen(Market.Nyse, now),
-            calendar.IsOpen(Market.Sgx, now));
+            calendar.IsOpen(Market.Sgx, now),
+            Context.ConnectionAborted);
 
         await Clients.Caller.SendAsync("RefreshStatus", status);
         await base.OnConnectedAsync();
