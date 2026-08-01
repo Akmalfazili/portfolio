@@ -1,0 +1,20 @@
+.transaction-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-1);
+  min-width: var(--ui-layout-dialog-width-sm);
+}
+
+.transaction-form__error {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  margin: 0 0 var(--ui-space-2);
+  color: var(--ui-color-loss);
+  font-size: var(--ui-font-size-sm);
+}
+
+.transaction-form__deleted {
+  max-width: var(--ui-layout-dialog-width-sm);
+  color: var(--ui-color-on-surface-secondary);
+}

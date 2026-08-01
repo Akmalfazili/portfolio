@@ -33,12 +33,12 @@ so each session stays focused and its context stays clean.
 | 5 | Auto-refresh + SignalR | `backend-dotnet` | ✅ Done — verified |
 | 6 | Portfolio calculations | `backend-dotnet` | ✅ Done — verified |
 | 7 | Angular scaffold + shell | `frontend-angular` | ✅ Done — verified |
-| 8 | Transactions UI | `frontend-angular` | ⬜ Not started |
+| 8 | Transactions UI | `frontend-angular` | ✅ Done — verified |
 | 9 | Overview + detail pages | `frontend-angular` | ⬜ Not started |
 | 10 | Podman stack | `container-podman` | ⬜ Not started |
 | 11 | End-to-end verification | — | ⬜ Not started |
 
-**Currently active:** none — Phases 1–7 closed out and verified, Phase 6 on 2026-08-01.
+**Currently active:** none — Phases 1–8 closed out and verified, Phases 6 and 8 on 2026-08-01.
 
 > ✅ **Prices refresh themselves and push over SignalR.** `dotnet build portfolio.slnx` is clean
 > with zero warnings under `TreatWarningsAsErrors` and `dotnet test portfolio.slnx` is 95/95 green
@@ -55,8 +55,13 @@ so each session stays focused and its context stays clean.
 > prices and 10-dp quantities survive, and the TWR figure was recomputed by hand sub-period by
 > sub-period.
 >
-> **Phase 9 is now unblocked** — the charts have their endpoints. Phase 8 (`frontend-angular`) is
-> also open, and the two touch disjoint directories. Phase 10 still needs Podman installed.
+> ✅ **The transactions UI is complete and D8 is closed.** `ng build` clean, `ng test` **97/97**
+> (was 68/68). The D8 question that had blocked the quantity input was settled by measurement
+> against a live API, and the answer was **not** the one D8 predicted — see the struck-through
+> entry in the register.
+>
+> **Phase 9 is the only unblocked work left.** It is `frontend-angular` in the same directory as
+> Phase 8, so it needs its own fresh terminal. Phase 10 still needs Podman installed.
 
 ---
 
@@ -321,15 +326,41 @@ returned `200` then `429` with `secondsRemaining: 22`. NYSE was closed and Twelv
 > `package.json` `engines`. Stayed on the 22 line rather than the 24 LTS so dev matches the
 > `node:22-alpine` image Phase 10 plans to use — **keep that image at 22.22.3 or newer.**
 
-### ⬜ Phase 8 — Transactions UI · `frontend-angular`
+### ✅ Phase 8 — Transactions UI · `frontend-angular`
+
+Verified 2026-08-01 against a running API on `localhost:5100`.
 
 > Everything new reads `ui.tokens.scss` — it does not introduce values. See the rule stated at the
 > top of that file. Adding a token is fine; inlining a hex or a raw `px` at the call site is not.
 
-- [ ] Transactions list with asset-class filter
-- [ ] `TransactionFormDialog` — typed reactive form, **quantity to 10 decimal places**
-- [ ] Create / edit / delete flows with optimistic UI and error handling
-- [ ] Loading, empty, and error states on every data-backed view
+- [x] Transactions list with asset-class filter (`All` / `Stock` / `Crypto`)
+- [x] `TransactionFormDialog` — typed `FormGroup<{...}>`, **quantity to 10 decimal places** via
+      `type="number" step="any"` plus `decimalPrecisionValidator` — never a `step` assuming
+      integers or 2dp
+- [x] Create / edit / delete with optimistic UI: delete removes immediately and rolls back via
+      `reload()` + an inline banner on failure; create/edit splice the server's own response into
+      the sorted list through `WritableResource.update()` rather than refetching
+- [x] Loading, error and **two** empty states (no transactions at all vs. filter matches nothing),
+      plus a non-blocking warning when `/api/assets` itself fails, with New/Edit disabled until it
+      resolves
+- [x] All three 400 `ValidationProblemDetails` rejections mapped to their own fields, and a bare
+      `PUT` 404 shown as its own "deleted elsewhere" state rather than a generic error
+- [x] `api-routes.ts` id parameters corrected from `string` to `number`; `local-date.ts` formats
+      local date parts directly so `DateOnly` never round-trips through `toISOString()`
+- [x] One new token, `--ui-layout-dialog-width-sm`; tree re-grepped clean of hex and raw `px`
+- [x] `ng build` clean, `ng test` **97/97** across 17 files (was 68/68)
+
+**Live-verified, independently of the agent** — create → read-back → delete against the real API,
+with `Transactions` confirmed at `[]` before and after. Both D8 probes were re-run from this
+terminal rather than taken on report; see the D8 entry for what they measured. It was a Saturday
+with both markets gated, so **0 Twelve Data credits** were spent (`TwelveData.symbolsRefreshed: 0`).
+
+> 🐛 **Caught by the agent in its own draft, before it shipped.** Its first
+> `decimalPrecisionValidator` rejected any value whose `String(value)` contained `"e"` — which
+> would have blocked exactly the `0.0000000001` quantity the D8 probe had *just proved the backend
+> accepts*, since `String(0.0000000001)` is `"1e-10"`. Now formats via `toLocaleString('en-US', {
+> maximumFractionDigits: 20 })`, which never switches to exponential notation, and the exact case
+> is pinned by `decimal-precision.validator.spec.ts`.
 
 ### ⬜ Phase 9 — Overview + detail pages · `frontend-angular`
 
@@ -396,7 +427,7 @@ so the list stays a record and not just a to-do.
 | D5 | ~~Manual refresh is a no-op for stocks outside market hours~~ **Fixed 2026-07-31** (frontend messaging, Phase 7) | 5 | — | — |
 | D6 | **The 5/60-minute cadence has never run over a real window** | 5 | Only single cycles and one 2-minute crypto interval have been observed live. The NYSE-open 5-minute cadence, the 60-minute closed cadence and an open→close transition are all unobserved, so "well under 800 credits/day" is still arithmetic rather than measurement. | Low, but needs a real trading day — belongs to Phase 11. |
 | D7 | **Two serializer configurations still exist** | 5 | The enum-as-int bug is fixed, but REST and SignalR agree only because their defaults happen to coincide (both camelCase). Changing a naming policy on one side, or adding a MessagePack protocol, reintroduces the same class of bug. The regression test only covers enums on the JSON protocol. | Low — assert the two configurations agree, or build both from one shared options factory. |
-| D8 | **`decimal(28,10)` over JSON is unproven in a JS client** | 3 | Values cross the wire as JSON numbers and JavaScript parses them as doubles (~15–17 significant digits). `1000000.0000000000` is 17. Sub-cent *prices* are now confirmed intact end to end (ANVL `0.00050864` survived the hub into a real JS client, Phase 7), but a 10-dp **quantity** has still never round-tripped through a browser. Applies to the REST contract from Phase 3. | Unknown until measured. If real, the fix is serialising affected values as strings. **Check this first in Phase 8**, before the 10-decimal quantity input is built on top of it. |
+| D8 | ~~**`decimal(28,10)` over JSON is unproven in a JS client**~~ **Closed 2026-08-01 — measured, and the original premise was wrong** | 3 | Kept in full below, because what it actually measured is worth not rediscovering. | — |
 | D9 | ~~Angular CLI's Node check is patched in `node_modules`~~ **Fixed 2026-07-31** — Node upgraded to 22.23.2, patch and `postinstall` hook deleted, pristine CLI gate confirmed restored | 7 | — | — |
 | D10 | **A gated provider vanishes from `PriceRefreshCycleResult.sources`** | 5 | `SourceRefreshOutcome.Attempted` is documented as "false when the source's market was closed", but `RunCycleAsync` records that outcome to the status store and then `continue`s **without adding it to the returned list** — so a closed market yields no entry at all, not an `attempted: false` one. Any client reading the skipped set off `sources` gets nothing; the Phase 7 UI derives it from `nyseOpen`/`sgxOpen` instead, which is authoritative. Not a bug in behaviour, but the DTO's own doc comment describes a shape the API never emits. | Low — either add the gated outcome to `outcomes` or correct the doc comment. A `backend-dotnet` call. |
 | D11 | **`AssetClass` route/query binding is case-sensitive** | 3, 6 | `/api/portfolio/stock/summary` returns **400**; only `/api/portfolio/Stock/summary` binds. Pre-existing, not a Phase 6 regression — `/api/assets?assetClass=stock` 400s on unmodified Phase 3 code too. Route *literals* are case-**in**sensitive, so `/api/portfolio/{Stock,stock}/annual-returns` both work; only the enum-bound segment is fussy. **The safe frontend rule is to send `Stock`/`Crypto` capitalised everywhere** — that form works on every route. Deliberately not special-cased on the new routes alone, which would create exactly the two-encodings-of-one-field drift D7 warns about. | Low — a custom binder or a `[FromRoute]` string parsed case-insensitively, applied to *both* the route and the Phase 3 query parameter together, never just one. |
@@ -417,6 +448,7 @@ so the list stays a record and not just a to-do.
 | 2026-07-31 | — | 5 (follow-up) | **Two Phase 5 drawbacks closed.** (1) The manual-cooldown edge case is fixed — a manual cycle now persists its `RefreshRun` even when every source was gated, so `POST /api/prices/refresh` can no longer be hammered with zero crypto assets and all markets closed; the scheduled path still writes nothing there, so the 30-second poll doesn't flood the audit table. (2) The background loop now has tests: survives a throwing cycle and keeps polling, fresh DI scope per tick, clean shutdown — needing `Microsoft.Extensions.TimeProvider.Testing`'s `FakeTimeProvider`, since the loop waits via `Task.Delay(…, TimeProvider, …)` and `MutableTimeProvider` only overrides `GetUtcNow`. Both new tests were confirmed to **fail when their fix is reverted** (missing `RefreshRun`; loop exits instead of retrying) rather than trusted because they were green. 90/90, build clean. |
 | 2026-07-31 | — | 5 (follow-up) | **Refresh status made durable (D3), and the drawback register added.** `PriceRefreshStatusStore` now reads and writes a new `SourceRefreshState` table — one upserted row per provider, three rows forever — instead of a process-lifetime dictionary; it became scoped, and `LastRefreshedAt` is derived from the newest `LastSuccessAt` rather than stored separately. The original "it's only a UI indicator" reasoning was wrong: `NextDueAt` gates the cadence, so every restart made all providers due immediately and re-spent Twelve Data credits. Migration `20260731044754_AddSourceRefreshState` applied to SQLEXPRESS. **Live-proven with a real restart**: status survived (`lastRefreshedAt` 04:50:51 from before the restart), CoinGecko was *not* re-called on startup, and the next cycle fired exactly at the persisted due time 04:52:51 — which also verified the 2-minute crypto cadence over a real interval for the first time. The restart test was confirmed to fail when next-due is not persisted. 95/95, build clean. Remaining drawbacks D4–D8 recorded in the new register rather than left in conversation. |
 | 2026-08-01 | `backend-dotnet` | 6 | **Complete and verified.** Cost basis, P&L, performance series, TWR, both summary/allocation endpoints and both stocks-only endpoints built; crypto excluded from `PriceBackfillService`. Agent reported honestly, including flagging that it had not exercised the payloads through a JS client and that live annual returns only covered ~5 days of real data. Verifying its work found **one real defect, and a serious one**: `AnnualReturnCalculator` matched cash flows to valuations by **exact date equality**, but valuations come from stored `PriceHistory` dates while flows come from each transaction's `TradeDate` — two series with no guarantee of alignment. Any buy dated a weekend, a holiday, or any day without a stored close was dropped from the subtraction and its money reported as **performance**, which is the one thing TWR is chosen to prevent; a probe showed **+50% where the answer is 0%**. Fixed by attributing each flow to the first valuation on or after its own date, with the probe confirmed failing at 50% before the fix and three regression tests kept (deposit, withdrawal, flow past the last valuation). Also corrected the agent's report on one point: it claimed `/api/portfolio/stock/annual-returns` *requires* lowercase, but route literals are case-insensitive — only the enum-bound segment is case-sensitive, so capitalised `Stock`/`Crypto` works everywhere (**D11**). Verified independently of the agent: build 0 warnings, **134/134**, and a live run against real backfilled data — per-date historical FX proven to differ from today's rate on the wire (`440 SGD / 1.29109 = 340.7973`, where today's rate would give `340.89`), sub-cent and 10-dp precision intact (`0.0005061500`, `1000000.0000000000`), cost basis rendering as a flat step, SGD basis and the `-0.1871%` TWR both recomputed by hand, crypto → `400`, unknown → `404`. Probe transactions deleted; dev `Transactions` back to 0. It was a Saturday, so **0 Twelve Data credits** were spent. Left knowingly: D12 (backfill exclusion unexercised live), D13 (TWR never assembled from multi-year real data), and D8 still open. |
+| 2026-08-01 | `frontend-angular` | 8 | **Complete and verified.** Before launching the agent, the D8 brief in this file was found to be **misaimed**: it instructed the next session to measure `1000000.0000000000`, a value that is exactly 10⁶ and provably lossless, so a faithful agent would have passed the probe and closed D8 without ever testing the real exposures. Corrected first, then handed off — the retargeted probes are what produced the two findings now in Decisions. Agent built all four Phase 8 boxes, reported honestly, and **caught a real defect in its own draft before it shipped**: its first `decimalPrecisionValidator` rejected any value whose `String(value)` contained `"e"`, which would have blocked the very `0.0000000001` quantity the probe had just proved the backend accepts. Verified independently of the agent: `ng build` clean, `ng test` **97/97** across 17 files, no hex or raw `px` outside the token files, and a live run against the API — `1e-10` accepted with **201** and read back as `0.0000000001`, and the >15-digit case isolated to the **client** by sending a raw `12345678.1234567891` literal via `curl` that round-tripped through `System.Text.Json` and `decimal(28,10)` exactly while `JSON.stringify` mangles it. All probe rows deleted, dev `Transactions` confirmed back to `[]`. Saturday, both markets gated, **0 Twelve Data credits** spent. **D8 closed.** Left knowingly: no browser was driven this session, so no click-level confirmation of the datepicker, `mat-select` or dialog focus-trapping — component tests exercise the same methods, and the request bodies those methods build were proven against the real API, but the rendered interaction is unobserved. Also unexercised: a non-USD (SGD/Z74) transaction through the new form's currency-auto-set path, and any accessibility tooling. |
 | 2026-07-31 | `frontend-angular` | 7 | **Complete and verified.** Angular 22 workspace scaffolded with the central design system the user asked for: `ui.tokens.scss` + `ui.mixins.scss`, with Material *derived from* the tokens rather than themed alongside them. Agent reported honestly and flagged the proxy and hub as never exercised live — testing that flag found **two real defects**. (1) **Ids were typed `string` across `models.ts`** while the backend sends C# `int` as JSON numbers; since the API sets no `AllowReadingFromString`, the Phase 8 transaction form would have `POST`ed `"assetId": "3"` and got a 400. The specs passed only because their fixtures (`'a1'`, `'t1'`) matched the wrong type. Fixed to `number`, then confirmed against the live API (`"id":1`) and the live hub (`"assetId":3`). (2) **The D5 "why nothing moved" logic was dead code** — it filtered `sources` for `attempted: false`, but `RunCycleAsync` drops a gated provider from that list entirely, so the filter could never match and a click with NYSE closed would have said a cheerful "Refreshed 4 symbols" with no explanation. Rewritten to derive closed markets from `nyseOpen`/`sgxOpen`, and its spec rebuilt around a payload captured verbatim from the live API instead of a fabricated one; recorded as **D10**. Also closed the design-system gaps the agent left: raw `px` layout values inlined in five component stylesheets despite the token file's own rule (now `--ui-layout-*` / `--ui-size-icon-*` tokens, with the toolbar height tracking Material's 64→56px breakpoint so the content `calc()` stays right on mobile), and the dark-mode block duplicated between the media query and `[data-theme]` (now one `ui-dark-tokens` mixin, so a token cannot be added to one and forgotten in the other). Verified independently of the agent: `ng build` clean, `ng test` **68/68**, no hex or raw `px` anywhere outside the token files, and a **live run through the dev proxy** — 6 assets over `/api`, a real SignalR client on `WebSocketTransport` (not long-polling), on-connect snapshot, 4 `QuoteUpdated` frames with sub-cent precision intact, `200` then `429 secondsRemaining: 26`. NYSE closed throughout, so 0 Twelve Data credits spent. Left knowingly: the `@angular/cli` Node-check patch (**D9**), and D8's 10-dp *quantity* round trip still unmeasured. |
 
 ---
@@ -631,17 +663,47 @@ Added during Phase 7 (2026-07-31):
   survive a dropped socket, the backend needs a `GET /api/prices` — a Phase 6 decision, not a
   frontend workaround.
 
+Added during Phase 8 (2026-08-01):
+
+- **D8 is closed, and its original premise was wrong.** The entry claimed `1000000.0000000000` was
+  "17 significant digits" and therefore at risk of silent corruption in a JS client. Trailing zeros
+  are **not** significant digits: the value is exactly 10⁶, exactly representable in IEEE-754, and
+  was never at risk. `1000000.0000000001`, `0.0005326` and `1234567.8901234567` also round-trip
+  losslessly, and `…0001` / `…0002` remain **distinct** doubles. The proposed fix — serialising
+  decimals as strings — was aimed at a non-problem and is **not** needed. The REST contract stands
+  unchanged.
+- **Exponent notation on the wire is fine.** JavaScript serialises `0.0000000001` as **`1e-10`**,
+  not `"0.0000000001"` — a format change, not precision loss, and the likelier real case since
+  crypto dust needs no large magnitude to trigger it. `POST`ing a literal `1e-10` returns **201**
+  and reads back as `0.0000000001`: `System.Text.Json` binds exponent notation to `decimal`
+  losslessly. Verified twice, by the agent and again independently from the orchestrating terminal.
+- **The ~15-significant-digit limit is real, and the loss is entirely client-side.** This was
+  isolated rather than assumed: a raw `12345678.1234567891` literal sent by `curl`, bypassing JS,
+  round-trips through `System.Text.Json` and `decimal(28,10)` **exactly**. `JSON.stringify` on the
+  same value emits `12345678.12345679` — so the digits are gone before the request ever leaves the
+  browser. **The fix therefore belongs in the form, not the wire format**, which is why
+  `decimalPrecisionValidator` caps at 15 significant digits and fails loudly at the input.
+- **That 15-digit cap is deliberately conservative.** Between 15 and ~17 significant digits,
+  whether a value survives is magnitude-dependent — `1000000.0000000001` (17) is fine, while
+  `999999999.9999999999` collapses to `1000000000`. Rather than encode a magnitude-aware rule
+  nobody would be able to reason about at the call site, the validator rejects everything past 15,
+  which is the universally safe bound. It will refuse a small number of values that would in fact
+  have survived. If a legitimate holding ever trips it, widen the cap deliberately — do not remove
+  it.
+
 ---
 
 ## ▶ Next session
 
-Phases 1–7 are done. **Only Phase 10 is blocked** (needs Podman).
+Phases 1–8 are done. **Only Phase 10 is blocked** (needs Podman).
 
-The remaining work — Phases 8 and 9 — is **all `frontend-angular`, and both live in
-`src/Portfolio.Web`, so they cannot run in parallel.** Run Phase 8 first, then Phase 9 in a fresh
-terminal. Phase 9 is now unblocked: its endpoints exist and are verified.
+**Phase 9 is the only unblocked work left** — `frontend-angular`, in a fresh terminal. Its
+endpoints exist and were hand-checked in Phase 6.
 
-**Next — `frontend-angular` (Phase 8).** Paste:
+**Next — `frontend-angular` (Phase 9).** Paste the Phase 9 prompt below.
+
+<details>
+<summary>Phase 8 prompt — completed 2026-08-01, kept for reference</summary>
 
 ```
 Read tracker.md. Phase 7 is done and verified — the Angular shell, routing, design
@@ -650,13 +712,22 @@ plus the SignalR hub were confirmed live against a running API over a real WebSo
 
 Use the frontend-angular agent for Phase 8 — the transactions UI.
 
-Do D8 FIRST, before building the quantity input on top of it. Quantities are
-decimal(28,10) and cross the wire as JSON numbers, which JavaScript parses as doubles
-(~15-17 significant digits); 1000000.0000000000 is 17. Sub-cent prices are already
-confirmed intact end to end, but a 10-decimal quantity has never round-tripped through
-a browser. POST one, read it back, compare exactly. If it loses precision the fix is
-serialising those values as strings, and that changes the contract — so find out before
-the form exists, not after.
+Do the D8 probe FIRST, before building the quantity input on top of it — but read the
+corrected D8 entry in the drawback register before you start. Its original premise was
+measured and found WRONG: 1000000.0000000000 is exactly 10^6, exactly representable,
+and round-trips losslessly. Do not spend the probe re-confirming that value, and do not
+close D8 on the strength of it passing. String serialisation is not the fix and is not
+needed.
+
+Two things are actually unmeasured. Probe exactly these:
+  1. POST a quantity of 0.0000000001. JavaScript serialises it as "1e-10", not
+     "0.0000000001". Confirm System.Text.Json binds exponent notation to a decimal
+     parameter rather than 400-ing. This is the likely-real case — crypto dust needs no
+     large magnitude to hit it.
+  2. POST a quantity above ~15 significant digits, e.g. 12345678.1234567891. It will
+     silently store 12345678.12345679 with no error. Decide whether that is in scope;
+     if not, cap significant digits in the form validator so it fails loudly at the
+     input rather than quietly at the database.
 
 Contract rules that are easy to get backwards, both confirmed against the live API:
 enums are STRINGS ("Stock"/"Crypto", "Buy"/"Sell"), ids are NUMBERS (assetId is a C#
@@ -670,7 +741,18 @@ not inline a hex or a raw px at the call site.
 Use a typed reactive form (FormGroup<{...}>), quantity to 10 decimal places, and handle
 the three backend validation rejections explicitly — they return 400 with
 ValidationProblemDetails: positive quantity, sell cannot exceed units held, trade date
-not in the future.
+not in the future. PUT /api/transactions/{id} additionally returns a bare 404, so the
+edit flow has to survive the row being deleted underneath it.
+
+Two things to fix on the way past, both in your own directory:
+  - api-routes.ts types its id parameters as string (asset: (id: string)), which
+    contradicts the ids-are-numbers rule in models.ts that a real Phase 7 defect
+    established. Interpolation hides it at runtime; Phase 8 is where transaction ids
+    start flowing into PUT/DELETE URLs, so fix the signatures rather than casting at
+    every call site.
+  - tradeDate is a DateOnly. Material's datepicker hands back a Date, and
+    toISOString() shifts it by the timezone offset — at SGT (UTC+8) an evening entry
+    lands on the previous day. Format the local date parts directly.
 
 Stop after Phase 8. Tick a box only for something you have personally seen pass, and
 say plainly what you did not verify — that flag is what caught the real defects in
@@ -678,11 +760,15 @@ Phases 4, 5 and 7. Then append to the handoff log, write the next session prompt
 commit.
 ```
 
-**After Phase 8 — `frontend-angular` (Phase 9).** Paste:
+</details>
+
+**Phase 9 — `frontend-angular`.** Paste:
 
 ```
 Read tracker.md. Phase 6 is done and verified, so the calculation endpoints the charts
-need all exist and were hand-checked against real data. Phase 8 is done.
+need all exist and were hand-checked against real data. Phase 8 is done and verified —
+the transactions UI, TransactionFormDialog, and the shared MoneyPipe/QuantityPipe,
+local-date and validator utilities are all in place and tested at 97/97.
 
 Use the frontend-angular agent for Phase 9 — overview and detail pages.
 
@@ -716,6 +802,15 @@ marketValueUsd: 0 — render that as "no price yet", not as a 100% loss.
 
 Everything visual reads src/styles/ui.tokens.scss and the shared chart-theme.ts. Add a
 token if one is missing; do not inline a hex or a raw px at the call site.
+
+Note what Phase 8 could NOT verify, because it matters more here than it did there: no
+browser was driven, so nothing in this app has been confirmed at the rendered-pixel
+level. Phase 8 could lean on wire-level probes because its correctness was mostly in
+the request bodies. Phase 9 is charts — a config that unit-tests green can still render
+an unreadable axis, a step series drawn as a smooth line, or an unlabelled legend. If
+browser automation is unavailable this session, say so explicitly and describe exactly
+which visual claims rest on reading the ECharts config rather than looking at output.
+Do not describe a chart as "verified" on the strength of a passing unit test.
 
 Tick a box only for something you have personally seen pass, and say plainly what you did
 not verify — that flag is what caught the real defects in Phases 4, 5, 6 and 7. Then

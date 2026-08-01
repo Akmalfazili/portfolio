@@ -69,6 +69,7 @@ describe('AppShell — section accent token switching', () => {
     await router.navigateByUrl('/transactions');
     fixture.detectChanges();
     httpMock.expectOne(API_ROUTES.transactions).flush([]);
+    httpMock.expectOne(API_ROUTES.assets).flush([]);
     expect(document.documentElement.getAttribute('data-section')).toBe('stock');
   });
 });

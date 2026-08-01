@@ -112,3 +112,20 @@ export interface RefreshCooldownProblemDetails {
   detail?: string;
   secondsRemaining: number;
 }
+
+/**
+ * The 400 body of POST/PUT /api/transactions on any of the three domain
+ * rejections — positive quantity, sell cannot exceed units held, trade date
+ * not in the future — all keyed under `errors` by request field name
+ * (`quantity`, `pricePerUnit`, `fees`, `tradeDate`, `currency`, `assetId`).
+ * Standard ASP.NET `ValidationProblemDetails`. PUT additionally returns a
+ * bare 404 with no body at all when the row has been deleted underneath the
+ * request — that is NOT this shape, and must be handled separately.
+ */
+export interface ValidationProblemDetails {
+  type?: string;
+  title?: string;
+  status?: number;
+  errors: Record<string, string[]>;
+  traceId?: string;
+}

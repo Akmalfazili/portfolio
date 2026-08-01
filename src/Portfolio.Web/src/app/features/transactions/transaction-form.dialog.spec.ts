@@ -1,0 +1,175 @@
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { provideHttpClient } from '@angular/common/http';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import { provideNoopAnimations } from '@angular/platform-browser/animations';
+import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
+
+import { TransactionFormDialog, TransactionFormDialogData } from './transaction-form.dialog';
+import { API_ROUTES } from '../../core/api/api-routes';
+import { AssetDto, TransactionDto } from '../../core/api/models';
+
+const ANVL: AssetDto = {
+  id: 6,
+  symbol: 'ANVL',
+  name: 'Anvil',
+  assetClass: 'Crypto',
+  exchange: null,
+  currency: 'USD',
+  quoteProviderKind: 'CoinGecko',
+  providerSymbol: null,
+  providerCoinId: 'anvil',
+  isActive: true,
+};
+
+const AAPL: AssetDto = {
+  id: 1,
+  symbol: 'AAPL',
+  name: 'Apple Inc.',
+  assetClass: 'Stock',
+  exchange: 'NASDAQ',
+  currency: 'USD',
+  quoteProviderKind: 'TwelveData',
+  providerSymbol: 'AAPL',
+  providerCoinId: null,
+  isActive: true,
+};
+
+const EXISTING: TransactionDto = {
+  id: 11,
+  assetId: 6,
+  assetSymbol: 'ANVL',
+  assetClass: 'Crypto',
+  type: 'Buy',
+  tradeDate: '2026-07-30',
+  quantity: 1000000,
+  pricePerUnit: 0.0005326,
+  fees: 1.5,
+  currency: 'USD',
+  notes: null,
+};
+
+describe('TransactionFormDialog', () => {
+  let httpMock: HttpTestingController;
+  let dialogRef: { close: ReturnType<typeof vi.fn> };
+
+  function setup(data: TransactionFormDialogData): ComponentFixture<TransactionFormDialog> {
+    dialogRef = { close: vi.fn() };
+    TestBed.configureTestingModule({
+      imports: [TransactionFormDialog],
+      providers: [
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideNoopAnimations(),
+        { provide: MAT_DIALOG_DATA, useValue: data },
+        { provide: MatDialogRef, useValue: dialogRef },
+      ],
+    });
+    httpMock = TestBed.inject(HttpTestingController);
+    const fixture = TestBed.createComponent(TransactionFormDialog);
+    fixture.detectChanges();
+    return fixture;
+  }
+
+  afterEach(() => httpMock.verify());
+
+  it('blocks submit and marks controls touched when required fields are empty', () => {
+    const fixture = setup({ mode: 'create', assets: [ANVL, AAPL] });
+    fixture.componentInstance.submit();
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.form.controls.assetId.touched).toBe(true);
+    expect(dialogRef.close).not.toHaveBeenCalled();
+  });
+
+  it('rejects a quantity with more than 10 decimal places at the form layer, per D8', () => {
+    const fixture = setup({ mode: 'create', assets: [ANVL, AAPL] });
+    const quantity = fixture.componentInstance.form.controls.quantity;
+    quantity.setValue(0.00000000012); // 11dp
+    quantity.markAsTouched();
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.fieldError('quantity')).toContain('10 decimal places');
+  });
+
+  it('rejects a zero or negative quantity', () => {
+    const fixture = setup({ mode: 'create', assets: [ANVL, AAPL] });
+    const quantity = fixture.componentInstance.form.controls.quantity;
+    quantity.setValue(0);
+    quantity.markAsTouched();
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.fieldError('quantity')).toContain('greater than zero');
+  });
+
+  it('auto-sets currency from the selected asset and sends it, even though the control is disabled', () => {
+    const fixture = setup({ mode: 'create', assets: [ANVL, AAPL] });
+    const { form } = fixture.componentInstance;
+
+    form.controls.assetId.setValue(6); // ANVL, USD
+    form.controls.tradeDate.setValue(new Date(2026, 6, 30));
+    form.controls.quantity.setValue(1_000_000);
+    form.controls.pricePerUnit.setValue(0.0005326);
+    fixture.componentInstance.submit();
+
+    const req = httpMock.expectOne(API_ROUTES.transactions);
+    expect(req.request.body.currency).toBe('USD');
+    expect(req.request.body.assetId).toBe(6);
+    // Local date parts, not toISOString — see shared/util/local-date.ts.
+    expect(req.request.body.tradeDate).toBe('2026-07-30');
+    req.flush({ ...EXISTING, id: 99 });
+
+    expect(dialogRef.close).toHaveBeenCalledWith({
+      kind: 'saved',
+      transaction: { ...EXISTING, id: 99 },
+    });
+  });
+
+  it('pre-fills an edit form from the existing transaction, parsing tradeDate at local midnight', () => {
+    const fixture = setup({ mode: 'edit', transaction: EXISTING, assets: [ANVL, AAPL] });
+    const { form } = fixture.componentInstance;
+
+    expect(form.controls.assetId.value).toBe(6);
+    expect(form.controls.quantity.value).toBe(1_000_000);
+    expect(form.controls.tradeDate.value?.getFullYear()).toBe(2026);
+    expect(form.controls.tradeDate.value?.getMonth()).toBe(6);
+    expect(form.controls.tradeDate.value?.getDate()).toBe(30);
+  });
+
+  it('maps a 400 ValidationProblemDetails ("sell exceeds units held") onto the quantity field', () => {
+    const fixture = setup({ mode: 'create', assets: [ANVL, AAPL] });
+    const { form } = fixture.componentInstance;
+
+    form.controls.assetId.setValue(6);
+    form.controls.type.setValue('Sell');
+    form.controls.tradeDate.setValue(new Date(2026, 6, 30));
+    form.controls.quantity.setValue(5);
+    form.controls.pricePerUnit.setValue(1);
+    fixture.componentInstance.submit();
+
+    const req = httpMock.expectOne(API_ROUTES.transactions);
+    req.flush(
+      { errors: { quantity: ['Sell quantity 5 exceeds the 0 units currently held.'] } },
+      { status: 400, statusText: 'Bad Request' },
+    );
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.fieldError('quantity')).toContain('exceeds the 0 units');
+    expect(dialogRef.close).not.toHaveBeenCalled();
+  });
+
+  it('shows a distinct "deleted elsewhere" state on a bare 404 from PUT, rather than a generic error', () => {
+    const fixture = setup({ mode: 'edit', transaction: EXISTING, assets: [ANVL, AAPL] });
+    fixture.componentInstance.submit();
+
+    const req = httpMock.expectOne(API_ROUTES.transaction(EXISTING.id));
+    expect(req.request.method).toBe('PUT');
+    req.flush(null, { status: 404, statusText: 'Not Found' });
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.deletedElsewhere()).toBe(true);
+    expect(fixture.nativeElement.textContent).toContain('no longer exists');
+
+    fixture.componentInstance.closeAfterDeletedElsewhere();
+    expect(dialogRef.close).toHaveBeenCalledWith({ kind: 'deleted-elsewhere' });
+  });
+});

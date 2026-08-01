@@ -1,5 +1,48 @@
 <section class="transactions">
-  <h1 class="transactions__title">Transactions</h1>
+  <header class="transactions__toolbar">
+    <h1 class="transactions__title">Transactions</h1>
+
+    <div class="transactions__toolbar-actions">
+      <mat-button-toggle-group
+        class="transactions__filter"
+        [value]="filter()"
+        (change)="setFilter($event.value)"
+        aria-label="Filter by asset class"
+      >
+        <mat-button-toggle value="All">All</mat-button-toggle>
+        <mat-button-toggle value="Stock">Stocks</mat-button-toggle>
+        <mat-button-toggle value="Crypto">Crypto</mat-button-toggle>
+      </mat-button-toggle-group>
+
+      <button
+        mat-flat-button
+        color="primary"
+        type="button"
+        [disabled]="!assetsReady()"
+        (click)="openCreateDialog()"
+      >
+        <mat-icon aria-hidden="true">add</mat-icon>
+        New transaction
+      </button>
+    </div>
+  </header>
+
+  @if (assetsErrored()) {
+    <p class="transactions__warning">
+      <mat-icon aria-hidden="true">warning</mat-icon>
+      Couldn't load the asset list — new and edited transactions may not work until this
+      recovers.
+      <button mat-button type="button" (click)="retryAssets()">Retry</button>
+    </p>
+  }
+
+  @if (deleteError(); as error) {
+    <p class="transactions__warning transactions__warning--error">
+      <mat-icon aria-hidden="true">error_outline</mat-icon>
+      {{ error }}
+      <button mat-button type="button" (click)="dismissDeleteError()">Dismiss</button>
+    </p>
+  }
 
   @if (isLoading()) {
     <app-state-message variant="loading" title="Loading transactions…" />
@@ -11,11 +54,21 @@
       actionLabel="Retry"
       (action)="retry()"
     />
-  } @else if (isEmpty()) {
+  } @else if (isTotalEmpty()) {
     <app-state-message
       variant="empty"
       title="No transactions yet"
       description="Record your first buy to start tracking cost basis and gain/loss."
+      actionLabel="New transaction"
+      (action)="openCreateDialog()"
+    />
+  } @else if (isFilteredEmpty()) {
+    <app-state-message
+      variant="empty"
+      title="No matching transactions"
+      description="Nothing in this asset class yet. Try a different filter."
+      actionLabel="Clear filter"
+      (action)="clearFilter()"
     />
   } @else {
     <table class="transactions__table">
@@ -27,10 +80,11 @@
           <th>Quantity</th>
           <th>Price</th>
           <th>Fees</th>
+          <th class="transactions__actions-header">Actions</th>
         </tr>
       </thead>
       <tbody>
-        @for (transaction of transactions(); track transaction.id) {
+        @for (transaction of filteredTransactions(); track transaction.id) {
           <tr>
             <td>{{ transaction.tradeDate }}</td>
             <td>{{ transaction.assetSymbol }}</td>
@@ -38,12 +92,28 @@
             <td>{{ transaction.quantity | quantity }}</td>
             <td>{{ transaction.pricePerUnit | money: transaction.currency }}</td>
             <td>{{ transaction.fees | money: transaction.currency }}</td>
+            <td class="transactions__actions">
+              <button
+                mat-icon-button
+                type="button"
+                [disabled]="!assetsReady()"
+                [attr.aria-label]="'Edit ' + transaction.assetSymbol + ' transaction'"
+                (click)="openEditDialog(transaction)"
+              >
+                <mat-icon aria-hidden="true">edit</mat-icon>
+              </button>
+              <button
+                mat-icon-button
+                type="button"
+                [attr.aria-label]="'Delete ' + transaction.assetSymbol + ' transaction'"
+                (click)="deleteTransaction(transaction)"
+              >
+                <mat-icon aria-hidden="true">delete_outline</mat-icon>
+              </button>
+            </td>
           </tr>
         }
       </tbody>
     </table>
-    <p class="transactions__note">
-      The asset-class filter and the create/edit/delete form land in Phase 8.
-    </p>
   }
 </section>
