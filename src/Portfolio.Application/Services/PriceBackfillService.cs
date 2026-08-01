@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using Portfolio.Application.Abstractions;
 using Portfolio.Application.Dtos;
 using Portfolio.Domain.Entities;
+using Portfolio.Domain.Enums;
 
 namespace Portfolio.Application.Services;
 
@@ -11,6 +12,9 @@ namespace Portfolio.Application.Services;
 /// See <see cref="IPriceBackfillService"/>. Reporting currency is USD, so only currencies other
 /// than USD need an FX history (today that is just SGD, for Z74) — the FX pair(s) needed are
 /// derived from the currencies of assets that actually have transactions, not hard-coded.
+///
+/// Stocks only, by decision — crypto is gain/loss only and keeps no <see cref="PriceHistory"/> at
+/// all, so backfilling it would spend Twelve Data/CoinGecko rate limit on data nothing reads.
 /// </summary>
 public sealed class PriceBackfillService(
     IPortfolioDbContext db,
@@ -34,7 +38,11 @@ public sealed class PriceBackfillService(
         var priceHistoryInserted = 0;
         var fxRateInserted = 0;
 
-        var assets = await db.Assets.Where(a => a.IsActive).ToListAsync(cancellationToken);
+        // Crypto is gain/loss only, by decision — it keeps no PriceHistory at all, so backfilling
+        // it would spend provider rate limit on data nothing reads. See the Phase 6 decision.
+        var assets = await db.Assets
+            .Where(a => a.IsActive && a.AssetClass == AssetClass.Stock)
+            .ToListAsync(cancellationToken);
 
         var earliestTradeDateByAsset = await db.Transactions
             .GroupBy(t => t.AssetId)

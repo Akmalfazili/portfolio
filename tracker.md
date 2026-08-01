@@ -31,14 +31,14 @@ so each session stays focused and its context stays clean.
 | 3 | Transactions CRUD API | `backend-dotnet` | ✅ Done — verified |
 | 4 | Market data providers | `backend-dotnet` | ✅ Done — verified |
 | 5 | Auto-refresh + SignalR | `backend-dotnet` | ✅ Done — verified |
-| 6 | Portfolio calculations | `backend-dotnet` | ⬜ Not started |
+| 6 | Portfolio calculations | `backend-dotnet` | ✅ Done — verified |
 | 7 | Angular scaffold + shell | `frontend-angular` | ✅ Done — verified |
 | 8 | Transactions UI | `frontend-angular` | ⬜ Not started |
 | 9 | Overview + detail pages | `frontend-angular` | ⬜ Not started |
 | 10 | Podman stack | `container-podman` | ⬜ Not started |
 | 11 | End-to-end verification | — | ⬜ Not started |
 
-**Currently active:** none — Phases 1–5 and 7 closed out and verified, Phase 7 on 2026-07-31.
+**Currently active:** none — Phases 1–7 closed out and verified, Phase 6 on 2026-08-01.
 
 > ✅ **Prices refresh themselves and push over SignalR.** `dotnet build portfolio.slnx` is clean
 > with zero warnings under `TreatWarningsAsErrors` and `dotnet test portfolio.slnx` is 95/95 green
@@ -49,8 +49,14 @@ so each session stays focused and its context stays clean.
 > and the dev proxy plus the SignalR hub were verified against a running API over a real
 > **WebSocket** transport — not long-polling fallback, and not mocks.
 >
-> **Nothing is blocked any more.** Phase 6 (`backend-dotnet`) and Phase 8 (`frontend-angular`) are
-> both open and touch disjoint directories. Phase 10 still needs Podman installed.
+> ✅ **The calculation endpoints are live and hand-checked.** `dotnet test portfolio.slnx` is
+> **134/134** (130 unit + 4 integration), build clean. Verified against real backfilled data, not
+> only unit tests: per-date historical FX genuinely differs from today's rate on the wire, sub-cent
+> prices and 10-dp quantities survive, and the TWR figure was recomputed by hand sub-period by
+> sub-period.
+>
+> **Phase 9 is now unblocked** — the charts have their endpoints. Phase 8 (`frontend-angular`) is
+> also open, and the two touch disjoint directories. Phase 10 still needs Podman installed.
 
 ---
 
@@ -209,7 +215,9 @@ trigger.
 > is gone. Stocks are unaffected; their past stays backfillable on demand from Twelve Data and
 > Yahoo.
 
-### ⬜ Phase 6 — Portfolio calculations · `backend-dotnet`
+### ✅ Phase 6 — Portfolio calculations · `backend-dotnet`
+
+Verified 2026-08-01 against a running API and the real backfilled data in dev SQLEXPRESS.
 
 > ⚠️ **Crypto is gain/loss only — no time series.** Decided 2026-07-26, see Decisions. Everything
 > below marked *stocks only* must filter to `AssetClass.Stock`. Crypto needs no `PriceHistory` at
@@ -217,24 +225,53 @@ trigger.
 
 **Both classes:**
 
-- [ ] `ICostBasisCalculator` → `AverageCostCalculator` (fees capitalised into basis)
-- [ ] Unrealised and realised P&L, including partial sells
-- [ ] `GET /api/portfolio/{assetClass}/{summary,allocation}` — works for stocks *and* crypto,
+- [x] `ICostBasisCalculator` → `AverageCostCalculator` (fees capitalised into basis on buys,
+      deducted from proceeds on sells; a full-close sell snaps to exactly zero)
+- [x] Unrealised and realised P&L, including partial sells
+- [x] `GET /api/portfolio/{assetClass}/{summary,allocation}` — works for stocks *and* crypto,
       since neither endpoint needs history
 
 **Stocks only:**
 
-- [ ] `PerformanceSeriesBuilder` — cost basis step series vs daily market value, USD-converted
+- [x] `PerformanceSeriesBuilder` — cost basis step series vs daily market value, USD-converted
       at each date's historical FX rate
-- [ ] `AnnualReturnCalculator` — time-weighted return per calendar year
-- [ ] `GET /api/assets/{id}/performance`, `/api/portfolio/stock/annual-returns`
-- [ ] Heavy unit coverage — TWR verified against a hand-computed multi-year example
-- [ ] Requesting a series or annual returns for a **crypto** asset returns a clean `400`/`404`
+- [x] `AnnualReturnCalculator` — time-weighted return per calendar year
+- [x] `GET /api/assets/{id}/performance`, `/api/portfolio/stock/annual-returns`
+- [x] Heavy unit coverage — TWR verified against a hand-computed multi-year example, with the
+      arithmetic written out per sub-period in the test's own comment
+- [x] Requesting a series or annual returns for a **crypto** asset returns a clean `400`/`404`
       rather than an empty chart that looks like a flat line at zero
 
-**Also:** exclude crypto from the historical backfill run — `PriceBackfillService` currently
-backfills every asset with transactions. Nothing consumes crypto `PriceHistory` any more, and
-every crypto backfill call spends rate limit for data no page will read.
+- [x] **Also:** crypto excluded from `PriceBackfillService` — it now filters to `AssetClass.Stock`,
+      so no provider call is spent on data nothing reads
+- [x] `dotnet build portfolio.slnx` clean, `dotnet test portfolio.slnx` **134/134** (130 unit + 4
+      integration)
+
+**Live-verified against real backfilled data (AAPL + Z74, 2026-07-20→24).** A probe ANVL buy of
+1,000,000 @ `0.0005326` and a Z74 buy of 100 @ `4.30` SGD with 5 SGD fees were created, read back
+through every new endpoint, hand-checked and deleted; dev `Transactions` is back to 0.
+
+- **Per-date FX is genuinely historical, not today's rate.** Z74 on 2026-07-20 came back as
+  `340.7973` = `440 SGD / 1.29109` (that date's stored rate). Today's rate `1.29074` would give
+  `340.89` — different at 2dp, so this is measured, not assumed.
+- **Sub-cent and 10-dp precision survive the new DTOs** — `currentPriceUsd: 0.0005061500`,
+  `quantityHeld: 1000000.0000000000`.
+- Cost basis renders as a flat **step** across all five points while market value moves.
+- SGD cost basis `336.9246` = `435 / 1.29109`, hand-checked.
+- Annual TWR `-0.1871%` recomputed by hand across all four sub-periods and the geometric link.
+- Crypto id → `400` + `ValidationProblemDetails`; unknown id → `404`; stock with no transactions →
+  `200` with an empty series.
+
+> 🐛 **Real defect found in verification and fixed — a deposit was being reported as a gain.**
+> `AnnualReturnCalculator` matched cash flows to valuations on **exact date equality**, but the two
+> series come from different places: valuations from stored `PriceHistory` dates, flows from each
+> transaction's own `TradeDate`. A buy dated a weekend, a market holiday, or any day with no stored
+> close was therefore **silently dropped from the subtraction**, and the resulting jump in market
+> value was attributed to performance — precisely what TWR exists to prevent. A probe with a $500
+> buy between two flat valuations reported **+50% instead of 0%**. Each flow is now attributed to
+> the first valuation on or after its own date. Pinned by
+> `AnnualReturnCashFlowAlignmentTests` (deposit, withdrawal, and a flow past the last valuation),
+> and the probe was confirmed to fail at 50% before the fix.
 
 ---
 
@@ -362,6 +399,9 @@ so the list stays a record and not just a to-do.
 | D8 | **`decimal(28,10)` over JSON is unproven in a JS client** | 3 | Values cross the wire as JSON numbers and JavaScript parses them as doubles (~15–17 significant digits). `1000000.0000000000` is 17. Sub-cent *prices* are now confirmed intact end to end (ANVL `0.00050864` survived the hub into a real JS client, Phase 7), but a 10-dp **quantity** has still never round-tripped through a browser. Applies to the REST contract from Phase 3. | Unknown until measured. If real, the fix is serialising affected values as strings. **Check this first in Phase 8**, before the 10-decimal quantity input is built on top of it. |
 | D9 | ~~Angular CLI's Node check is patched in `node_modules`~~ **Fixed 2026-07-31** — Node upgraded to 22.23.2, patch and `postinstall` hook deleted, pristine CLI gate confirmed restored | 7 | — | — |
 | D10 | **A gated provider vanishes from `PriceRefreshCycleResult.sources`** | 5 | `SourceRefreshOutcome.Attempted` is documented as "false when the source's market was closed", but `RunCycleAsync` records that outcome to the status store and then `continue`s **without adding it to the returned list** — so a closed market yields no entry at all, not an `attempted: false` one. Any client reading the skipped set off `sources` gets nothing; the Phase 7 UI derives it from `nyseOpen`/`sgxOpen` instead, which is authoritative. Not a bug in behaviour, but the DTO's own doc comment describes a shape the API never emits. | Low — either add the gated outcome to `outcomes` or correct the doc comment. A `backend-dotnet` call. |
+| D11 | **`AssetClass` route/query binding is case-sensitive** | 3, 6 | `/api/portfolio/stock/summary` returns **400**; only `/api/portfolio/Stock/summary` binds. Pre-existing, not a Phase 6 regression — `/api/assets?assetClass=stock` 400s on unmodified Phase 3 code too. Route *literals* are case-**in**sensitive, so `/api/portfolio/{Stock,stock}/annual-returns` both work; only the enum-bound segment is fussy. **The safe frontend rule is to send `Stock`/`Crypto` capitalised everywhere** — that form works on every route. Deliberately not special-cased on the new routes alone, which would create exactly the two-encodings-of-one-field drift D7 warns about. | Low — a custom binder or a `[FromRoute]` string parsed case-insensitively, applied to *both* the route and the Phase 3 query parameter together, never just one. |
+| D12 | **Crypto's exclusion from backfill is unit-tested but never observed live** | 6 | `PriceBackfillService` now filters to `AssetClass.Stock`, proven by a unit test (asset skipped, router never consulted, zero rows written). But **no HTTP endpoint triggers a backfill** — true before this phase too — so it has never been watched against a real provider call. | Low, but needs a trigger to exist. Fold into Phase 11. |
+| D13 | **Annual returns have only ever run over 5 days of real data** | 6 | Dev SQLEXPRESS holds `PriceHistory` for 2026-07-20→24 only, so the live TWR figure covered one partial week and the union-of-dates timeline never spanned a weekend gap, a year boundary, or two assets with divergent calendars. The *algorithm* is proven by the hand-computed two-year unit test and the cash-flow-alignment tests; the *assembly* of real multi-year inputs is not. | Low — needs a wider backfill or a real holding period. Belongs to Phase 11. |
 
 ---
 
@@ -376,6 +416,7 @@ so the list stays a record and not just a to-do.
 | 2026-07-31 | `backend-dotnet` | 5 | **Complete and verified.** Calendar, refresh service, hub, both endpoints built; agent reported honestly and flagged SignalR wire delivery as unverified. Live-testing that flag found the one real defect: **SignalR does not inherit `ConfigureHttpJsonOptions`**, so `QuoteProviderKind` crossed the hub as `"source":0` while REST sent `"source":"TwelveData"` — the exact payload Phase 7 merges, and invisible to every unit test. Fixed at `AddSignalR()` with a regression test the agent confirmed fails when reverted. Verified independently of the agent: build 0 warnings, 85/85 tests, no pending EF model changes, no SignalR type outside `Portfolio.Api`, and a real SignalR client run against the live API — on-connect snapshot plus `QuoteUpdated`/`RefreshStatus` over the wire, sub-cent precision intact (ANVL `0.00051468`), `200` then `429 secondsRemaining: 22`. NYSE closed and SGX in its lunch break during the run, so **0 Twelve Data credits** were spent, and the background loop was observed ticking unprompted. Left knowingly: SGX lunar holidays unmodelled. |
 | 2026-07-31 | — | 5 (follow-up) | **Two Phase 5 drawbacks closed.** (1) The manual-cooldown edge case is fixed — a manual cycle now persists its `RefreshRun` even when every source was gated, so `POST /api/prices/refresh` can no longer be hammered with zero crypto assets and all markets closed; the scheduled path still writes nothing there, so the 30-second poll doesn't flood the audit table. (2) The background loop now has tests: survives a throwing cycle and keeps polling, fresh DI scope per tick, clean shutdown — needing `Microsoft.Extensions.TimeProvider.Testing`'s `FakeTimeProvider`, since the loop waits via `Task.Delay(…, TimeProvider, …)` and `MutableTimeProvider` only overrides `GetUtcNow`. Both new tests were confirmed to **fail when their fix is reverted** (missing `RefreshRun`; loop exits instead of retrying) rather than trusted because they were green. 90/90, build clean. |
 | 2026-07-31 | — | 5 (follow-up) | **Refresh status made durable (D3), and the drawback register added.** `PriceRefreshStatusStore` now reads and writes a new `SourceRefreshState` table — one upserted row per provider, three rows forever — instead of a process-lifetime dictionary; it became scoped, and `LastRefreshedAt` is derived from the newest `LastSuccessAt` rather than stored separately. The original "it's only a UI indicator" reasoning was wrong: `NextDueAt` gates the cadence, so every restart made all providers due immediately and re-spent Twelve Data credits. Migration `20260731044754_AddSourceRefreshState` applied to SQLEXPRESS. **Live-proven with a real restart**: status survived (`lastRefreshedAt` 04:50:51 from before the restart), CoinGecko was *not* re-called on startup, and the next cycle fired exactly at the persisted due time 04:52:51 — which also verified the 2-minute crypto cadence over a real interval for the first time. The restart test was confirmed to fail when next-due is not persisted. 95/95, build clean. Remaining drawbacks D4–D8 recorded in the new register rather than left in conversation. |
+| 2026-08-01 | `backend-dotnet` | 6 | **Complete and verified.** Cost basis, P&L, performance series, TWR, both summary/allocation endpoints and both stocks-only endpoints built; crypto excluded from `PriceBackfillService`. Agent reported honestly, including flagging that it had not exercised the payloads through a JS client and that live annual returns only covered ~5 days of real data. Verifying its work found **one real defect, and a serious one**: `AnnualReturnCalculator` matched cash flows to valuations by **exact date equality**, but valuations come from stored `PriceHistory` dates while flows come from each transaction's `TradeDate` — two series with no guarantee of alignment. Any buy dated a weekend, a holiday, or any day without a stored close was dropped from the subtraction and its money reported as **performance**, which is the one thing TWR is chosen to prevent; a probe showed **+50% where the answer is 0%**. Fixed by attributing each flow to the first valuation on or after its own date, with the probe confirmed failing at 50% before the fix and three regression tests kept (deposit, withdrawal, flow past the last valuation). Also corrected the agent's report on one point: it claimed `/api/portfolio/stock/annual-returns` *requires* lowercase, but route literals are case-insensitive — only the enum-bound segment is case-sensitive, so capitalised `Stock`/`Crypto` works everywhere (**D11**). Verified independently of the agent: build 0 warnings, **134/134**, and a live run against real backfilled data — per-date historical FX proven to differ from today's rate on the wire (`440 SGD / 1.29109 = 340.7973`, where today's rate would give `340.89`), sub-cent and 10-dp precision intact (`0.0005061500`, `1000000.0000000000`), cost basis rendering as a flat step, SGD basis and the `-0.1871%` TWR both recomputed by hand, crypto → `400`, unknown → `404`. Probe transactions deleted; dev `Transactions` back to 0. It was a Saturday, so **0 Twelve Data credits** were spent. Left knowingly: D12 (backfill exclusion unexercised live), D13 (TWR never assembled from multi-year real data), and D8 still open. |
 | 2026-07-31 | `frontend-angular` | 7 | **Complete and verified.** Angular 22 workspace scaffolded with the central design system the user asked for: `ui.tokens.scss` + `ui.mixins.scss`, with Material *derived from* the tokens rather than themed alongside them. Agent reported honestly and flagged the proxy and hub as never exercised live — testing that flag found **two real defects**. (1) **Ids were typed `string` across `models.ts`** while the backend sends C# `int` as JSON numbers; since the API sets no `AllowReadingFromString`, the Phase 8 transaction form would have `POST`ed `"assetId": "3"` and got a 400. The specs passed only because their fixtures (`'a1'`, `'t1'`) matched the wrong type. Fixed to `number`, then confirmed against the live API (`"id":1`) and the live hub (`"assetId":3`). (2) **The D5 "why nothing moved" logic was dead code** — it filtered `sources` for `attempted: false`, but `RunCycleAsync` drops a gated provider from that list entirely, so the filter could never match and a click with NYSE closed would have said a cheerful "Refreshed 4 symbols" with no explanation. Rewritten to derive closed markets from `nyseOpen`/`sgxOpen`, and its spec rebuilt around a payload captured verbatim from the live API instead of a fabricated one; recorded as **D10**. Also closed the design-system gaps the agent left: raw `px` layout values inlined in five component stylesheets despite the token file's own rule (now `--ui-layout-*` / `--ui-size-icon-*` tokens, with the toolbar height tracking Material's 64→56px breakpoint so the content `calc()` stays right on mobile), and the dark-mode block duplicated between the media query and `[data-theme]` (now one `ui-dark-tokens` mixin, so a token cannot be added to one and forgotten in the other). Verified independently of the agent: `ng build` clean, `ng test` **68/68**, no hex or raw `px` anywhere outside the token files, and a **live run through the dev proxy** — 6 assets over `/api`, a real SignalR client on `WebSocketTransport` (not long-polling), on-connect snapshot, 4 `QuoteUpdated` frames with sub-cent precision intact, `200` then `429 secondsRemaining: 26`. NYSE closed throughout, so 0 Twelve Data credits spent. Left knowingly: the `@angular/cli` Node-check patch (**D9**), and D8's 10-dp *quantity* round trip still unmeasured. |
 
 ---
@@ -526,6 +567,37 @@ Added during Phase 5 (2026-07-31):
   nothing in that case: the loop polls every 30 seconds and would otherwise flood the audit table
   with thousands of no-op rows a day. Both halves are pinned by tests.
 
+Added during Phase 6 (2026-08-01):
+
+- **Cash flows are attributed to the first valuation on or after their own date, never matched by
+  exact date.** The two series feeding `AnnualReturnCalculator` come from different places —
+  valuations from stored `PriceHistory` dates, flows from each transaction's `TradeDate` — so they
+  are **not guaranteed to align**. Exact-date matching silently dropped every flow dated a weekend,
+  a market holiday, or any day with no stored close, and a dropped deposit is reported as a gain:
+  a $500 buy between two flat valuations came back as **+50% instead of 0%**. Transaction
+  validation only forbids *future* trade dates, so an off-grid date is fully reachable. A flow
+  dated past the last valuation is correctly ignored — no valuation reflects that purchase either,
+  so subtracting it would invent a loss.
+- **FX carry-forward:** the most recent stored rate at or before the date, falling back to the
+  earliest stored rate for dates preceding any stored rate at all. Chosen over throwing, which
+  would blank a whole series because one day is missing.
+- **Cost basis:** average cost; fees capitalised into basis on buys and deducted from proceeds on
+  sells; a full-close sell snaps quantity and cost basis to **exactly** zero rather than leaving a
+  decimal-division remainder that would make a closed position look infinitesimally open.
+- **Annual return:** daily-valuation TWR, `r = (V(t) − CF(t)) / V(t−1) − 1`, geometrically linked
+  per calendar year. A sub-period starting from a **zero** valuation contributes no return — there
+  is no rate to compute from a zero base, so initial funding and fully-closed gaps are skipped
+  rather than dividing by zero or inventing a 0% that would understate volatility either side.
+  Sub-periods link **across** the year boundary, so a Dec 31 → Jan 2 move counts toward January.
+- **`DisplayRounding` rounds only at the DTO boundary** — money 4dp, price 10dp, percent 4dp —
+  and never inside a calculator. Added after live testing showed FX-chained divisions emitting 20+
+  decimal digits on the wire (`310.59027643309141887862193960`). Internal arithmetic stays
+  unrounded so the rounding happens once, at the edge.
+- **A held position with no `PriceQuote` yet reports `currentPriceUsd: null` and
+  `marketValueUsd: 0`**, not an error — a freshly seeded asset must not fail a whole summary.
+- **`AssetClass` in a route is case-sensitive; route literals are not.** Send `Stock`/`Crypto`
+  capitalised from the frontend and every route works. See **D11**.
+
 Added during Phase 7 (2026-07-31):
 
 - **`src/styles/ui.tokens.scss` is the single source of design truth.** New UI *reads* tokens; it
@@ -563,42 +635,13 @@ Added during Phase 7 (2026-07-31):
 
 ## ▶ Next session
 
-Nothing is blocked except Phase 10. **Terminal A is the recommended next session** — Phase 9's
-charts need the calculation endpoints, so the backend is now the critical path. Terminal B is
-independent and can run in parallel in its own terminal if you want: the two touch disjoint
-directories (`src/Portfolio.Web` vs. everything else) and cannot collide.
+Phases 1–7 are done. **Only Phase 10 is blocked** (needs Podman).
 
-**Terminal A — `backend-dotnet` (Phase 6).** Paste:
+The remaining work — Phases 8 and 9 — is **all `frontend-angular`, and both live in
+`src/Portfolio.Web`, so they cannot run in parallel.** Run Phase 8 first, then Phase 9 in a fresh
+terminal. Phase 9 is now unblocked: its endpoints exist and are verified.
 
-```
-Read tracker.md. Phase 5 is done and verified — the market calendar, background refresh
-service, SignalR hub and both prices endpoints all work against a live API, and dotnet
-test portfolio.slnx is 95/95.
-
-Use the backend-dotnet agent for Phase 6 (portfolio calculations).
-
-Read the crypto scope decision under "Decisions" before writing anything: crypto is
-gain/loss only. No time series, no annual returns, no PriceHistory. PerformanceSeriesBuilder
-and AnnualReturnCalculator are stocks only and must filter to AssetClass.Stock; a series
-or annual-returns request for a crypto asset returns a clean 400/404, never an empty chart
-that looks like a flat line at zero. Cost basis and P&L cover both classes, and the
-summary/allocation endpoints work for both since neither needs history.
-
-Also in scope: exclude crypto from PriceBackfillService. It currently backfills every asset
-with transactions, spending rate limit on data nothing reads any more.
-
-TWR is the agreed method for annual returns, so deposits are not counted as gains — verify
-it against a hand-computed multi-year example, not just a self-consistent test.
-
-Mind decimal precision throughout: quantities and prices are decimal(28,10), money is
-decimal(19,4). Historical USD conversion must use the FX rate for that date, not today's.
-
-Tick a box only for something you have personally seen pass, and say plainly what you did
-not verify — that flag is what caught the real defects in Phases 4 and 5 both. Then append
-to the handoff log, write the next session prompt, and stop.
-```
-
-**Terminal B — `frontend-angular` (Phase 8).** Paste:
+**Next — `frontend-angular` (Phase 8).** Paste:
 
 ```
 Read tracker.md. Phase 7 is done and verified — the Angular shell, routing, design
@@ -634,6 +677,55 @@ say plainly what you did not verify — that flag is what caught the real defect
 Phases 4, 5 and 7. Then append to the handoff log, write the next session prompt, and
 commit.
 ```
+
+**After Phase 8 — `frontend-angular` (Phase 9).** Paste:
+
+```
+Read tracker.md. Phase 6 is done and verified, so the calculation endpoints the charts
+need all exist and were hand-checked against real data. Phase 8 is done.
+
+Use the frontend-angular agent for Phase 9 — overview and detail pages.
+
+Load the dataviz skill before writing the first chart config.
+
+The two asset classes get DIFFERENT pages, and this is a locked decision, not an
+oversight to tidy up. Crypto is gain/loss only: no cost-vs-market line chart, no annual
+return chart, no range selector. Do not render an empty or flat chart for crypto — omit
+the component entirely. Stocks get both charts.
+
+Endpoints, all verified live:
+  GET /api/portfolio/{assetClass}/summary      both classes
+  GET /api/portfolio/{assetClass}/allocation   both classes
+  GET /api/portfolio/stock/annual-returns      stocks only
+  GET /api/assets/{id}/performance             stocks only; crypto id returns 400
+
+Send assetClass CAPITALISED — "Stock"/"Crypto". Enum route binding is case-sensitive and
+lowercase returns 400 (D11). Route literals are not case-sensitive, so capitalised works
+on every route.
+
+The performance series returns cost basis as a flat STEP and market value as a moving
+line — render cost as a step series, not a smoothed line, or it will misrepresent when
+money actually went in.
+
+Sub-cent prices must not floor to $0.00 — ANVL sits near $0.0005 and the API sends
+currentPriceUsd at 10dp. Reuse MoneyPipe/QuantityPipe. Gains and losses must be
+distinguishable without relying on colour alone.
+
+An asset with a position but no quote yet sends currentPriceUsd: null and
+marketValueUsd: 0 — render that as "no price yet", not as a 100% loss.
+
+Everything visual reads src/styles/ui.tokens.scss and the shared chart-theme.ts. Add a
+token if one is missing; do not inline a hex or a raw px at the call site.
+
+Tick a box only for something you have personally seen pass, and say plainly what you did
+not verify — that flag is what caught the real defects in Phases 4, 5, 6 and 7. Then
+append to the handoff log, write the next session prompt, and commit.
+```
+
+**Optional backend cleanup**, small and independent of the above — `backend-dotnet` could close
+**D10** (gated provider missing from `sources`, a doc-vs-behaviour mismatch) and **D11** (make
+`AssetClass` binding case-insensitive on *both* the Phase 6 route and the Phase 3 query parameter,
+never just one). Neither blocks anything.
 
 **Blocked, for later:**
 

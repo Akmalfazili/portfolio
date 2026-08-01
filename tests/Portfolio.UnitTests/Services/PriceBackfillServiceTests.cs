@@ -227,4 +227,55 @@ public sealed class PriceBackfillServiceTests : IDisposable
             s.Contains(requestedFrom.ToString("yyyy-MM-dd")) && s.Contains(effectiveFrom.ToString("yyyy-MM-dd")));
         summary.AssetsWithTruncatedHistory.Should().NotContain(s => s.Contains("Z74"));
     }
+
+    [Fact]
+    public async Task RunAsync_ExcludesCryptoAssets_EvenWhenTheyHaveTransactions()
+    {
+        // Crypto is gain/loss only, by decision — it keeps no PriceHistory at all, so a crypto
+        // asset with transactions must be skipped entirely, not merely deprioritised.
+        var eth = new Asset
+        {
+            Id = 4,
+            Symbol = "ETH",
+            Name = "Ethereum",
+            AssetClass = AssetClass.Crypto,
+            Currency = "USD",
+            QuoteProviderKind = QuoteProviderKind.CoinGecko,
+            ProviderCoinId = "ethereum",
+        };
+        _db.Assets.Add(eth);
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = eth.Id,
+            Type = TransactionType.Buy,
+            TradeDate = new DateOnly(2026, 7, 20),
+            Quantity = 1m,
+            PricePerUnit = 2000m,
+            Fees = 0m,
+            Currency = "USD",
+        });
+        await _db.SaveChangesAsync();
+
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(new DateOnly(2026, 7, 20), 200m, "USD")],
+                callInfo.ArgAt<DateOnly>(1))));
+
+        var fxProvider = Substitute.For<IFxRateProvider>();
+        fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns((IReadOnlyList<FxRatePoint>)[new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]);
+
+        var router = Substitute.For<IQuoteProviderRouter>();
+        router.GetProvider(Arg.Any<Asset>()).Returns(stockProvider);
+
+        var sut = CreateSut(router, fxProvider);
+
+        var summary = await sut.RunAsync(CancellationToken.None);
+
+        summary.AssetsProcessed.Should().NotContain("ETH");
+        summary.AssetsSkippedForBudget.Should().NotContain("ETH");
+        router.DidNotReceive().GetProvider(eth);
+        (await _db.PriceHistories.Where(p => p.AssetId == eth.Id).CountAsync()).Should().Be(0);
+    }
 }
