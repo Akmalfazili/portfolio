@@ -1,25 +1,41 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
 import { httpResource } from '@angular/common/http';
-import { Router, RouterLink } from '@angular/router';
+import { Router } from '@angular/router';
+import { MatButtonToggleModule } from '@angular/material/button-toggle';
 
-import { AssetClass, AssetDto, QuoteUpdateNotification } from '../../core/api/models';
+import { AllocationItemDto, AnnualReturnsDto, AssetClass, PortfolioAllocationDto, PortfolioSummaryDto } from '../../core/api/models';
 import { API_ROUTES } from '../../core/api/api-routes';
 import { PriceStore } from '../../core/prices/price-store';
 import { MoneyPipe } from '../../shared/pipes/money.pipe';
 import { StateMessage } from '../../shared/state-message/state-message';
+import { StatTile } from '../../shared/stat-tile/stat-tile';
+import { GainLoss } from '../../shared/gain-loss/gain-loss';
+import { AllocationPieChart, AllocationSlice } from './components/allocation-pie-chart';
+import { AnnualReturnChart } from './components/annual-return-chart';
+import { HoldingsTable } from './components/holdings-table';
+
+type AllocationMode = 'market' | 'cost';
 
 /**
- * Shared by both /stocks and /crypto, parameterised by `assetClass` (bound
- * from the route's `data` via `withComponentInputBinding()`). The full
- * allocation pie, annual-return bar and summary tiles land in Phase 9 — this
- * phase proves the real wiring: the route parameterisation, the section
- * accent, live prices from PriceStore, and the loading/empty/error scaffold,
- * against the actual GET /api/assets endpoint.
+ * Shared by /stocks and /crypto, parameterised by `assetClass` from the
+ * route's `data`. Stocks additionally get the annual-return bar chart —
+ * crypto keeps no price history at all, so that resource is simply never
+ * requested for it (an `undefined` httpResource url, not an empty chart —
+ * see tracker.md's crypto-scope decision).
  */
 @Component({
   selector: 'app-portfolio-overview-page',
   standalone: true,
-  imports: [RouterLink, MoneyPipe, StateMessage],
+  imports: [
+    MoneyPipe,
+    StateMessage,
+    StatTile,
+    GainLoss,
+    MatButtonToggleModule,
+    AllocationPieChart,
+    AnnualReturnChart,
+    HoldingsTable,
+  ],
   templateUrl: './portfolio-overview.page.html',
   styleUrl: './portfolio-overview.page.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -30,29 +46,103 @@ export class PortfolioOverviewPage {
   private readonly router = inject(Router);
   private readonly priceStore = inject(PriceStore);
 
-  private readonly assetsResource = httpResource<AssetDto[]>(() => API_ROUTES.assets);
-
-  readonly isLoading = this.assetsResource.isLoading;
-  readonly hasError = computed(() => this.assetsResource.error() != null);
-
-  readonly assetsForSection = computed(() =>
-    (this.assetsResource.value() ?? []).filter((asset) => asset.assetClass === this.assetClass()),
+  private readonly summaryResource = httpResource<PortfolioSummaryDto>(() =>
+    API_ROUTES.portfolioSummary(this.assetClass()),
+  );
+  private readonly allocationResource = httpResource<PortfolioAllocationDto>(() =>
+    API_ROUTES.portfolioAllocation(this.assetClass()),
+  );
+  private readonly annualReturnsResource = httpResource<AnnualReturnsDto | undefined>(() =>
+    this.assetClass() === 'Stock' ? API_ROUTES.stockAnnualReturns : undefined,
   );
 
-  readonly isEmpty = computed(
-    () => !this.isLoading() && !this.hasError() && this.assetsForSection().length === 0,
+  readonly isLoading = computed(() => this.summaryResource.isLoading() || this.allocationResource.isLoading());
+  readonly hasError = computed(
+    () => this.summaryResource.error() != null || this.allocationResource.error() != null,
   );
+
+  readonly summary = computed(() => this.summaryResource.value());
+  readonly holdings = computed(() => this.summary()?.holdings ?? []);
+
+  readonly isEmpty = computed(() => !this.isLoading() && !this.hasError() && this.holdings().length === 0);
 
   readonly sectionLabel = computed(() => (this.assetClass() === 'Crypto' ? 'Crypto' : 'Stocks'));
-
   readonly basePath = computed(() => (this.assetClass() === 'Crypto' ? '/crypto' : '/stocks'));
+  readonly isStock = computed(() => this.assetClass() === 'Stock');
 
-  priceFor(assetId: number): QuoteUpdateNotification | undefined {
-    return this.priceStore.priceFor(assetId);
+  readonly annualReturns = computed(() => this.annualReturnsResource.value()?.years ?? []);
+
+  readonly allocationMode = signal<AllocationMode>('market');
+
+  private readonly marketSlices = computed<AllocationSlice[]>(() =>
+    (this.allocationResource.value()?.items ?? []).map((item: AllocationItemDto) => ({
+      assetId: item.assetId,
+      symbol: item.symbol,
+      name: item.name,
+      value: item.marketValueUsd,
+      percent: item.percentageOfTotal,
+    })),
+  );
+
+  private readonly costSlices = computed<AllocationSlice[]>(() => {
+    const summary = this.summary();
+    if (!summary) {
+      return [];
+    }
+    const totalCost = summary.totalCostBasisUsd;
+    return summary.holdings
+      .filter((h) => h.quantityHeld > 0)
+      .map((h) => ({
+        assetId: h.assetId,
+        symbol: h.symbol,
+        name: h.name,
+        value: h.costBasisUsd,
+        percent: totalCost > 0 ? (h.costBasisUsd / totalCost) * 100 : 0,
+      }));
+  });
+
+  readonly allocationSlices = computed(() =>
+    this.allocationMode() === 'market' ? this.marketSlices() : this.costSlices(),
+  );
+  readonly allocationValueLabel = computed(() => (this.allocationMode() === 'market' ? 'Market value' : 'Cost basis'));
+
+  private lastAppliedRefreshAt: string | null = null;
+
+  constructor() {
+    // Reload the calculation endpoints once a scheduled/manual refresh cycle
+    // actually completes — reacting to PriceStore's own signal, never polling
+    // independently (rule #2). Skips the very first emission so mount doesn't
+    // double-fetch on top of the initial httpResource requests.
+    effect(() => {
+      const at = this.priceStore.lastRefreshedAt();
+      if (at === null || at === this.lastAppliedRefreshAt) {
+        return;
+      }
+      const isFirstObservation = this.lastAppliedRefreshAt === null;
+      this.lastAppliedRefreshAt = at;
+      if (isFirstObservation) {
+        return;
+      }
+      untracked(() => {
+        this.summaryResource.reload();
+        this.allocationResource.reload();
+        if (this.isStock()) {
+          this.annualReturnsResource.reload();
+        }
+      });
+    });
+  }
+
+  setAllocationMode(mode: AllocationMode): void {
+    this.allocationMode.set(mode);
   }
 
   retry(): void {
-    this.assetsResource.reload();
+    this.summaryResource.reload();
+    this.allocationResource.reload();
+    if (this.isStock()) {
+      this.annualReturnsResource.reload();
+    }
   }
 
   goToTransactions(): void {

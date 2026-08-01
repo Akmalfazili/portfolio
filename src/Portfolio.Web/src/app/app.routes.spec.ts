@@ -11,6 +11,22 @@ import { API_ROUTES } from './core/api/api-routes';
 import { PRICES_HUB_CONNECTION_FACTORY } from './core/prices/price-store';
 import { FakeHubConnection } from './core/prices/testing/fake-hub-connection';
 
+const EMPTY_SUMMARY = (assetClass: 'Stock' | 'Crypto') => ({
+  assetClass,
+  totalCostBasisUsd: 0,
+  totalMarketValueUsd: 0,
+  totalUnrealizedPnlUsd: 0,
+  totalUnrealizedPnlPercent: null,
+  totalRealizedPnlUsd: 0,
+  holdings: [],
+});
+
+const EMPTY_ALLOCATION = (assetClass: 'Stock' | 'Crypto') => ({
+  assetClass,
+  totalMarketValueUsd: 0,
+  items: [],
+});
+
 /**
  * End-to-end proof (within a test harness) that the Phase 7 routing contract
  * actually works: lazy loading, `data.assetClass` bound to the shared page's
@@ -42,22 +58,30 @@ describe('app routing — assetClass parameterisation', () => {
     document.documentElement.removeAttribute('data-section');
   });
 
+  function flushStockOverview() {
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(EMPTY_SUMMARY('Stock'));
+    httpMock.expectOne(API_ROUTES.portfolioAllocation('Stock')).flush(EMPTY_ALLOCATION('Stock'));
+    httpMock.expectOne(API_ROUTES.stockAnnualReturns).flush({ years: [] });
+  }
+
   it('redirects / to /stocks', async () => {
     await harness.navigateByUrl('/');
     expect(harness.routeNativeElement).toBeTruthy();
-    httpMock.expectOne(API_ROUTES.assets).flush([]);
+    flushStockOverview();
   });
 
   it('binds data.assetClass="Stock" onto PortfolioOverviewPage for /stocks', async () => {
     const instance = await harness.navigateByUrl('/stocks', PortfolioOverviewPage);
     expect(instance.assetClass()).toBe('Stock');
-    httpMock.expectOne(API_ROUTES.assets).flush([]);
+    flushStockOverview();
   });
 
   it('binds data.assetClass="Crypto" onto the SAME PortfolioOverviewPage component for /crypto', async () => {
     const instance = await harness.navigateByUrl('/crypto', PortfolioOverviewPage);
     expect(instance.assetClass()).toBe('Crypto');
-    httpMock.expectOne(API_ROUTES.assets).flush([]);
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Crypto')).flush(EMPTY_SUMMARY('Crypto'));
+    httpMock.expectOne(API_ROUTES.portfolioAllocation('Crypto')).flush(EMPTY_ALLOCATION('Crypto'));
+    httpMock.expectNone(API_ROUTES.stockAnnualReturns);
   });
 
   it('binds both the :symbol param and data.assetClass onto AssetDetailPage', async () => {
@@ -65,11 +89,12 @@ describe('app routing — assetClass parameterisation', () => {
     expect(instance.symbol()).toBe('AAPL');
     expect(instance.assetClass()).toBe('Stock');
     httpMock.expectOne(API_ROUTES.assets).flush([]);
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(EMPTY_SUMMARY('Stock'));
   });
 
   it('an unknown path redirects to /stocks rather than a blank/broken route', async () => {
     const instance = await harness.navigateByUrl('/nonsense', PortfolioOverviewPage);
     expect(instance.assetClass()).toBe('Stock');
-    httpMock.expectOne(API_ROUTES.assets).flush([]);
+    flushStockOverview();
   });
 });

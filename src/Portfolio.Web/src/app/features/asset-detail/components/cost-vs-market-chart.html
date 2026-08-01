@@ -1,0 +1,30 @@
+@if (hasAnyData()) {
+  <div class="cost-vs-market">
+    <div class="cost-vs-market__toolbar" role="group" aria-label="Chart date range">
+      @for (r of ranges; track r) {
+        <button
+          type="button"
+          class="cost-vs-market__range-btn"
+          [class.cost-vs-market__range-btn--active]="range() === r"
+          [attr.aria-pressed]="range() === r"
+          (click)="setRange(r)"
+        >
+          {{ r }}
+        </button>
+      }
+    </div>
+
+    <div
+      class="cost-vs-market__chart"
+      echarts
+      [options]="options()"
+      [initOpts]="{ renderer: 'svg' }"
+      [autoResize]="true"
+    ></div>
+  </div>
+} @else {
+  <p class="cost-vs-market__empty">
+    No priced history yet — this chart fills in once the position has transactions and price
+    history to compare.
+  </p>
+}

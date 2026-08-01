@@ -1,0 +1,10 @@
+.gain-loss-card {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--ui-layout-tile-min-width-sm), 1fr));
+  gap: var(--ui-space-3);
+}
+
+.gain-loss-card__pending {
+  color: var(--ui-color-on-surface-muted);
+  font-style: italic;
+}

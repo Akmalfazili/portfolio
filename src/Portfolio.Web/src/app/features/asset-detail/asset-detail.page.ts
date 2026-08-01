@@ -1,27 +1,31 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, untracked } from '@angular/core';
 import { httpResource } from '@angular/common/http';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 
-import { AssetClass, AssetDto } from '../../core/api/models';
+import { AssetClass, AssetDto, AssetPerformanceDto, PortfolioSummaryDto, TransactionDto } from '../../core/api/models';
 import { API_ROUTES } from '../../core/api/api-routes';
 import { PriceStore } from '../../core/prices/price-store';
 import { MoneyPipe } from '../../shared/pipes/money.pipe';
+import { QuantityPipe } from '../../shared/pipes/quantity.pipe';
 import { StateMessage } from '../../shared/state-message/state-message';
+import { GainLossCard } from './components/gain-loss-card';
+import { CostVsMarketChart } from './components/cost-vs-market-chart';
 
 /**
  * Shared by /stocks/:symbol and /crypto/:symbol. `symbol` and `assetClass`
  * both arrive via `withComponentInputBinding()` — the former from the route
  * param, the latter from the route's static `data`.
  *
- * Phase 9 adds the live price header, the cost-vs-market line chart (stocks
- * only — crypto is gain/loss only, see tracker.md's crypto-scope decision)
- * and per-asset transactions. This phase proves the real lookup against
- * GET /api/assets plus the loading/empty/error scaffold.
+ * Crypto gets NO cost-vs-market line chart and NO range selector — it keeps
+ * no price history at all (tracker.md's crypto-scope decision) — so
+ * `performanceResource` is never even requested for it (an `undefined`
+ * httpResource url), and `CostVsMarketChart` is omitted from the template
+ * entirely rather than rendered empty or flat.
  */
 @Component({
   selector: 'app-asset-detail-page',
   standalone: true,
-  imports: [MoneyPipe, StateMessage],
+  imports: [RouterLink, MoneyPipe, QuantityPipe, StateMessage, GainLossCard, CostVsMarketChart],
   templateUrl: './asset-detail.page.html',
   styleUrl: './asset-detail.page.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -34,9 +38,12 @@ export class AssetDetailPage {
   private readonly priceStore = inject(PriceStore);
 
   private readonly assetsResource = httpResource<AssetDto[]>(() => API_ROUTES.assets);
+  private readonly summaryResource = httpResource<PortfolioSummaryDto>(() =>
+    API_ROUTES.portfolioSummary(this.assetClass()),
+  );
 
-  readonly isLoading = this.assetsResource.isLoading;
-  readonly hasError = computed(() => this.assetsResource.error() != null);
+  readonly isLoading = computed(() => this.assetsResource.isLoading() || this.summaryResource.isLoading());
+  readonly hasError = computed(() => this.assetsResource.error() != null || this.summaryResource.error() != null);
 
   readonly asset = computed(() =>
     (this.assetsResource.value() ?? []).find(
@@ -46,15 +53,72 @@ export class AssetDetailPage {
 
   readonly isNotFound = computed(() => !this.isLoading() && !this.hasError() && !this.asset());
 
+  readonly isStock = computed(() => this.assetClass() === 'Stock');
+
+  readonly holding = computed(() => {
+    const asset = this.asset();
+    if (!asset) {
+      return undefined;
+    }
+    return this.summaryResource.value()?.holdings.find((h) => h.assetId === asset.id);
+  });
+
+  readonly hasNoTransactions = computed(
+    () => !this.isLoading() && !this.hasError() && !!this.asset() && !this.holding(),
+  );
+
+  private readonly performanceResource = httpResource<AssetPerformanceDto | undefined>(() => {
+    const asset = this.asset();
+    return asset && this.isStock() ? API_ROUTES.assetPerformance(asset.id) : undefined;
+  });
+
+  readonly performancePoints = computed(() => this.performanceResource.value()?.points ?? []);
+
+  private readonly transactionsResource = httpResource<TransactionDto[] | undefined>(() => {
+    const asset = this.asset();
+    return asset ? API_ROUTES.transactionsByAsset(asset.id) : undefined;
+  });
+
+  readonly transactions = computed(() => this.transactionsResource.value() ?? []);
+
   readonly quote = computed(() => {
     const asset = this.asset();
     return asset ? this.priceStore.priceFor(asset.id) : undefined;
   });
 
-  readonly isCrypto = computed(() => this.assetClass() === 'Crypto');
+  /** Falls back to the last persisted quote (from the summary snapshot) before any live SignalR push has arrived. */
+  readonly fallbackPrice = computed(() => {
+    const holding = this.holding();
+    return holding?.currentPriceNative ?? null;
+  });
+
+  private lastAppliedRefreshAt: string | null = null;
+
+  constructor() {
+    // Same pattern as PortfolioOverviewPage — react to a completed refresh
+    // cycle rather than polling independently (rule #2).
+    effect(() => {
+      const at = this.priceStore.lastRefreshedAt();
+      if (at === null || at === this.lastAppliedRefreshAt) {
+        return;
+      }
+      const isFirstObservation = this.lastAppliedRefreshAt === null;
+      this.lastAppliedRefreshAt = at;
+      if (isFirstObservation) {
+        return;
+      }
+      untracked(() => {
+        this.summaryResource.reload();
+        if (this.isStock()) {
+          this.performanceResource.reload();
+        }
+      });
+    });
+  }
 
   retry(): void {
     this.assetsResource.reload();
+    this.summaryResource.reload();
   }
 
   goBackToOverview(): void {

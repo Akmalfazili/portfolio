@@ -41,3 +41,60 @@
   font-size: var(--ui-font-size-sm);
   color: var(--ui-color-on-surface-muted);
 }
+
+.detail__panel {
+  background: var(--ui-color-surface);
+  border: 1px solid var(--ui-color-border);
+  border-radius: var(--ui-radius-md);
+  padding: var(--ui-space-4);
+  margin-top: var(--ui-space-6);
+}
+
+.detail__panel-title {
+  margin: 0 0 var(--ui-space-4);
+  font-size: var(--ui-font-size-lg);
+  font-weight: var(--ui-font-weight-semibold);
+  color: var(--ui-color-on-surface);
+}
+
+.detail__transactions {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--ui-font-size-sm);
+}
+
+.detail__transactions th {
+  text-align: left;
+  color: var(--ui-color-on-surface-muted);
+  font-weight: var(--ui-font-weight-medium);
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border-bottom: 1px solid var(--ui-color-gridline);
+}
+
+.detail__transactions td {
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border-bottom: 1px solid var(--ui-color-gridline);
+  color: var(--ui-color-on-surface);
+}
+
+.detail__num {
+  text-align: right;
+  font-variant-numeric: var(--ui-font-numeric-variant);
+}
+
+.detail__empty {
+  color: var(--ui-color-on-surface-muted);
+  font-size: var(--ui-font-size-sm);
+}
+
+.detail__manage-link {
+  display: inline-block;
+  margin-top: var(--ui-space-4);
+  color: var(--ui-color-accent);
+  font-size: var(--ui-font-size-sm);
+  text-decoration: none;
+}
+
+.detail__manage-link:hover {
+  text-decoration: underline;
+}

@@ -19,25 +19,43 @@
       actionLabel="Add a transaction"
       (action)="goToTransactions()"
     />
-  } @else {
-    <ul class="overview__list">
-      @for (asset of assetsForSection(); track asset.id) {
-        <li class="overview__row">
-          <a class="overview__link" [routerLink]="[basePath(), asset.symbol]">
-            <span class="overview__symbol">{{ asset.symbol }}</span>
-            <span class="overview__name">{{ asset.name }}</span>
-            @if (priceFor(asset.id); as quote) {
-              <span class="overview__price">{{ quote.price | money: quote.currency }}</span>
-            } @else {
-              <span class="overview__price overview__price--pending">—</span>
-            }
-          </a>
-        </li>
-      }
-    </ul>
-    <p class="overview__note">
-      Allocation pie, annual-return chart and summary tiles land in Phase 9 — this list proves the
-      live routing, section accent and prices are wired up.
-    </p>
+  } @else if (summary(); as s) {
+    <div class="overview__tiles">
+      <app-stat-tile label="Total cost basis" [value]="s.totalCostBasisUsd | money"></app-stat-tile>
+      <app-stat-tile label="Total market value" [value]="s.totalMarketValueUsd | money"></app-stat-tile>
+      <app-stat-tile label="Unrealized gain/loss" [value]="s.totalUnrealizedPnlUsd | money">
+        <app-gain-loss [amountUsd]="s.totalUnrealizedPnlUsd" [percent]="s.totalUnrealizedPnlPercent" />
+      </app-stat-tile>
+      <app-stat-tile label="Realized gain/loss" [value]="s.totalRealizedPnlUsd | money">
+        <app-gain-loss [amountUsd]="s.totalRealizedPnlUsd" />
+      </app-stat-tile>
+    </div>
+
+    <section class="overview__panel">
+      <header class="overview__panel-header">
+        <h2 class="overview__panel-title">Allocation</h2>
+        <mat-button-toggle-group
+          [value]="allocationMode()"
+          (change)="setAllocationMode($event.value)"
+          aria-label="Allocation basis"
+        >
+          <mat-button-toggle value="market">Market value</mat-button-toggle>
+          <mat-button-toggle value="cost">Cost basis</mat-button-toggle>
+        </mat-button-toggle-group>
+      </header>
+      <app-allocation-pie-chart [slices]="allocationSlices()" [valueLabel]="allocationValueLabel()" />
+    </section>
+
+    @if (isStock()) {
+      <section class="overview__panel">
+        <h2 class="overview__panel-title">Annual return</h2>
+        <app-annual-return-chart [years]="annualReturns()" />
+      </section>
+    }
+
+    <section class="overview__panel">
+      <h2 class="overview__panel-title">Holdings</h2>
+      <app-holdings-table [holdings]="holdings()" [basePath]="basePath()" />
+    </section>
   }
 </section>

@@ -1,0 +1,30 @@
+.gain-loss {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-space-1);
+  font-weight: var(--ui-font-weight-medium);
+  color: var(--ui-color-on-surface-secondary);
+}
+
+.gain-loss--gain {
+  color: var(--ui-color-gain);
+}
+
+.gain-loss--loss {
+  color: var(--ui-color-loss);
+}
+
+.gain-loss__icon {
+  font-size: var(--ui-size-icon-sm);
+  width: var(--ui-size-icon-sm);
+  height: var(--ui-size-icon-sm);
+}
+
+.gain-loss__value {
+  font-variant-numeric: var(--ui-font-numeric-variant);
+}
+
+.gain-loss__sep {
+  margin: 0 var(--ui-space-1);
+  color: var(--ui-color-on-surface-muted);
+}

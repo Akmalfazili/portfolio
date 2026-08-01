@@ -1,0 +1,46 @@
+.cost-vs-market {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-3);
+}
+
+// Filters/range controls sit in their own row above the one chart they scope
+// (interaction.md) — this is that chart's dedicated range, not a dashboard
+// filter shared across multiple charts.
+.cost-vs-market__toolbar {
+  display: flex;
+  gap: var(--ui-space-1);
+}
+
+.cost-vs-market__range-btn {
+  border: 1px solid var(--ui-color-border);
+  background: var(--ui-color-surface);
+  color: var(--ui-color-on-surface-secondary);
+  border-radius: var(--ui-radius-sm);
+  padding: var(--ui-space-1) var(--ui-space-3);
+  font-size: var(--ui-font-size-sm);
+  font-family: var(--ui-font-family-sans);
+  cursor: pointer;
+  transition: background var(--ui-motion-duration-fast) var(--ui-motion-easing-standard);
+}
+
+.cost-vs-market__range-btn:hover {
+  background: var(--ui-color-surface-alt);
+}
+
+.cost-vs-market__range-btn--active {
+  background: var(--ui-color-accent);
+  border-color: var(--ui-color-accent);
+  color: var(--ui-color-on-accent);
+}
+
+.cost-vs-market__chart {
+  width: 100%;
+  height: var(--ui-chart-height-lg);
+}
+
+.cost-vs-market__empty {
+  color: var(--ui-color-on-surface-muted);
+  font-size: var(--ui-font-size-sm);
+  margin: var(--ui-space-4) 0;
+}

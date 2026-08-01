@@ -2,93 +2,116 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
+import { provideEchartsCore } from 'ngx-echarts';
 
 import { PortfolioOverviewPage } from './portfolio-overview.page';
 import { API_ROUTES } from '../../core/api/api-routes';
-import { AssetDto } from '../../core/api/models';
-import { PRICES_HUB_CONNECTION_FACTORY } from '../../core/prices/price-store';
+import { AnnualReturnsDto, PortfolioAllocationDto, PortfolioSummaryDto } from '../../core/api/models';
+import { PRICES_HUB_CONNECTION_FACTORY, PriceStore } from '../../core/prices/price-store';
 import { FakeHubConnection } from '../../core/prices/testing/fake-hub-connection';
 
-const ASSETS: AssetDto[] = [
-  {
-    id: 1,
-    symbol: 'AAPL',
-    name: 'Apple Inc.',
-    assetClass: 'Stock',
-    exchange: 'NASDAQ',
-    currency: 'USD',
-    quoteProviderKind: 'TwelveData',
-    providerSymbol: 'AAPL',
-    providerCoinId: null,
-    isActive: true,
-  },
-  {
-    id: 2,
-    symbol: 'ethereum',
-    name: 'Ethereum',
-    assetClass: 'Crypto',
-    exchange: null,
-    currency: 'USD',
-    quoteProviderKind: 'CoinGecko',
-    providerSymbol: null,
-    providerCoinId: 'ethereum',
-    isActive: true,
-  },
-];
+const STOCK_SUMMARY: PortfolioSummaryDto = {
+  assetClass: 'Stock',
+  totalCostBasisUsd: 3864,
+  totalMarketValueUsd: 0,
+  totalUnrealizedPnlUsd: -3864,
+  totalUnrealizedPnlPercent: -100,
+  totalRealizedPnlUsd: 23,
+  holdings: [
+    {
+      assetId: 1,
+      symbol: 'AAPL',
+      name: 'Apple Inc.',
+      assetClass: 'Stock',
+      currency: 'USD',
+      quantityHeld: 12,
+      costBasisUsd: 3864,
+      currentPriceNative: null,
+      currentPriceUsd: null,
+      priceAsOf: null,
+      marketValueUsd: 0,
+      unrealizedPnlUsd: -3864,
+      unrealizedPnlPercent: -100,
+      realizedPnlUsd: 23,
+    },
+  ],
+};
+
+const STOCK_ALLOCATION: PortfolioAllocationDto = {
+  assetClass: 'Stock',
+  totalMarketValueUsd: 0,
+  items: [{ assetId: 1, symbol: 'AAPL', name: 'Apple Inc.', marketValueUsd: 0, percentageOfTotal: 0 }],
+};
+
+const ANNUAL_RETURNS: AnnualReturnsDto = { years: [{ year: 2026, timeWeightedReturnPercent: 1.7775 }] };
 
 describe('PortfolioOverviewPage', () => {
   let fixture: ComponentFixture<PortfolioOverviewPage>;
   let httpMock: HttpTestingController;
+  let fakeHub: FakeHubConnection;
 
   beforeEach(() => {
+    fakeHub = new FakeHubConnection();
     TestBed.configureTestingModule({
       imports: [PortfolioOverviewPage],
       providers: [
         provideHttpClient(),
         provideHttpClientTesting(),
         provideRouter([]),
-        { provide: PRICES_HUB_CONNECTION_FACTORY, useValue: () => new FakeHubConnection() },
+        provideEchartsCore({ echarts: () => import('echarts') }),
+        { provide: PRICES_HUB_CONNECTION_FACTORY, useValue: () => fakeHub },
       ],
     });
     httpMock = TestBed.inject(HttpTestingController);
+    // Constructs PriceStore's hub connection eagerly.
+    TestBed.inject(PriceStore);
     fixture = TestBed.createComponent(PortfolioOverviewPage);
     fixture.componentRef.setInput('assetClass', 'Stock');
   });
 
   afterEach(() => httpMock.verify());
 
-  it('shows the loading state before the request resolves', () => {
+  function flushInitial(summary = STOCK_SUMMARY, allocation = STOCK_ALLOCATION, annualReturns = ANNUAL_RETURNS) {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(summary);
+    httpMock.expectOne(API_ROUTES.portfolioAllocation('Stock')).flush(allocation);
+    httpMock.expectOne(API_ROUTES.stockAnnualReturns).flush(annualReturns);
+  }
+
+  it('shows the loading state before the requests resolve', () => {
     fixture.detectChanges();
     expect(fixture.nativeElement.textContent).toContain('Loading your holdings');
-    httpMock.expectOne(API_ROUTES.assets).flush(ASSETS);
+    flushInitial();
   });
 
-  it('filters to the bound assetClass and lists only matching holdings', async () => {
-    fixture.detectChanges();
-    httpMock.expectOne(API_ROUTES.assets).flush(ASSETS);
+  it('requests summary, allocation and annual-returns with the AssetClass capitalised', async () => {
+    flushInitial();
     await fixture.whenStable();
-    fixture.detectChanges();
-
-    const text = fixture.nativeElement.textContent as string;
-    expect(text).toContain('AAPL');
-    expect(text).not.toContain('Ethereum');
   });
 
-  it('shows the empty state with a call to action when nothing matches the section', async () => {
+  it('does NOT request annual-returns for the crypto section', () => {
     fixture.componentRef.setInput('assetClass', 'Crypto');
     fixture.detectChanges();
-    httpMock.expectOne(API_ROUTES.assets).flush([ASSETS[0]]); // stock only
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Crypto')).flush({ ...STOCK_SUMMARY, assetClass: 'Crypto' });
+    httpMock.expectOne(API_ROUTES.portfolioAllocation('Crypto')).flush({ ...STOCK_ALLOCATION, assetClass: 'Crypto' });
+    httpMock.expectNone(API_ROUTES.stockAnnualReturns);
+  });
+
+  it('shows the empty state with a call to action when there are no holdings', async () => {
+    flushInitial({ ...STOCK_SUMMARY, holdings: [] }, { ...STOCK_ALLOCATION, items: [] }, { years: [] });
     await fixture.whenStable();
     fixture.detectChanges();
 
     const text = fixture.nativeElement.textContent as string;
-    expect(text).toContain('No crypto holdings yet');
+    expect(text).toContain('No stock holdings yet');
     expect(fixture.nativeElement.querySelector('button')).toBeTruthy();
   });
 
   it('shows the error state and can retry', async () => {
     fixture.detectChanges();
-    httpMock.expectOne(API_ROUTES.assets).flush('boom', { status: 500, statusText: 'Server Error' });
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush('boom', { status: 500, statusText: 'Server Error' });
+    httpMock.expectOne(API_ROUTES.portfolioAllocation('Stock')).flush(STOCK_ALLOCATION);
+    httpMock.expectOne(API_ROUTES.stockAnnualReturns).flush(ANNUAL_RETURNS);
     await fixture.whenStable();
     fixture.detectChanges();
 
@@ -96,6 +119,84 @@ describe('PortfolioOverviewPage', () => {
 
     fixture.componentInstance.retry();
     fixture.detectChanges();
-    httpMock.expectOne(API_ROUTES.assets).flush(ASSETS);
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY);
+    httpMock.expectOne(API_ROUTES.portfolioAllocation('Stock')).flush(STOCK_ALLOCATION);
+    httpMock.expectOne(API_ROUTES.stockAnnualReturns).flush(ANNUAL_RETURNS);
+  });
+
+  it('renders summary tiles, the holdings table, and the annual-return chart for stocks; AAPL shows "Awaiting price" not -100%', async () => {
+    flushInitial();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('AAPL');
+    // The per-holding "no price yet" case, which is the one the tracker
+    // explicitly calls out — the holdings-table/gain-loss-card specs pin the
+    // per-asset -100% suppression in detail; a portfolio-wide total where
+    // EVERY holding is unpriced is a separate, undocumented edge case not
+    // covered here (see the handoff notes).
+    expect(text).toContain('Awaiting price');
+    expect(text).toContain('Annual return');
+  });
+
+  it('does not render the annual-return chart for crypto', async () => {
+    fixture.componentRef.setInput('assetClass', 'Crypto');
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Crypto')).flush({
+      ...STOCK_SUMMARY,
+      assetClass: 'Crypto',
+      holdings: [{ ...STOCK_SUMMARY.holdings[0], assetClass: 'Crypto', symbol: 'ETH' }],
+    });
+    httpMock.expectOne(API_ROUTES.portfolioAllocation('Crypto')).flush({
+      ...STOCK_ALLOCATION,
+      assetClass: 'Crypto',
+      items: [{ ...STOCK_ALLOCATION.items[0], symbol: 'ETH' }],
+    });
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).not.toContain('Annual return');
+  });
+
+  it('toggles the allocation pie between market value and cost basis without a new HTTP request', async () => {
+    flushInitial();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.allocationMode()).toBe('market');
+    fixture.componentInstance.setAllocationMode('cost');
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.allocationMode()).toBe('cost');
+    expect(fixture.componentInstance.allocationSlices()[0].value).toBe(3864); // cost basis, not market value (0)
+  });
+
+  it('reloads summary/allocation/annual-returns after a refresh cycle completes, but not on the first status snapshot', async () => {
+    flushInitial();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    fakeHub.emit('RefreshStatus', {
+      lastRefreshedAt: '2026-08-01T10:00:00Z',
+      nyseOpen: false,
+      sgxOpen: false,
+      nextScheduledRunAt: null,
+      sources: [],
+    });
+    fixture.detectChanges();
+    httpMock.expectNone(API_ROUTES.portfolioSummary('Stock'));
+
+    fakeHub.emit('RefreshStatus', {
+      lastRefreshedAt: '2026-08-01T10:05:00Z',
+      nyseOpen: false,
+      sgxOpen: false,
+      nextScheduledRunAt: null,
+      sources: [],
+    });
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY);
+    httpMock.expectOne(API_ROUTES.portfolioAllocation('Stock')).flush(STOCK_ALLOCATION);
+    httpMock.expectOne(API_ROUTES.stockAnnualReturns).flush(ANNUAL_RETURNS);
   });
 });

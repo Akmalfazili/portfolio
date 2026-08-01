@@ -1,0 +1,13 @@
+@if (hasData()) {
+  <div
+    class="annual-return-chart"
+    echarts
+    [options]="options()"
+    [initOpts]="{ renderer: 'svg' }"
+    [autoResize]="true"
+  ></div>
+} @else {
+  <p class="annual-return-chart__empty">
+    No annual return figures yet — this fills in once a stock holding has price history to measure.
+  </p>
+}

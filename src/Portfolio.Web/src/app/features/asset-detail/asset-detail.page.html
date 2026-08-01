@@ -23,17 +23,64 @@
       <p class="detail__name">{{ found.name }}</p>
       @if (quote(); as q) {
         <p class="detail__price">{{ q.price | money: q.currency }}</p>
+      } @else if (fallbackPrice(); as native) {
+        <p class="detail__price">{{ native | money: found.currency }}</p>
       } @else {
         <p class="detail__price detail__price--pending">Waiting for a live quote…</p>
       }
     </header>
 
-    <p class="detail__note">
-      @if (isCrypto()) {
-        The gain/loss card lands in Phase 9 — crypto is gain/loss only, with no historical chart.
-      } @else {
-        The cost-vs-market line chart, gain/loss card and per-asset transactions land in Phase 9.
+    @if (hasNoTransactions()) {
+      <app-state-message
+        variant="empty"
+        title="No transactions yet for this asset"
+        description="Record a buy to start tracking its cost basis and gain/loss."
+        actionLabel="Add a transaction"
+        (action)="goBackToOverview()"
+      />
+    } @else if (holding(); as h) {
+      <section class="detail__panel">
+        <h2 class="detail__panel-title">Gain / loss</h2>
+        <app-gain-loss-card [holding]="h" />
+      </section>
+
+      @if (isStock()) {
+        <section class="detail__panel">
+          <h2 class="detail__panel-title">Cost vs market value</h2>
+          <app-cost-vs-market-chart [points]="performancePoints()" />
+        </section>
       }
-    </p>
+
+      <section class="detail__panel">
+        <h2 class="detail__panel-title">Transactions</h2>
+        @if (transactions().length === 0) {
+          <p class="detail__empty">No transactions recorded.</p>
+        } @else {
+          <table class="detail__transactions">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Type</th>
+                <th>Quantity</th>
+                <th>Price</th>
+                <th>Fees</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (t of transactions(); track t.id) {
+                <tr>
+                  <td>{{ t.tradeDate }}</td>
+                  <td>{{ t.type }}</td>
+                  <td class="detail__num">{{ t.quantity | quantity }}</td>
+                  <td class="detail__num">{{ t.pricePerUnit | money: t.currency }}</td>
+                  <td class="detail__num">{{ t.fees | money: t.currency }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        }
+        <a class="detail__manage-link" routerLink="/transactions">Manage transactions</a>
+      </section>
+    }
   }
 </section>

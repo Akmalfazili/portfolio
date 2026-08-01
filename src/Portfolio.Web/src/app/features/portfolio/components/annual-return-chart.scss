@@ -1,0 +1,10 @@
+.annual-return-chart {
+  width: 100%;
+  height: var(--ui-chart-height-sm);
+}
+
+.annual-return-chart__empty {
+  color: var(--ui-color-on-surface-muted);
+  font-size: var(--ui-font-size-sm);
+  margin: var(--ui-space-4) 0;
+}

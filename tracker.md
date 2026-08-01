@@ -34,11 +34,13 @@ so each session stays focused and its context stays clean.
 | 6 | Portfolio calculations | `backend-dotnet` | ✅ Done — verified |
 | 7 | Angular scaffold + shell | `frontend-angular` | ✅ Done — verified |
 | 8 | Transactions UI | `frontend-angular` | ✅ Done — verified |
-| 9 | Overview + detail pages | `frontend-angular` | ⬜ Not started |
+| 9 | Overview + detail pages | `frontend-angular` | ✅ Done — built and wire-verified; no browser driven |
 | 10 | Podman stack | `container-podman` | ⬜ Not started |
 | 11 | End-to-end verification | — | ⬜ Not started |
 
-**Currently active:** none — Phases 1–8 closed out and verified, Phases 6 and 8 on 2026-08-01.
+**Currently active:** none — Phases 1–9 closed out, Phases 6, 8 and 9 on 2026-08-01. **Phase 9 has
+not been confirmed at the rendered-pixel level** — that is the next thing to happen, by a session
+with browser automation.
 
 > ✅ **Prices refresh themselves and push over SignalR.** `dotnet build portfolio.slnx` is clean
 > with zero warnings under `TreatWarningsAsErrors` and `dotnet test portfolio.slnx` is 95/95 green
@@ -60,8 +62,16 @@ so each session stays focused and its context stays clean.
 > against a live API, and the answer was **not** the one D8 predicted — see the struck-through
 > entry in the register.
 >
-> **Phase 9 is the only unblocked work left.** It is `frontend-angular` in the same directory as
-> Phase 8, so it needs its own fresh terminal. Phase 10 still needs Podman installed.
+> ✅ **The overview and detail pages, with all three chart types, are built and wired to the real
+> API.** `ng build` clean, `ng test` **138/138** (was 97/97). Every new endpoint's payload shape
+> was curled through the dev proxy and matches the frontend DTOs exactly, including the crypto
+> `400` on `/performance` and the real "no live quote yet" case (AAPL, in this dev database).
+> **This is the one phase that genuinely needed a browser and didn't get one** — read the
+> "What was NOT verified" list under Phase 9 before trusting any visual claim about the charts.
+>
+> **Only Phase 10 is unblocked next**, and it needs Podman installed. A pixel-level pass over
+> Phase 9's charts (the orchestrating terminal's own browser tooling) is the other outstanding
+> item, not tied to any agent.
 
 ---
 
@@ -362,30 +372,117 @@ with both markets gated, so **0 Twelve Data credits** were spent (`TwelveData.sy
 > maximumFractionDigits: 20 })`, which never switches to exponential notation, and the exact case
 > is pinned by `decimal-precision.validator.spec.ts`.
 
-### ⬜ Phase 9 — Overview + detail pages · `frontend-angular`
+### ✅ Phase 9 — Overview + detail pages · `frontend-angular`
 
-- [ ] Load the `dataviz` skill before writing the first chart config
-- [ ] Shared `chart-theme.ts`
-> ⚠️ **The two asset classes get different pages.** Crypto is gain/loss only — no chart over time
-> anywhere. Do not render an empty or flat chart for crypto; omit the component entirely.
+Built and wire-verified 2026-08-01. **Not verified at the rendered-pixel level — no browser was
+driven this session.** See the explicit list of visual-only claims below.
+
+- [x] Loaded the `dataviz` skill before writing the first chart config
+- [x] Shared `src/app/shared/charts/chart-theme.ts` — resolves `--ui-*` custom properties off the
+      live DOM (with light-mode fallbacks for environments with no stylesheet loaded), fixed mark
+      specs (2px lines, ≤24px bars with 4px rounded caps, 8px end-markers with a 2px surface ring,
+      10% area opacity), shared axis/tooltip/legend builders. Pie/bar/line all read from it —
+      confirmed by reading each chart's own file, not by rendering
+> ⚠️ **The two asset classes get different pages** — a locked decision, not an oversight. Crypto
+> keeps no price history at all, so `AnnualReturnChart` and `CostVsMarketChart` are never even
+> imported into the crypto path; `PortfolioOverviewPage` renders the annual-return panel behind
+> `@if (isStock())`, and `AssetDetailPage` never puts `<app-cost-vs-market-chart>` in its template
+> for crypto — not a component that renders empty.
 
 **Stocks:**
 
-- [ ] `PortfolioOverviewPage` — summary tiles, **allocation pie** (cost ⇄ market value toggle),
-      **annual return bar chart**, holdings table
-- [ ] `AssetDetailPage` — live price header, **cost vs market value line chart** (cost as a
-      *step* series) with 1M/3M/1Y/All range selector, gain/loss card, per-asset transactions
+- [x] `PortfolioOverviewPage` — summary tiles (cost basis, market value, unrealized/realized
+      gain-loss), **allocation pie** (cost ⇄ market value toggle via `mat-button-toggle-group`,
+      no extra HTTP request on toggle), **annual return bar chart**, holdings table
+- [x] `AssetDetailPage` — live price header (falls back to the last persisted snapshot price
+      before any SignalR push arrives, then to "Waiting for a live quote…"), **cost vs market
+      value line chart** (cost as an ECharts `step: 'end'` series, market value `smooth: true`)
+      with a 1M/3M/1Y/All range selector anchored to the *series' own last date* (not wall-clock
+      "today", so a lagging dev dataset still populates every range), gain/loss card, per-asset
+      transactions (`GET /api/transactions?assetId=`)
 
 **Crypto:**
 
-- [ ] Overview — summary tiles, **allocation pie**, holdings table. **No annual return chart**
-- [ ] Detail — live price header, **gain/loss card only** (cost basis, market value, absolute and
-      percentage gain), per-asset transactions. **No line chart, no range selector**
+- [x] Overview — summary tiles, **allocation pie**, holdings table. **No annual return chart** —
+      `annualReturnsResource`'s `httpResource` request function returns `undefined` for
+      `assetClass() !== 'Stock'`, so no HTTP call is even made, confirmed live through the proxy
+- [x] Detail — live price header, **gain/loss card only** (cost basis, market value, absolute and
+      percentage gain via `GainLossCard`), per-asset transactions. **No line chart, no range
+      selector** — `performanceResource` likewise never requests for crypto, and
+      `<app-cost-vs-market-chart>` is behind `@if (isStock())`
 
 **Both:**
 
-- [ ] Gains/losses distinguishable without relying on colour alone
-- [ ] Sub-cent prices render correctly — ANVL near `$0.0004` must not display as `$0.00`
+- [x] Gains/losses distinguishable without relying on colour alone — `GainLoss` (shared,
+      `src/app/shared/gain-loss/`) renders an explicit `+`/`-` sign, an `arrow_upward` /
+      `arrow_downward` / `remove` glyph with an `aria-label`, AND the gain/loss colour token, so a
+      grayscale render or a screen reader gets the same answer as a sighted colour-reader. Used in
+      the annual-return bar labels, the holdings table, the gain-loss card and the summary tiles.
+      Unit-tested (`gain-loss.spec.ts`) but the actual rendered glyph/contrast is unconfirmed
+- [x] Sub-cent prices render correctly — reused the existing `MoneyPipe`/`QuantityPipe` everywhere
+      rather than writing new formatting; `holdings-table.spec.ts` and `gain-loss-card.spec.ts`
+      pin ANVL's `0.00050448` rendering as `$0.00050448`, not `$0.00`
+- [x] **A holding with `currentPriceUsd: null` renders "Awaiting price" / "Awaiting first price"**,
+      never the naive -100% the raw numbers (`marketValueUsd: 0` minus a real cost basis) would
+      otherwise read as — pinned in `holdings-table.spec.ts` and `gain-loss-card.spec.ts` against
+      the real AAPL probe row (see the live-verification note below). Left as a known, narrower
+      gap: the *portfolio-total* tiles do not carry this same override, so a portfolio where every
+      holding is unpriced would show a literal -100% total — undocumented in the tracker's
+      original scope, not fixed this session
+- [x] `ng build` clean (one acceptable bundle-budget warning, +9.68 kB over the 500 kB initial
+      budget — chart libraries), `ng test` **138/138** across **25 files** (was 97/97 / 17 files)
+- [x] Tree re-grepped clean of hex colours and raw `px` outside `ui.tokens.scss` /
+      `ui.mixins.scss` (the 1px hairline-border exception, and 4 new chart-height / tile-min-width
+      tokens added to `ui.tokens.scss` for the values this phase introduced) — no exceptions
+      needed inside `chart-theme.ts` either; every colour it emits is read from a token, never
+      inlined
+
+**Live-verified against the real API on `localhost:5100` through the dev proxy on `:4200`,
+2026-08-01 (Saturday, both markets closed):**
+
+- Every new endpoint's exact response shape was curled and matches the frontend's DTOs verbatim —
+  `GET /api/portfolio/{Stock,Crypto}/{summary,allocation}`, `GET /api/portfolio/stock/annual-returns`,
+  `GET /api/assets/{id}/performance` (200 for AAPL, 400 `ValidationProblemDetails` for a crypto id),
+  `GET /api/transactions?assetId=`.
+- Probe rows created to see non-trivial data (2 AAPL buys + 1 partial sell, 1 ETH buy, 1 ANVL buy)
+  and read back through every endpoint: AAPL came back with `currentPriceUsd: null` /
+  `unrealizedPnlPercent: -100` — the **exact real-data case** the "no price yet" override exists
+  for, since AAPL has price *history* (for the chart) but no live *quote* in this dev database.
+  ANVL's sub-cent quote (`0.0005044800`) and 10-dp quantity (`1000000.0000000000`) round-tripped
+  intact. The performance series rendered cost basis as a flat step across 3201 → 3201 → 4830 →
+  4830 → 3864 while market value moved daily — the step/smooth distinction is real in this data,
+  not just asserted. All 5 probe rows deleted afterward; `GET /api/transactions` confirmed back to
+  `[]`.
+- `GET /api/prices/status` showed `TwelveData: { lastAttemptedAt: null, symbolsRefreshed: 0 }` —
+  **0 Twelve Data credits spent** (NYSE closed all session); CoinGecko ticked its own 2-minute
+  cadence unprompted during the session (harmless, unmetered).
+
+**What was NOT verified — explicit, because it's the part that matters most for this phase.** No
+browser was driven, so nothing below is confirmed at the rendered-pixel level; each rests only on
+reading the ECharts config or the component logic:
+
+- Whether the pie chart's donut, direct labels (shown only ≥8% share) and leader lines actually
+  read cleanly, or collide, at real card widths.
+- Whether the annual-return bar's signed labels (`position: 'top'`/`'bottom'` by sign) clear the
+  zero baseline `markLine` without overlapping it for a small percentage.
+- Whether the line chart's two `endLabel`s (cost vs market value) collide when the two series are
+  close together at the right edge — marks-and-anatomy.md flags exactly this as a case needing a
+  leader line or a fallback to the legend, which was not implemented; only the legend (always
+  present for 2 series) and the tooltip are the fallback today.
+- Whether SVG-renderer text sizing/contrast holds up in a real browser — jsdom's canvas stub
+  (`Not implemented: HTMLCanvasElement's getContext()`) meant even the passing chart specs never
+  exercised real text metrics.
+- Dark mode: the app has no live theme-toggle button anywhere yet (only `prefers-color-scheme` /
+  a manual `[data-theme]` attribute nobody sets), and `chart-theme.ts` resolves tokens once per
+  `computed()` re-evaluation, not on a `matchMedia` change listener — an OS dark-mode flip
+  mid-session would not repaint an already-rendered chart's baked-in colours without a data change
+  forcing a recompute. Untested either way.
+- The reactive "reload summary/allocation/performance after a completed refresh cycle" effect
+  (`PortfolioOverviewPage`/`AssetDetailPage` constructors) is unit-tested against a fake hub but
+  never observed against a real multi-minute refresh cycle.
+- Left both `dotnet run --project src/Portfolio.Api` (port 5100) and `ng serve` (port 4200)
+  **running** at the end of this session specifically so the next browser-driving pass can start
+  immediately without a cold start; kill them if that's not wanted.
 
 ---
 
@@ -449,6 +546,7 @@ so the list stays a record and not just a to-do.
 | 2026-07-31 | — | 5 (follow-up) | **Refresh status made durable (D3), and the drawback register added.** `PriceRefreshStatusStore` now reads and writes a new `SourceRefreshState` table — one upserted row per provider, three rows forever — instead of a process-lifetime dictionary; it became scoped, and `LastRefreshedAt` is derived from the newest `LastSuccessAt` rather than stored separately. The original "it's only a UI indicator" reasoning was wrong: `NextDueAt` gates the cadence, so every restart made all providers due immediately and re-spent Twelve Data credits. Migration `20260731044754_AddSourceRefreshState` applied to SQLEXPRESS. **Live-proven with a real restart**: status survived (`lastRefreshedAt` 04:50:51 from before the restart), CoinGecko was *not* re-called on startup, and the next cycle fired exactly at the persisted due time 04:52:51 — which also verified the 2-minute crypto cadence over a real interval for the first time. The restart test was confirmed to fail when next-due is not persisted. 95/95, build clean. Remaining drawbacks D4–D8 recorded in the new register rather than left in conversation. |
 | 2026-08-01 | `backend-dotnet` | 6 | **Complete and verified.** Cost basis, P&L, performance series, TWR, both summary/allocation endpoints and both stocks-only endpoints built; crypto excluded from `PriceBackfillService`. Agent reported honestly, including flagging that it had not exercised the payloads through a JS client and that live annual returns only covered ~5 days of real data. Verifying its work found **one real defect, and a serious one**: `AnnualReturnCalculator` matched cash flows to valuations by **exact date equality**, but valuations come from stored `PriceHistory` dates while flows come from each transaction's `TradeDate` — two series with no guarantee of alignment. Any buy dated a weekend, a holiday, or any day without a stored close was dropped from the subtraction and its money reported as **performance**, which is the one thing TWR is chosen to prevent; a probe showed **+50% where the answer is 0%**. Fixed by attributing each flow to the first valuation on or after its own date, with the probe confirmed failing at 50% before the fix and three regression tests kept (deposit, withdrawal, flow past the last valuation). Also corrected the agent's report on one point: it claimed `/api/portfolio/stock/annual-returns` *requires* lowercase, but route literals are case-insensitive — only the enum-bound segment is case-sensitive, so capitalised `Stock`/`Crypto` works everywhere (**D11**). Verified independently of the agent: build 0 warnings, **134/134**, and a live run against real backfilled data — per-date historical FX proven to differ from today's rate on the wire (`440 SGD / 1.29109 = 340.7973`, where today's rate would give `340.89`), sub-cent and 10-dp precision intact (`0.0005061500`, `1000000.0000000000`), cost basis rendering as a flat step, SGD basis and the `-0.1871%` TWR both recomputed by hand, crypto → `400`, unknown → `404`. Probe transactions deleted; dev `Transactions` back to 0. It was a Saturday, so **0 Twelve Data credits** were spent. Left knowingly: D12 (backfill exclusion unexercised live), D13 (TWR never assembled from multi-year real data), and D8 still open. |
 | 2026-08-01 | `frontend-angular` | 8 | **Complete and verified.** Before launching the agent, the D8 brief in this file was found to be **misaimed**: it instructed the next session to measure `1000000.0000000000`, a value that is exactly 10⁶ and provably lossless, so a faithful agent would have passed the probe and closed D8 without ever testing the real exposures. Corrected first, then handed off — the retargeted probes are what produced the two findings now in Decisions. Agent built all four Phase 8 boxes, reported honestly, and **caught a real defect in its own draft before it shipped**: its first `decimalPrecisionValidator` rejected any value whose `String(value)` contained `"e"`, which would have blocked the very `0.0000000001` quantity the probe had just proved the backend accepts. Verified independently of the agent: `ng build` clean, `ng test` **97/97** across 17 files, no hex or raw `px` outside the token files, and a live run against the API — `1e-10` accepted with **201** and read back as `0.0000000001`, and the >15-digit case isolated to the **client** by sending a raw `12345678.1234567891` literal via `curl` that round-tripped through `System.Text.Json` and `decimal(28,10)` exactly while `JSON.stringify` mangles it. All probe rows deleted, dev `Transactions` confirmed back to `[]`. Saturday, both markets gated, **0 Twelve Data credits** spent. **D8 closed.** Left knowingly: no browser was driven this session, so no click-level confirmation of the datepicker, `mat-select` or dialog focus-trapping — component tests exercise the same methods, and the request bodies those methods build were proven against the real API, but the rendered interaction is unobserved. Also unexercised: a non-USD (SGD/Z74) transaction through the new form's currency-auto-set path, and any accessibility tooling. |
+| 2026-08-01 | `frontend-angular` | 9 | **Built and wire-verified; explicitly NOT confirmed at the rendered-pixel level — no browser automation was available this session.** Loaded the `dataviz` skill before the first chart config, per instruction. Built the shared `chart-theme.ts` (resolves `--ui-*` tokens off the live DOM with light-mode fallbacks, fixed mark specs), the allocation pie (donut, cost/market toggle with zero extra HTTP calls, colour assigned by stable asset-id identity rather than current-value rank so a re-render never repaints a holding that changed relative size — the exact anti-pattern the skill calls out), the annual-return bar (diverging around a zero `markLine`, signed per-bar labels positioned by sign so a negative bar's label lands under it rather than on the axis), and the cost-vs-market line (cost as a genuine ECharts `step: 'end'` series, market value `smooth: true`, a 1M/3M/1Y/All range anchored to the series' own last date rather than wall-clock "today" so a lagging dev dataset never empties the chart). Both pages rewired onto the real summary/allocation/annual-returns/performance endpoints in place of the Phase 7 placeholder `GET /api/assets` list. Crypto's exclusion from the stocks-only charts is structural — `httpResource`'s request function returns `undefined` for the crypto asset class, so `performanceResource`/`annualReturnsResource` never fire an HTTP call at all, and the chart components are behind `@if (isStock())` in the templates, not rendered-and-hidden. New shared components: `GainLoss` (sign + arrow glyph + colour, three independent cues so colour is never load-bearing alone) and `StatTile`. **One real defect caught and fixed before shipping, in the test suite itself, not the app**: the first attempt at testing a resource that derives its URL from *another* resource's resolved value (`AssetDetailPage`'s performance/transactions calls, which only fire once the `assets` lookup resolves) used `await fixture.whenStable()` to wait for the derived request to appear — this hangs forever in Angular's zoneless test harness, because `whenStable()` tracks the newly-dispatched-but-unflushed request as a pending task and can never resolve while it's outstanding, a chicken-and-egg wait that isn't documented anywhere obvious. Fixed by polling `httpMock.match()` across a few `TestBed.tick()` cycles instead (see `waitForRequest` in `asset-detail.page.spec.ts`), confirmed to actually resolve rather than coincidentally pass. Verified independently after the agent's own report: `ng build` clean (one acceptable bundle-budget warning, chart libraries), `ng test` **138/138 across 25 files** (was 97/97/17), tree re-grepped clean of hex/raw-`px` outside the token files (4 new chart-height/tile-width tokens added for values this phase introduced, none inlined). **Live-verified through the dev proxy against the real API** — curled every new endpoint and confirmed the exact response shape against the frontend's DTOs, created 5 probe transactions (2 AAPL buys + 1 partial sell, 1 ETH buy, 1 ANVL buy) to see non-trivial data, and specifically hit the "no live quote yet" case for real: AAPL has stored `PriceHistory` (so the chart has data) but no `PriceQuote` in this dev database, so `currentPriceUsd: null` / `unrealizedPnlPercent: -100` came back from the live API exactly as documented, and the holdings-table/gain-loss-card both render "Awaiting price" for that row rather than a -100% loss — not simulated, this is what the real API sent. Cost-vs-market performance series confirmed rendering the true step/smooth distinction over real backfilled AAPL data (cost held flat at 3201 across two days, jumped to 4830, dropped to 3864, while market value moved daily). All 5 probes deleted, `GET /api/transactions` confirmed back to `[]`. `GET /api/prices/status` showed **0 Twelve Data credits spent** (`TwelveData.symbolsRefreshed: 0`, NYSE closed all session, Saturday). Left both the API (`:5100`) and `ng serve` (`:4200`) running at handoff so a browser-driving session can start immediately. **Left knowingly, and this is the important part**: nothing about the actual rendered chart output — label collision, the pie's leader lines, the line chart's two `endLabel`s potentially overlapping when the series converge, real text legibility at real card widths, or a live OS dark-mode flip repainting an already-drawn chart — has been looked at. Also left knowingly: the portfolio-total tiles (as opposed to the per-holding rows) do not carry the "no price yet" override, so an all-unpriced portfolio's total would show a literal -100%; this was outside the tracker's stated scope and not fixed. |
 | 2026-07-31 | `frontend-angular` | 7 | **Complete and verified.** Angular 22 workspace scaffolded with the central design system the user asked for: `ui.tokens.scss` + `ui.mixins.scss`, with Material *derived from* the tokens rather than themed alongside them. Agent reported honestly and flagged the proxy and hub as never exercised live — testing that flag found **two real defects**. (1) **Ids were typed `string` across `models.ts`** while the backend sends C# `int` as JSON numbers; since the API sets no `AllowReadingFromString`, the Phase 8 transaction form would have `POST`ed `"assetId": "3"` and got a 400. The specs passed only because their fixtures (`'a1'`, `'t1'`) matched the wrong type. Fixed to `number`, then confirmed against the live API (`"id":1`) and the live hub (`"assetId":3`). (2) **The D5 "why nothing moved" logic was dead code** — it filtered `sources` for `attempted: false`, but `RunCycleAsync` drops a gated provider from that list entirely, so the filter could never match and a click with NYSE closed would have said a cheerful "Refreshed 4 symbols" with no explanation. Rewritten to derive closed markets from `nyseOpen`/`sgxOpen`, and its spec rebuilt around a payload captured verbatim from the live API instead of a fabricated one; recorded as **D10**. Also closed the design-system gaps the agent left: raw `px` layout values inlined in five component stylesheets despite the token file's own rule (now `--ui-layout-*` / `--ui-size-icon-*` tokens, with the toolbar height tracking Material's 64→56px breakpoint so the content `calc()` stays right on mobile), and the dark-mode block duplicated between the media query and `[data-theme]` (now one `ui-dark-tokens` mixin, so a token cannot be added to one and forgotten in the other). Verified independently of the agent: `ng build` clean, `ng test` **68/68**, no hex or raw `px` anywhere outside the token files, and a **live run through the dev proxy** — 6 assets over `/api`, a real SignalR client on `WebSocketTransport` (not long-polling), on-connect snapshot, 4 `QuoteUpdated` frames with sub-cent precision intact, `200` then `429 secondsRemaining: 26`. NYSE closed throughout, so 0 Twelve Data credits spent. Left knowingly: the `@angular/cli` Node-check patch (**D9**), and D8's 10-dp *quantity* round trip still unmeasured. |
 
 ---
@@ -695,12 +793,97 @@ Added during Phase 8 (2026-08-01):
 
 ## ▶ Next session
 
-Phases 1–8 are done. **Only Phase 10 is blocked** (needs Podman).
+Phases 1–9 are done. **Phase 10 is blocked** (needs Podman). Phase 9 was built and wire-verified
+but **never confirmed in a real browser** — no browser automation was available in that session.
+That is genuinely the next thing that should happen, and it doesn't need a fresh `frontend-angular`
+terminal to do it — it needs whichever terminal has Chrome tooling (the orchestrating terminal, per
+Phase 9's own handoff note, already has this and was going to look right after that report).
 
-**Phase 9 is the only unblocked work left** — `frontend-angular`, in a fresh terminal. Its
-endpoints exist and were hand-checked in Phase 6.
+Both the API (`dotnet run --project src/Portfolio.Api`, port 5100) and the Angular dev server
+(`ng serve`, port 4200) were left **running** at the end of the Phase 9 session specifically so a
+browser pass can start immediately — check they're still up before starting a new pair. If not:
 
-**Next — `frontend-angular` (Phase 9).** Paste the Phase 9 prompt below.
+```bash
+dotnet run --project src/Portfolio.Api          # port 5100
+cd src/Portfolio.Web && npm start               # port 4200, proxies /api and /hubs to 5100
+```
+
+**What to actually look at** — the explicit "What was NOT verified" list under Phase 9 in this
+file is the checklist: the allocation pie's donut/labels/leader-lines at a real card width, the
+annual-return bar's signed labels against the zero baseline, whether the line chart's two
+`endLabel`s collide when cost and market value converge near the right edge, real SVG text
+legibility (jsdom's canvas stub means even the passing unit tests never rendered real text), and
+whether a light/dark OS toggle actually repaints an already-drawn chart (there is no in-app theme
+toggle yet, only `prefers-color-scheme` / a manual `[data-theme]` attribute nobody sets). The dev
+database currently has 0 transactions (probes were created and deleted during Phase 9's own
+verification) — you will likely want to create a few real ones through the Transactions page
+itself to see non-empty charts, then decide whether to leave or remove them.
+
+If real defects turn up, they belong to `frontend-angular` to fix — but literal pixel-level chart
+review, screenshotting, and any resulting fixes can happen directly in this terminal if it has
+`claude-in-chrome` or equivalent; a fresh terminal is only strictly required if the fix needs deep
+context-window space the current session has already spent (unlikely for chart tweaks).
+
+**After that pass, or in parallel:** Phase 10 (`container-podman`) is still blocked on Podman
+being installed — see Prerequisites.
+
+<details>
+<summary>Phase 9 prompt — completed 2026-08-01, kept for reference</summary>
+
+```
+Read tracker.md. Phase 6 is done and verified, so the calculation endpoints the charts
+need all exist and were hand-checked against real data. Phase 8 is done and verified —
+the transactions UI, TransactionFormDialog, and the shared MoneyPipe/QuantityPipe,
+local-date and validator utilities are all in place and tested at 97/97.
+
+Use the frontend-angular agent for Phase 9 — overview and detail pages.
+
+Load the dataviz skill before writing the first chart config.
+
+The two asset classes get DIFFERENT pages, and this is a locked decision, not an
+oversight to tidy up. Crypto is gain/loss only: no cost-vs-market line chart, no annual
+return chart, no range selector. Do not render an empty or flat chart for crypto — omit
+the component entirely. Stocks get both charts.
+
+Endpoints, all verified live:
+  GET /api/portfolio/{assetClass}/summary      both classes
+  GET /api/portfolio/{assetClass}/allocation   both classes
+  GET /api/portfolio/stock/annual-returns      stocks only
+  GET /api/assets/{id}/performance             stocks only; crypto id returns 400
+
+Send assetClass CAPITALISED — "Stock"/"Crypto". Enum route binding is case-sensitive and
+lowercase returns 400 (D11). Route literals are not case-sensitive, so capitalised works
+on every route.
+
+The performance series returns cost basis as a flat STEP and market value as a moving
+line — render cost as a step series, not a smoothed line, or it will misrepresent when
+money actually went in.
+
+Sub-cent prices must not floor to $0.00 — ANVL sits near $0.0005 and the API sends
+currentPriceUsd at 10dp. Reuse MoneyPipe/QuantityPipe. Gains and losses must be
+distinguishable without relying on colour alone.
+
+An asset with a position but no quote yet sends currentPriceUsd: null and
+marketValueUsd: 0 — render that as "no price yet", not as a 100% loss.
+
+Everything visual reads src/styles/ui.tokens.scss and the shared chart-theme.ts. Add a
+token if one is missing; do not inline a hex or a raw px at the call site.
+
+Note what Phase 8 could NOT verify, because it matters more here than it did there: no
+browser was driven, so nothing in this app has been confirmed at the rendered-pixel
+level. Phase 8 could lean on wire-level probes because its correctness was mostly in
+the request bodies. Phase 9 is charts — a config that unit-tests green can still render
+an unreadable axis, a step series drawn as a smooth line, or an unlabelled legend. If
+browser automation is unavailable this session, say so explicitly and describe exactly
+which visual claims rest on reading the ECharts config rather than looking at output.
+Do not describe a chart as "verified" on the strength of a passing unit test.
+
+Tick a box only for something you have personally seen pass, and say plainly what you did
+not verify — that flag is what caught the real defects in Phases 4, 5, 6 and 7. Then
+append to the handoff log, write the next session prompt, and commit.
+```
+
+</details>
 
 <details>
 <summary>Phase 8 prompt — completed 2026-08-01, kept for reference</summary>
@@ -761,61 +944,6 @@ commit.
 ```
 
 </details>
-
-**Phase 9 — `frontend-angular`.** Paste:
-
-```
-Read tracker.md. Phase 6 is done and verified, so the calculation endpoints the charts
-need all exist and were hand-checked against real data. Phase 8 is done and verified —
-the transactions UI, TransactionFormDialog, and the shared MoneyPipe/QuantityPipe,
-local-date and validator utilities are all in place and tested at 97/97.
-
-Use the frontend-angular agent for Phase 9 — overview and detail pages.
-
-Load the dataviz skill before writing the first chart config.
-
-The two asset classes get DIFFERENT pages, and this is a locked decision, not an
-oversight to tidy up. Crypto is gain/loss only: no cost-vs-market line chart, no annual
-return chart, no range selector. Do not render an empty or flat chart for crypto — omit
-the component entirely. Stocks get both charts.
-
-Endpoints, all verified live:
-  GET /api/portfolio/{assetClass}/summary      both classes
-  GET /api/portfolio/{assetClass}/allocation   both classes
-  GET /api/portfolio/stock/annual-returns      stocks only
-  GET /api/assets/{id}/performance             stocks only; crypto id returns 400
-
-Send assetClass CAPITALISED — "Stock"/"Crypto". Enum route binding is case-sensitive and
-lowercase returns 400 (D11). Route literals are not case-sensitive, so capitalised works
-on every route.
-
-The performance series returns cost basis as a flat STEP and market value as a moving
-line — render cost as a step series, not a smoothed line, or it will misrepresent when
-money actually went in.
-
-Sub-cent prices must not floor to $0.00 — ANVL sits near $0.0005 and the API sends
-currentPriceUsd at 10dp. Reuse MoneyPipe/QuantityPipe. Gains and losses must be
-distinguishable without relying on colour alone.
-
-An asset with a position but no quote yet sends currentPriceUsd: null and
-marketValueUsd: 0 — render that as "no price yet", not as a 100% loss.
-
-Everything visual reads src/styles/ui.tokens.scss and the shared chart-theme.ts. Add a
-token if one is missing; do not inline a hex or a raw px at the call site.
-
-Note what Phase 8 could NOT verify, because it matters more here than it did there: no
-browser was driven, so nothing in this app has been confirmed at the rendered-pixel
-level. Phase 8 could lean on wire-level probes because its correctness was mostly in
-the request bodies. Phase 9 is charts — a config that unit-tests green can still render
-an unreadable axis, a step series drawn as a smooth line, or an unlabelled legend. If
-browser automation is unavailable this session, say so explicitly and describe exactly
-which visual claims rest on reading the ECharts config rather than looking at output.
-Do not describe a chart as "verified" on the strength of a passing unit test.
-
-Tick a box only for something you have personally seen pass, and say plainly what you did
-not verify — that flag is what caught the real defects in Phases 4, 5, 6 and 7. Then
-append to the handoff log, write the next session prompt, and commit.
-```
 
 **Optional backend cleanup**, small and independent of the above — `backend-dotnet` could close
 **D10** (gated provider missing from `sources`, a doc-vs-behaviour mismatch) and **D11** (make

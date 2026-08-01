@@ -1,0 +1,24 @@
+@if (hasData()) {
+  <div class="allocation-pie">
+    <div
+      class="allocation-pie__chart"
+      echarts
+      [options]="options()"
+      [initOpts]="{ renderer: 'svg' }"
+      [autoResize]="true"
+    ></div>
+
+    <ul class="allocation-pie__legend" [attr.aria-label]="valueLabel() + ' by holding'">
+      @for (row of legendRows(); track row.assetId) {
+        <li class="allocation-pie__row">
+          <span class="allocation-pie__swatch" [style.background]="row.color"></span>
+          <span class="allocation-pie__symbol">{{ row.symbol }}</span>
+          <span class="allocation-pie__percent">{{ row.percent | number: '1.1-1' }}%</span>
+          <span class="allocation-pie__value">{{ row.value | money }}</span>
+        </li>
+      }
+    </ul>
+  </div>
+} @else {
+  <p class="allocation-pie__empty">No {{ valueLabel().toLowerCase() }} to allocate yet.</p>
+}

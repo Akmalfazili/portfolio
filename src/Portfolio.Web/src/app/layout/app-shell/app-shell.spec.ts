@@ -10,6 +10,22 @@ import { API_ROUTES } from '../../core/api/api-routes';
 import { PRICES_HUB_CONNECTION_FACTORY } from '../../core/prices/price-store';
 import { FakeHubConnection } from '../../core/prices/testing/fake-hub-connection';
 
+const EMPTY_SUMMARY = (assetClass: 'Stock' | 'Crypto') => ({
+  assetClass,
+  totalCostBasisUsd: 0,
+  totalMarketValueUsd: 0,
+  totalUnrealizedPnlUsd: 0,
+  totalUnrealizedPnlPercent: null,
+  totalRealizedPnlUsd: 0,
+  holdings: [],
+});
+
+const EMPTY_ALLOCATION = (assetClass: 'Stock' | 'Crypto') => ({
+  assetClass,
+  totalMarketValueUsd: 0,
+  items: [],
+});
+
 describe('AppShell — section accent token switching', () => {
   let fixture: ComponentFixture<AppShell>;
   let router: Router;
@@ -39,29 +55,40 @@ describe('AppShell — section accent token switching', () => {
     document.documentElement.removeAttribute('data-section');
   });
 
+  function flushStockOverview() {
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(EMPTY_SUMMARY('Stock'));
+    httpMock.expectOne(API_ROUTES.portfolioAllocation('Stock')).flush(EMPTY_ALLOCATION('Stock'));
+    httpMock.expectOne(API_ROUTES.stockAnnualReturns).flush({ years: [] });
+  }
+
+  function flushCryptoOverview() {
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Crypto')).flush(EMPTY_SUMMARY('Crypto'));
+    httpMock.expectOne(API_ROUTES.portfolioAllocation('Crypto')).flush(EMPTY_ALLOCATION('Crypto'));
+  }
+
   it('sets data-section="stock" for /stocks, driving --ui-color-accent-stock', async () => {
     await router.navigateByUrl('/stocks');
     fixture.detectChanges();
     expect(document.documentElement.getAttribute('data-section')).toBe('stock');
-    httpMock.expectOne(API_ROUTES.assets).flush([]);
+    flushStockOverview();
   });
 
   it('sets data-section="crypto" for /crypto, driving --ui-color-accent-crypto', async () => {
     await router.navigateByUrl('/crypto');
     fixture.detectChanges();
     expect(document.documentElement.getAttribute('data-section')).toBe('crypto');
-    httpMock.expectOne(API_ROUTES.assets).flush([]);
+    flushCryptoOverview();
   });
 
   it('swaps the attribute again when navigating from /stocks to /crypto', async () => {
     await router.navigateByUrl('/stocks');
     fixture.detectChanges();
-    httpMock.expectOne(API_ROUTES.assets).flush([]);
+    flushStockOverview();
     expect(document.documentElement.getAttribute('data-section')).toBe('stock');
 
     await router.navigateByUrl('/crypto');
     fixture.detectChanges();
-    httpMock.expectOne(API_ROUTES.assets).flush([]);
+    flushCryptoOverview();
     expect(document.documentElement.getAttribute('data-section')).toBe('crypto');
   });
 

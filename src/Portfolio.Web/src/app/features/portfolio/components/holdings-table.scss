@@ -1,0 +1,39 @@
+.holdings-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--ui-font-size-sm);
+}
+
+.holdings-table th {
+  text-align: left;
+  color: var(--ui-color-on-surface-muted);
+  font-weight: var(--ui-font-weight-medium);
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border-bottom: 1px solid var(--ui-color-gridline);
+}
+
+.holdings-table td {
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border-bottom: 1px solid var(--ui-color-gridline);
+  color: var(--ui-color-on-surface);
+}
+
+.holdings-table__num {
+  text-align: right;
+  font-variant-numeric: var(--ui-font-numeric-variant);
+}
+
+.holdings-table__symbol {
+  color: var(--ui-color-accent);
+  font-weight: var(--ui-font-weight-semibold);
+  text-decoration: none;
+}
+
+.holdings-table__symbol:hover {
+  text-decoration: underline;
+}
+
+.holdings-table__pending {
+  color: var(--ui-color-on-surface-muted);
+  font-style: italic;
+}
