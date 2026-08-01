@@ -573,6 +573,47 @@ so the list stays a record and not just a to-do.
 | D17 | **Portfolio totals treat a missing quote as $0 market value** | 6, 9 | With AAPL holding a real $3,301 cost basis but no live quote, the stocks overview headline reads **−$3,302.35 · −82.76%**. The holdings *row* correctly says "Awaiting price", but the summary tiles above it silently count that holding's market value as zero, so the portfolio appears to have lost 82% when nothing happened. The agent recorded the narrow version of this (a portfolio where *every* holding is unpriced shows −100%); the realistic case is worse, because a *partly* priced portfolio looks precisely like a real crash rather than an obvious glitch. Originates in the backend: `totalMarketValueUsd` sums `marketValueUsd: 0`. | Medium — needs a decision, not just code: either exclude unpriced holdings from the totals and label the tile as partial, or surface an explicit "N holdings unpriced" caveat. A `backend-dotnet` + `frontend-angular` pair. |
 | D18 | **Material icon ligature names leak into the accessible text** | 7, 9 | The rendered text layer reads `arrow_downward -$1.35·-0.20%` and `remove $0.00` — the raw `<mat-icon>` ligature strings are exposed to assistive technology and to any text extraction. The *visual* colour-independence requirement is genuinely met (a real ↓/↑/— glyph plus a signed number), so this is an accessibility polish issue, not a failure of the "not colour alone" rule. | Low — `aria-hidden="true"` on the decorative `<mat-icon>`, with the direction carried by the existing `aria-label`. |
 | D19 | **The line chart's x-axis shows day-of-month only** | 9 | Labels read `20 21 22 23 24` with no month or year anywhere on the chart. Unambiguous over a 5-day window; meaningless over the 1Y/All ranges the selector offers, where the same axis would repeat day numbers across months. | Low — format ticks by range span. Not observable until there is more than a week of history, which is also why D13 still matters. |
+| D20 | **No last-close fallback when a market is closed — a stored price is on disk and the UI says "Awaiting price"** | 5, 6, 9 | **Requested 2026-08-01.** A US stock shows no price at all outside NYSE hours. AAPL's close of `333.019989` for 2026-07-24 is sitting in `PriceHistories` right now, while `/api/portfolio/Stock/summary` sends `currentPriceUsd: null`, `marketValueUsd: 0` and the UI renders *Awaiting price*. Over a weekend that means the whole US side of the portfolio reads as valueless for ~64 hours, every week. Cause is structural, not a bug: `PriceQuote` (live, written by the refresh service) and `PriceHistory` (daily closes, written only by `PriceBackfillService`) are separate tables, and **nothing reads the second when the first is empty**. Twelve Data is correctly never called on a closed market — that gate is deliberate and should stay, so the fix must not be "call the provider anyway". **This also largely resolves D17**: the −82.76% headline exists precisely because an unpriced holding contributes `0` to the total, and a last-close fallback gives it a real number. | Medium, and needs a decision first — see the design note below the table. Backend (`Portfolio.Application` summary/allocation assembly + DTO) plus a small frontend labelling change. |
+
+### D20 design note — decide this before writing code
+
+The tempting fix is to write a `PriceQuote` row from the last close so everything downstream "just
+works". **Do not do that without keeping the as-of date honest.** D4 is the same mistake already
+made once: Z74 gets a stale Yahoo close stored with a fresh-looking timestamp on unmodelled lunar
+holidays, so it *silently looks current on days it isn't*. A portfolio that quietly presents
+Friday's close as a live Monday-morning price is worse than one that admits it has no price.
+
+The three options, with the trade-off that actually separates them:
+
+1. **Read-time fallback in the summary/allocation assembly** — when no `PriceQuote` exists, fall
+   back to the newest `PriceHistory` close for that asset, and carry *its* date into the existing
+   `priceAsOf` field alongside a new discriminator (e.g. `priceSource: "Live" | "Close"`). Nothing
+   is written, no provider is called, the two tables keep their distinct meanings, and the API
+   stays honest about what it just handed you. **Recommended.**
+2. **Write-time seeding** — have the backfill or refresh service upsert a `PriceQuote` from the
+   last close. Simplest downstream, but it collapses "live" and "stale close" into one field and
+   walks straight into D4's failure mode. Only viable if `AsOf` is set to the *close date* and
+   every consumer already treats a stale `AsOf` as stale — which today's UI does not.
+3. **Call the provider anyway when closed** — rejected. It spends Twelve Data credits to fetch a
+   number already sitting in the database, and it breaks the deliberate market gate that keeps the
+   800/day budget safe.
+
+Whichever is chosen, the UI must **distinguish the two states** rather than showing a bare number:
+"Close · Fri 24 Jul" reads differently from a live price, and the detail page already has
+`priceAsOf` available to label it. Note the interaction with **D14** — `.detail__price--pending`
+sets a colour while `.detail__price` does not, so the fallback state is currently *legible* and the
+priced state is not; fix D14 first or the new close price will render invisible in dark mode.
+
+Two limits worth knowing before estimating this:
+
+- **`PriceHistory` only exists for assets that have been backfilled**, which runs from an asset's
+  first trade date. Held stocks have it (AAPL and Z74 have 5 rows each); MSFT, which has no
+  transactions, has **zero**. That is the right shape for a portfolio view — but see **D12**: *no
+  HTTP endpoint triggers a backfill*, so history can be arbitrarily stale, and the fallback is only
+  as fresh as the last backfill run. Closing D12 is arguably a prerequisite.
+- **Crypto has no `PriceHistory` at all, by decision, and needs none** — CoinGecko is unmetered and
+  never gated, so a crypto quote is always live. This is a stocks-only concern.
+
 ---
 
 ## Handoff log
@@ -893,6 +934,15 @@ before starting a new pair. If not:
 dotnet run --project src/Portfolio.Api          # port 5100
 cd src/Portfolio.Web && npm start               # port 4200, proxies /api and /hubs to 5100
 ```
+
+**Also queued — `backend-dotnet`: D20, show the last close when the market is closed.** Requested
+2026-08-01. A US stock currently shows *Awaiting price* all weekend even though its last close is
+already in `PriceHistories` — AAPL's `333.019989` from 2026-07-24 is on disk right now. **Read the
+D20 design note under the drawback register before starting**; the obvious implementation (writing
+a `PriceQuote` from the last close) repeats the D4 mistake of making a stale price look current,
+and the recommended read-time fallback is spelled out there with its two prerequisites (**D12**,
+and **D14** first or the recovered price renders invisible in dark mode). Closing D20 also largely
+closes **D17**.
 
 **Also available, independent:** the optional backend cleanup below (**D10**, **D11**), and Phase 10
 (`container-podman`), still blocked on Podman being installed — see Prerequisites.
