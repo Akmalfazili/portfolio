@@ -38,9 +38,11 @@ so each session stays focused and its context stays clean.
 | 10 | Podman stack | `container-podman` | ⬜ Not started |
 | 11 | End-to-end verification | — | ⬜ Not started |
 
-**Currently active:** none — Phases 1–9 closed out, Phases 6, 8 and 9 on 2026-08-01. **Phase 9 has
-not been confirmed at the rendered-pixel level** — that is the next thing to happen, by a session
-with browser automation.
+**Currently active:** none — Phases 1–9 closed out, Phases 6, 8 and 9 on 2026-08-01. Phase 9 was
+**browser-verified the same day** from the orchestrating terminal, the first rendered-pixel
+confirmation this app has had. It found **six** things worth fixing (**D14–D19**), one of which —
+**D14**, the live price rendering at 1.01:1 contrast in dark mode — should be fixed before the app
+is used in earnest. None of them block Phase 10.
 
 > ✅ **Prices refresh themselves and push over SignalR.** `dotnet build portfolio.slnx` is clean
 > with zero warnings under `TreatWarningsAsErrors` and `dotnet test portfolio.slnx` is 95/95 green
@@ -374,8 +376,15 @@ with both markets gated, so **0 Twelve Data credits** were spent (`TwelveData.sy
 
 ### ✅ Phase 9 — Overview + detail pages · `frontend-angular`
 
-Built and wire-verified 2026-08-01. **Not verified at the rendered-pixel level — no browser was
-driven this session.** See the explicit list of visual-only claims below.
+Built and wire-verified 2026-08-01 by the agent. **Browser-verified 2026-08-01 from the
+orchestrating terminal** — Chrome driven against the live app at 1600×1100, both themes. This is
+the first time any part of this app has been confirmed at the rendered-pixel level.
+
+> 🐛 **Four defects found by looking at rendered output, three of them invisible to every test.**
+> See **D14–D17**. The most serious, **D14**, makes the live price on *every* detail page —
+> stocks and crypto — render at a contrast ratio of **1.01:1** in dark mode: measurably invisible.
+> The agent's own "not verified" list below predicted two of the four as open questions; both
+> turned out to be real. That list is why they were found.
 
 - [x] Loaded the `dataviz` skill before writing the first chart config
 - [x] Shared `src/app/shared/charts/chart-theme.ts` — resolves `--ui-*` custom properties off the
@@ -457,26 +466,54 @@ driven this session.** See the explicit list of visual-only claims below.
   **0 Twelve Data credits spent** (NYSE closed all session); CoinGecko ticked its own 2-minute
   cadence unprompted during the session (harmless, unmetered).
 
-**What was NOT verified — explicit, because it's the part that matters most for this phase.** No
-browser was driven, so nothing below is confirmed at the rendered-pixel level; each rests only on
-reading the ECharts config or the component logic:
+**Browser verification, 2026-08-01 (orchestrating terminal, Chrome at 1600×1100).** Probe rows were
+re-created to get non-trivial data — including a deliberate **second Z74 buy mid-window**, because
+with a single buy the cost basis is flat across every point and a step series and a smooth line
+render *identically*, so the step claim would have been unfalsifiable. All 5 rows deleted
+afterward; `GET /api/transactions` confirmed `[]`. `TwelveData.lastAttemptedAt` still `null` —
+**0 Twelve Data credits spent.**
 
-- Whether the pie chart's donut, direct labels (shown only ≥8% share) and leader lines actually
-  read cleanly, or collide, at real card widths.
-- Whether the annual-return bar's signed labels (`position: 'top'`/`'bottom'` by sign) clear the
-  zero baseline `markLine` without overlapping it for a small percentage.
-- Whether the line chart's two `endLabel`s (cost vs market value) collide when the two series are
-  close together at the right edge — marks-and-anatomy.md flags exactly this as a case needing a
-  leader line or a fallback to the legend, which was not implemented; only the legend (always
-  present for 2 series) and the tooltip are the fallback today.
-- Whether SVG-renderer text sizing/contrast holds up in a real browser — jsdom's canvas stub
-  (`Not implemented: HTMLCanvasElement's getContext()`) meant even the passing chart specs never
-  exercised real text metrics.
-- Dark mode: the app has no live theme-toggle button anywhere yet (only `prefers-color-scheme` /
-  a manual `[data-theme]` attribute nobody sets), and `chart-theme.ts` resolves tokens once per
-  `computed()` re-evaluation, not on a `matchMedia` change listener — an OS dark-mode flip
-  mid-session would not repaint an already-rendered chart's baked-in colours without a data change
-  forcing a recompute. Untested either way.
+Confirmed passing by looking at output:
+
+- **The cost series is a genuine step.** With cost basis stepping `$336.92 → $689.33` at 07-22, the
+  orange series renders flat, then a clean vertical jump at the 22nd, then flat — not a diagonal
+  ramp. This is the claim the phase brief cared most about.
+- **Sub-cent prices survive to the pixel.** ANVL renders `$0.00050465` in the holdings table and
+  `$0.0005326` in the transactions table. Nothing floors to `$0.00`.
+- **Crypto really has no charts.** `/crypto` goes Allocation → Holdings with no annual-return
+  panel; `/crypto/ANVL` goes header → gain/loss → transactions with no line chart and no range
+  selector. Not an empty component — no component.
+- **Allocation colours are keyed to asset identity, not rank.** Toggling market value → cost basis
+  flips the order (Z74 100% → AAPL 82.7% first) and each symbol *keeps* its colour.
+- **Numbers match the API exactly**, checked against curl: TWR tooltip `+1.27%` against
+  `timeWeightedReturnPercent: 1.2675`, cost-basis split 82.7/17.3 against `3301/3990.33`.
+- **The "no price yet" case renders correctly** — AAPL shows *Awaiting price* / *Awaiting first
+  price*, never a naive −100%.
+
+**What was NOT verified by the agent — explicit, because it's the part that mattered most for this
+phase.** No browser was driven *by the agent*, so nothing below was confirmed at the rendered-pixel
+level by it; each rested only on reading the ECharts config or the component logic. **Resolutions
+from the browser pass are marked inline.**
+
+- ~~Whether the pie chart's donut, direct labels (≥8% share) and leader lines read cleanly at real
+  card widths.~~ **Checked — they read fine.** Two-slice (ETH 65% / ANVL 35%) and single-visible-
+  slice (Z74 100%, AAPL 0%) both render legibly. The 0% slice correctly draws nothing while
+  staying in the legend.
+- ~~Whether the annual-return bar's signed labels clear the zero baseline `markLine`.~~ **Checked
+  — clears fine** at `+1.3%`. Note the bar label rounds to 1dp (`+1.3%`) while the tooltip gives
+  2dp (`+1.27%`); both are correct, just different precision.
+- ~~Whether the line chart's two `endLabel`s collide when the series are close at the right edge.~~
+  **They collide, and it is unreadable — see D15.** With cost `$689.33` and market `$680.32` about
+  nine dollars apart, the two labels overlap into an illegible blob. The agent flagged this exact
+  risk and the fallback it named (legend + tooltip) does not rescue the rendered label.
+- ~~Whether SVG-renderer text sizing/contrast holds up in a real browser.~~ **Chart text is fine;
+  the surrounding HTML is not.** A scripted contrast sweep over every leaf HTML element (SVG
+  excluded — it paints via `fill`, not `color`, and naive sweeps false-positive on it) found
+  **4** elements below 3:1, all from one root cause: **D14**.
+- ~~Dark mode: `chart-theme.ts` resolves tokens once and would not repaint an already-rendered
+  chart on an OS dark-mode flip. Untested either way.~~ **The agent's suspicion was exactly right
+  — see D16.** Measured: after flipping to light, `--ui-color-gridline` is `#e1e0d9` but the SVG
+  is still stroking the dark-mode `#2c2c2a`, giving heavy black gridlines on a light chart.
 - The reactive "reload summary/allocation/performance after a completed refresh cycle" effect
   (`PortfolioOverviewPage`/`AssetDetailPage` constructors) is unit-tested against a fake hub but
   never observed against a real multi-minute refresh cycle.
@@ -530,7 +567,12 @@ so the list stays a record and not just a to-do.
 | D11 | **`AssetClass` route/query binding is case-sensitive** | 3, 6 | `/api/portfolio/stock/summary` returns **400**; only `/api/portfolio/Stock/summary` binds. Pre-existing, not a Phase 6 regression — `/api/assets?assetClass=stock` 400s on unmodified Phase 3 code too. Route *literals* are case-**in**sensitive, so `/api/portfolio/{Stock,stock}/annual-returns` both work; only the enum-bound segment is fussy. **The safe frontend rule is to send `Stock`/`Crypto` capitalised everywhere** — that form works on every route. Deliberately not special-cased on the new routes alone, which would create exactly the two-encodings-of-one-field drift D7 warns about. | Low — a custom binder or a `[FromRoute]` string parsed case-insensitively, applied to *both* the route and the Phase 3 query parameter together, never just one. |
 | D12 | **Crypto's exclusion from backfill is unit-tested but never observed live** | 6 | `PriceBackfillService` now filters to `AssetClass.Stock`, proven by a unit test (asset skipped, router never consulted, zero rows written). But **no HTTP endpoint triggers a backfill** — true before this phase too — so it has never been watched against a real provider call. | Low, but needs a trigger to exist. Fold into Phase 11. |
 | D13 | **Annual returns have only ever run over 5 days of real data** | 6 | Dev SQLEXPRESS holds `PriceHistory` for 2026-07-20→24 only, so the live TWR figure covered one partial week and the union-of-dates timeline never spanned a weekend gap, a year boundary, or two assets with divergent calendars. The *algorithm* is proven by the hand-computed two-year unit test and the cash-flow-alignment tests; the *assembly* of real multi-year inputs is not. | Low — needs a wider backfill or a real holding period. Belongs to Phase 11. |
-
+| D14 | **The live price is invisible in dark mode on every detail page** | 7, 9 | `.detail__price` renders `rgb(26,27,31)` on `rgb(26,26,25)` — a contrast ratio of **1.01:1**. The 24px live price, the most prominent number on both `/stocks/:symbol` and `/crypto/:symbol`, cannot be read at all in dark mode; it is legible in light mode, which is why no static review caught it. **Root cause is two compounding bugs, and it is not in the Phase 9 component.** (1) `styles.scss`'s `:root` block repoints `--mat-sys-surface`/`-on-surface` but **not `--mat-sys-background`/`-on-background`**, which keep `mat.theme()`'s own `light-dark(#faf9fd, #121316)` / `light-dark(#1a1b1f, #e3e2e6)`. (2) `styles.scss` sets `body { color-scheme: light; }`, which forces every `light-dark()` inside `<body>` to the **light** branch regardless of OS preference — its own comment claims this "is overridden by ui.tokens.scss's own color-scheme rules", and that is **false**: ui.tokens sets `color-scheme` on `:root`/`html`, and `body`'s own declaration wins for body's subtree. `mat-sidenav-container` then paints `color: var(--mat-sys-on-background)` = near-black and that colour **inherits down the entire content tree**. Every element that sets its own colour is unaffected, which is why only the one element that doesn't — `.detail__price` — is visibly broken. Same mechanism dims the sidenav Crypto/Transactions icons and the toolbar refresh icon to **1.87:1** (Phase 7, pre-existing). | Low, but get the diagnosis right: adding a colour to `.detail__price` treats the symptom and leaves the inherited near-black waiting for the next element that omits one. Fix is to add the two missing `--mat-sys-*` overrides and delete or correct the `body { color-scheme: light }` rule. |
+| D15 | **The cost-vs-market chart's two end labels overlap illegibly** | 9 | When cost basis and market value are close at the right edge — `$689.33` vs `$680.32`, about nine dollars apart on a $700 axis — the two `endLabel`s render on top of each other as an unreadable blob. Predicted by the agent as an open risk; the fallback it named (legend + tooltip) does not rescue the rendered label, and near-equal cost and market value is the *normal* case for a recently-opened position, not an edge case. | Low — offset colliding labels, add leader lines, or drop `endLabel` and rely on the legend. |
+| D16 | **Charts never repaint when the theme changes** | 9 | `chart-theme.ts` resolves `--ui-*` off the live DOM once at construction and never re-resolves. Measured: after switching to light, `--ui-color-gridline` is `#e1e0d9` but the SVG still strokes the dark-mode `#2c2c2a` (×8) and `#1a1a19` (×2), leaving heavy dark gridlines on a light chart. Text fill happens to agree only because `--ui-color-on-surface-muted` is `#898781` in *both* themes — so the text proves nothing either way. Real-world trigger is an OS auto-dark flip with the app open; there is no in-app theme toggle yet, so it is not reachable by clicking today. | Low — a `matchMedia('(prefers-color-scheme: dark)')` listener (plus a `MutationObserver` on `[data-theme]`) forcing the chart-option `computed()` to re-evaluate. Worth doing before any theme toggle ships, or the toggle will look broken. |
+| D17 | **Portfolio totals treat a missing quote as $0 market value** | 6, 9 | With AAPL holding a real $3,301 cost basis but no live quote, the stocks overview headline reads **−$3,302.35 · −82.76%**. The holdings *row* correctly says "Awaiting price", but the summary tiles above it silently count that holding's market value as zero, so the portfolio appears to have lost 82% when nothing happened. The agent recorded the narrow version of this (a portfolio where *every* holding is unpriced shows −100%); the realistic case is worse, because a *partly* priced portfolio looks precisely like a real crash rather than an obvious glitch. Originates in the backend: `totalMarketValueUsd` sums `marketValueUsd: 0`. | Medium — needs a decision, not just code: either exclude unpriced holdings from the totals and label the tile as partial, or surface an explicit "N holdings unpriced" caveat. A `backend-dotnet` + `frontend-angular` pair. |
+| D18 | **Material icon ligature names leak into the accessible text** | 7, 9 | The rendered text layer reads `arrow_downward -$1.35·-0.20%` and `remove $0.00` — the raw `<mat-icon>` ligature strings are exposed to assistive technology and to any text extraction. The *visual* colour-independence requirement is genuinely met (a real ↓/↑/— glyph plus a signed number), so this is an accessibility polish issue, not a failure of the "not colour alone" rule. | Low — `aria-hidden="true"` on the decorative `<mat-icon>`, with the direction carried by the existing `aria-label`. |
+| D19 | **The line chart's x-axis shows day-of-month only** | 9 | Labels read `20 21 22 23 24` with no month or year anywhere on the chart. Unambiguous over a 5-day window; meaningless over the 1Y/All ranges the selector offers, where the same axis would repeat day numbers across months. | Low — format ticks by range span. Not observable until there is more than a week of history, which is also why D13 still matters. |
 ---
 
 ## Handoff log
@@ -547,6 +589,7 @@ so the list stays a record and not just a to-do.
 | 2026-08-01 | `backend-dotnet` | 6 | **Complete and verified.** Cost basis, P&L, performance series, TWR, both summary/allocation endpoints and both stocks-only endpoints built; crypto excluded from `PriceBackfillService`. Agent reported honestly, including flagging that it had not exercised the payloads through a JS client and that live annual returns only covered ~5 days of real data. Verifying its work found **one real defect, and a serious one**: `AnnualReturnCalculator` matched cash flows to valuations by **exact date equality**, but valuations come from stored `PriceHistory` dates while flows come from each transaction's `TradeDate` — two series with no guarantee of alignment. Any buy dated a weekend, a holiday, or any day without a stored close was dropped from the subtraction and its money reported as **performance**, which is the one thing TWR is chosen to prevent; a probe showed **+50% where the answer is 0%**. Fixed by attributing each flow to the first valuation on or after its own date, with the probe confirmed failing at 50% before the fix and three regression tests kept (deposit, withdrawal, flow past the last valuation). Also corrected the agent's report on one point: it claimed `/api/portfolio/stock/annual-returns` *requires* lowercase, but route literals are case-insensitive — only the enum-bound segment is case-sensitive, so capitalised `Stock`/`Crypto` works everywhere (**D11**). Verified independently of the agent: build 0 warnings, **134/134**, and a live run against real backfilled data — per-date historical FX proven to differ from today's rate on the wire (`440 SGD / 1.29109 = 340.7973`, where today's rate would give `340.89`), sub-cent and 10-dp precision intact (`0.0005061500`, `1000000.0000000000`), cost basis rendering as a flat step, SGD basis and the `-0.1871%` TWR both recomputed by hand, crypto → `400`, unknown → `404`. Probe transactions deleted; dev `Transactions` back to 0. It was a Saturday, so **0 Twelve Data credits** were spent. Left knowingly: D12 (backfill exclusion unexercised live), D13 (TWR never assembled from multi-year real data), and D8 still open. |
 | 2026-08-01 | `frontend-angular` | 8 | **Complete and verified.** Before launching the agent, the D8 brief in this file was found to be **misaimed**: it instructed the next session to measure `1000000.0000000000`, a value that is exactly 10⁶ and provably lossless, so a faithful agent would have passed the probe and closed D8 without ever testing the real exposures. Corrected first, then handed off — the retargeted probes are what produced the two findings now in Decisions. Agent built all four Phase 8 boxes, reported honestly, and **caught a real defect in its own draft before it shipped**: its first `decimalPrecisionValidator` rejected any value whose `String(value)` contained `"e"`, which would have blocked the very `0.0000000001` quantity the probe had just proved the backend accepts. Verified independently of the agent: `ng build` clean, `ng test` **97/97** across 17 files, no hex or raw `px` outside the token files, and a live run against the API — `1e-10` accepted with **201** and read back as `0.0000000001`, and the >15-digit case isolated to the **client** by sending a raw `12345678.1234567891` literal via `curl` that round-tripped through `System.Text.Json` and `decimal(28,10)` exactly while `JSON.stringify` mangles it. All probe rows deleted, dev `Transactions` confirmed back to `[]`. Saturday, both markets gated, **0 Twelve Data credits** spent. **D8 closed.** Left knowingly: no browser was driven this session, so no click-level confirmation of the datepicker, `mat-select` or dialog focus-trapping — component tests exercise the same methods, and the request bodies those methods build were proven against the real API, but the rendered interaction is unobserved. Also unexercised: a non-USD (SGD/Z74) transaction through the new form's currency-auto-set path, and any accessibility tooling. |
 | 2026-08-01 | `frontend-angular` | 9 | **Built and wire-verified; explicitly NOT confirmed at the rendered-pixel level — no browser automation was available this session.** Loaded the `dataviz` skill before the first chart config, per instruction. Built the shared `chart-theme.ts` (resolves `--ui-*` tokens off the live DOM with light-mode fallbacks, fixed mark specs), the allocation pie (donut, cost/market toggle with zero extra HTTP calls, colour assigned by stable asset-id identity rather than current-value rank so a re-render never repaints a holding that changed relative size — the exact anti-pattern the skill calls out), the annual-return bar (diverging around a zero `markLine`, signed per-bar labels positioned by sign so a negative bar's label lands under it rather than on the axis), and the cost-vs-market line (cost as a genuine ECharts `step: 'end'` series, market value `smooth: true`, a 1M/3M/1Y/All range anchored to the series' own last date rather than wall-clock "today" so a lagging dev dataset never empties the chart). Both pages rewired onto the real summary/allocation/annual-returns/performance endpoints in place of the Phase 7 placeholder `GET /api/assets` list. Crypto's exclusion from the stocks-only charts is structural — `httpResource`'s request function returns `undefined` for the crypto asset class, so `performanceResource`/`annualReturnsResource` never fire an HTTP call at all, and the chart components are behind `@if (isStock())` in the templates, not rendered-and-hidden. New shared components: `GainLoss` (sign + arrow glyph + colour, three independent cues so colour is never load-bearing alone) and `StatTile`. **One real defect caught and fixed before shipping, in the test suite itself, not the app**: the first attempt at testing a resource that derives its URL from *another* resource's resolved value (`AssetDetailPage`'s performance/transactions calls, which only fire once the `assets` lookup resolves) used `await fixture.whenStable()` to wait for the derived request to appear — this hangs forever in Angular's zoneless test harness, because `whenStable()` tracks the newly-dispatched-but-unflushed request as a pending task and can never resolve while it's outstanding, a chicken-and-egg wait that isn't documented anywhere obvious. Fixed by polling `httpMock.match()` across a few `TestBed.tick()` cycles instead (see `waitForRequest` in `asset-detail.page.spec.ts`), confirmed to actually resolve rather than coincidentally pass. Verified independently after the agent's own report: `ng build` clean (one acceptable bundle-budget warning, chart libraries), `ng test` **138/138 across 25 files** (was 97/97/17), tree re-grepped clean of hex/raw-`px` outside the token files (4 new chart-height/tile-width tokens added for values this phase introduced, none inlined). **Live-verified through the dev proxy against the real API** — curled every new endpoint and confirmed the exact response shape against the frontend's DTOs, created 5 probe transactions (2 AAPL buys + 1 partial sell, 1 ETH buy, 1 ANVL buy) to see non-trivial data, and specifically hit the "no live quote yet" case for real: AAPL has stored `PriceHistory` (so the chart has data) but no `PriceQuote` in this dev database, so `currentPriceUsd: null` / `unrealizedPnlPercent: -100` came back from the live API exactly as documented, and the holdings-table/gain-loss-card both render "Awaiting price" for that row rather than a -100% loss — not simulated, this is what the real API sent. Cost-vs-market performance series confirmed rendering the true step/smooth distinction over real backfilled AAPL data (cost held flat at 3201 across two days, jumped to 4830, dropped to 3864, while market value moved daily). All 5 probes deleted, `GET /api/transactions` confirmed back to `[]`. `GET /api/prices/status` showed **0 Twelve Data credits spent** (`TwelveData.symbolsRefreshed: 0`, NYSE closed all session, Saturday). Left both the API (`:5100`) and `ng serve` (`:4200`) running at handoff so a browser-driving session can start immediately. **Left knowingly, and this is the important part**: nothing about the actual rendered chart output — label collision, the pie's leader lines, the line chart's two `endLabel`s potentially overlapping when the series converge, real text legibility at real card widths, or a live OS dark-mode flip repainting an already-drawn chart — has been looked at. Also left knowingly: the portfolio-total tiles (as opposed to the per-holding rows) do not carry the "no price yet" override, so an all-unpriced portfolio's total would show a literal -100%; this was outside the tracker's stated scope and not fixed. |
+| 2026-08-01 | — | 9 (browser verification) | **First rendered-pixel verification this app has ever had — six findings, four of them defects no test could have caught.** Chrome driven against the live app at 1600×1100 in both themes. Method note worth keeping: the agent's own probe data had a **flat** cost basis across every point, and a flat step and a flat smooth line render *identically* — so the step claim was unfalsifiable as set up. Adding a second Z74 buy mid-window (`336.92 → 689.33` at 07-22) made it testable, and it **passed**: a clean vertical jump, not a diagonal ramp. Also confirmed by eye: ANVL renders `$0.00050465` and `$0.0005326` with nothing flooring to `$0.00`; crypto genuinely has no chart components on either page; allocation colours stay keyed to asset identity when the cost/market toggle reorders the slices; the TWR tooltip `+1.27%` matches the API's `1.2675` exactly; and the "Awaiting price" row renders instead of a naive −100%. **Found: D14** — `.detail__price` renders at a **1.01:1** contrast ratio in dark mode, i.e. the live price is invisible on every detail page, stocks and crypto. Diagnosed rather than patched: it is not the Phase 9 component's fault, it inherits near-black from `mat-sidenav-container`, because `styles.scss` repoints `--mat-sys-surface`/`-on-surface` but **not** `--mat-sys-background`/`-on-background`, *and* its `body { color-scheme: light }` forces every remaining `light-dark()` to the light branch — a rule whose own comment claims it is overridden by `ui.tokens.scss`, which is false, since that sets `color-scheme` on `html` and `body`'s own declaration wins for body's subtree. Proven by flipping to light mode, where the colour is unchanged but the background inverts and the price becomes perfectly legible. A scripted contrast sweep (excluding SVG, which paints via `fill` and false-positives on a naive sweep) found exactly 4 sub-3:1 elements, all from that one cause. **D15** — the line chart's two `endLabel`s overlap illegibly when cost and market value are close, which is the normal case for a new position. **D16** — charts never repaint on a theme change: after switching to light, `--ui-color-gridline` is `#e1e0d9` while the SVG still strokes the dark `#2c2c2a`. Both D15 and D16 were on the agent's own "not verified" list as open risks; **its honesty is what made them findable**, and both turned out real. **D17** — the overview headline reads −82.76% purely because one holding lacks a quote, a worse case than the all-unpriced −100% the agent recorded, since a partly-priced portfolio looks like a genuine crash rather than an obvious glitch. **D18** — icon ligature names (`arrow_downward`, `remove`) leak into the accessible text layer. **D19** — the x-axis shows day-of-month only, fine over 5 days and meaningless over the 1Y/All ranges offered. Nothing was fixed this session; all six are recorded with root causes and fix costs. Probe rows deleted, `GET /api/transactions` confirmed `[]`, and `TwelveData.lastAttemptedAt` still `null` — **0 Twelve Data credits spent**. |
 | 2026-07-31 | `frontend-angular` | 7 | **Complete and verified.** Angular 22 workspace scaffolded with the central design system the user asked for: `ui.tokens.scss` + `ui.mixins.scss`, with Material *derived from* the tokens rather than themed alongside them. Agent reported honestly and flagged the proxy and hub as never exercised live — testing that flag found **two real defects**. (1) **Ids were typed `string` across `models.ts`** while the backend sends C# `int` as JSON numbers; since the API sets no `AllowReadingFromString`, the Phase 8 transaction form would have `POST`ed `"assetId": "3"` and got a 400. The specs passed only because their fixtures (`'a1'`, `'t1'`) matched the wrong type. Fixed to `number`, then confirmed against the live API (`"id":1`) and the live hub (`"assetId":3`). (2) **The D5 "why nothing moved" logic was dead code** — it filtered `sources` for `attempted: false`, but `RunCycleAsync` drops a gated provider from that list entirely, so the filter could never match and a click with NYSE closed would have said a cheerful "Refreshed 4 symbols" with no explanation. Rewritten to derive closed markets from `nyseOpen`/`sgxOpen`, and its spec rebuilt around a payload captured verbatim from the live API instead of a fabricated one; recorded as **D10**. Also closed the design-system gaps the agent left: raw `px` layout values inlined in five component stylesheets despite the token file's own rule (now `--ui-layout-*` / `--ui-size-icon-*` tokens, with the toolbar height tracking Material's 64→56px breakpoint so the content `calc()` stays right on mobile), and the dark-mode block duplicated between the media query and `[data-theme]` (now one `ui-dark-tokens` mixin, so a token cannot be added to one and forgotten in the other). Verified independently of the agent: `ng build` clean, `ng test` **68/68**, no hex or raw `px` anywhere outside the token files, and a **live run through the dev proxy** — 6 assets over `/api`, a real SignalR client on `WebSocketTransport` (not long-polling), on-connect snapshot, 4 `QuoteUpdated` frames with sub-cent precision intact, `200` then `429 secondsRemaining: 26`. NYSE closed throughout, so 0 Twelve Data credits spent. Left knowingly: the `@angular/cli` Node-check patch (**D9**), and D8's 10-dp *quantity* round trip still unmeasured. |
 
 ---
@@ -793,39 +836,66 @@ Added during Phase 8 (2026-08-01):
 
 ## ▶ Next session
 
-Phases 1–9 are done. **Phase 10 is blocked** (needs Podman). Phase 9 was built and wire-verified
-but **never confirmed in a real browser** — no browser automation was available in that session.
-That is genuinely the next thing that should happen, and it doesn't need a fresh `frontend-angular`
-terminal to do it — it needs whichever terminal has Chrome tooling (the orchestrating terminal, per
-Phase 9's own handoff note, already has this and was going to look right after that report).
+Phases 1–9 are done **and Phase 9 is now browser-verified** — that pass happened on 2026-08-01 and
+found six things, **D14–D19**. **Phase 10 is blocked** (needs Podman).
 
-Both the API (`dotnet run --project src/Portfolio.Api`, port 5100) and the Angular dev server
-(`ng serve`, port 4200) were left **running** at the end of the Phase 9 session specifically so a
-browser pass can start immediately — check they're still up before starting a new pair. If not:
+**Next — `frontend-angular`, to fix the browser findings.** They are all in `src/Portfolio.Web`,
+none block Phase 10, and they are small. Paste:
+
+```
+Read tracker.md, then the D14-D19 rows in the drawback register. Phase 9 was
+browser-verified from the orchestrating terminal and these six findings came out of
+looking at rendered output, not from tests. Use the frontend-angular agent.
+
+Fix D14 FIRST and fix the CAUSE, not the symptom. The live price on every detail page
+renders at a 1.01:1 contrast ratio in dark mode — measurably invisible. It is NOT a bug
+in the Phase 9 component: .detail__price sets no colour and inherits near-black from
+mat-sidenav-container. Two things cause that, and both need fixing:
+  1. styles.scss repoints --mat-sys-surface / --mat-sys-on-surface but NOT
+     --mat-sys-background / --mat-sys-on-background, so those keep mat.theme()'s own
+     light-dark(#faf9fd,#121316) / light-dark(#1a1b1f,#e3e2e6).
+  2. styles.scss sets `body { color-scheme: light }`, which pins every remaining
+     light-dark() inside body to the LIGHT branch whatever the OS says. That rule's own
+     comment claims ui.tokens.scss overrides it. That comment is wrong — ui.tokens sets
+     color-scheme on :root/html, and body's own declaration wins for body's subtree.
+     Fix the comment or the rule; do not leave both.
+Just adding a colour to .detail__price is NOT the fix — it leaves the inherited
+near-black lying in wait for the next element that omits one. The same root cause dims
+the sidenav and toolbar icons to 1.87:1, so a correct fix clears those too; verify it
+does.
+
+Then D16 (charts bake theme colours at construction and never re-resolve — needs a
+matchMedia listener plus a [data-theme] MutationObserver forcing the option computed()
+to re-evaluate), D15 (the two endLabels overlap illegibly when cost and market value are
+close, which is the NORMAL case for a new position), D18 (aria-hidden on the decorative
+mat-icons), D19 (x-axis shows day-of-month only — meaningless over the 1Y/All ranges the
+selector already offers).
+
+Leave D17 alone unless you want to raise it — it needs a product decision about whether
+an unpriced holding should be excluded from portfolio totals or merely caveated, and it
+originates in the backend's summary DTO, not the frontend.
+
+Verify in a real browser this time if you have Chrome tooling; if you do not, say so
+plainly and hand the visual check back rather than calling a contrast fix "verified" off
+a unit test. A contrast bug that unit-tests green is exactly what produced D14.
+
+The dev database has 0 transactions. To see non-empty charts you will need probe rows —
+and note the trap the verification pass hit: with a single buy the cost basis is FLAT at
+every point, and a flat step renders identically to a flat line, so the step series is
+unfalsifiable. Use at least two buys on different dates. Delete probes afterward and
+confirm GET /api/transactions is [].
+```
+
+Both the API (port 5100) and `ng serve` (port 4200) were left **running** — check they're still up
+before starting a new pair. If not:
 
 ```bash
 dotnet run --project src/Portfolio.Api          # port 5100
 cd src/Portfolio.Web && npm start               # port 4200, proxies /api and /hubs to 5100
 ```
 
-**What to actually look at** — the explicit "What was NOT verified" list under Phase 9 in this
-file is the checklist: the allocation pie's donut/labels/leader-lines at a real card width, the
-annual-return bar's signed labels against the zero baseline, whether the line chart's two
-`endLabel`s collide when cost and market value converge near the right edge, real SVG text
-legibility (jsdom's canvas stub means even the passing unit tests never rendered real text), and
-whether a light/dark OS toggle actually repaints an already-drawn chart (there is no in-app theme
-toggle yet, only `prefers-color-scheme` / a manual `[data-theme]` attribute nobody sets). The dev
-database currently has 0 transactions (probes were created and deleted during Phase 9's own
-verification) — you will likely want to create a few real ones through the Transactions page
-itself to see non-empty charts, then decide whether to leave or remove them.
-
-If real defects turn up, they belong to `frontend-angular` to fix — but literal pixel-level chart
-review, screenshotting, and any resulting fixes can happen directly in this terminal if it has
-`claude-in-chrome` or equivalent; a fresh terminal is only strictly required if the fix needs deep
-context-window space the current session has already spent (unlikely for chart tweaks).
-
-**After that pass, or in parallel:** Phase 10 (`container-podman`) is still blocked on Podman
-being installed — see Prerequisites.
+**Also available, independent:** the optional backend cleanup below (**D10**, **D11**), and Phase 10
+(`container-podman`), still blocked on Podman being installed — see Prerequisites.
 
 <details>
 <summary>Phase 9 prompt — completed 2026-08-01, kept for reference</summary>
