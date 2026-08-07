@@ -23,6 +23,19 @@ describe('GainLoss', () => {
     expect(fixture.nativeElement.textContent).toContain('arrow_upward');
   });
 
+  it('D18 — hides the decorative icon ligature from the accessibility tree and carries the direction on a visible aria-label instead', () => {
+    fixture.componentRef.setInput('amountUsd', -1.35);
+    fixture.componentRef.setInput('percent', -0.2);
+    fixture.detectChanges();
+
+    const icon = fixture.nativeElement.querySelector('.gain-loss__icon') as HTMLElement;
+    expect(icon.getAttribute('aria-hidden')).toBe('true');
+    expect(icon.getAttribute('aria-label')).toBeNull();
+
+    const label = fixture.nativeElement.querySelector('[role="img"]') as HTMLElement;
+    expect(label.getAttribute('aria-label')).toBe('Down');
+  });
+
   it('shows the existing "-" sign, a down arrow and the loss colour class for a negative amount', () => {
     fixture.componentRef.setInput('amountUsd', -3864);
     fixture.componentRef.setInput('percent', -100);

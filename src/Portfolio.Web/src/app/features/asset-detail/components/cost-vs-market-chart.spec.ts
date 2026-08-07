@@ -93,4 +93,125 @@ describe('CostVsMarketChart', () => {
     fixture.detectChanges();
     expect(fixture.componentInstance.filteredPoints()).toHaveLength(1);
   });
+
+  describe('D15 — colliding end labels', () => {
+    type EndLabelSeries = { name: string; endLabel: { offset: [number, number] } };
+
+    it('nudges the two end labels apart, greater value on top, when cost and market are close at the end', () => {
+      // $689.33 vs $680.32 — the exact real-data case from the tracker's D15
+      // entry, about $9 apart on a series ranging roughly $335→$690.
+      const close: PerformancePointDto[] = [
+        { date: '2026-07-20', costBasisUsd: 336.92, marketValueUsd: 340.1 },
+        { date: '2026-07-22', costBasisUsd: 689.33, marketValueUsd: 650.0 },
+        { date: '2026-07-24', costBasisUsd: 689.33, marketValueUsd: 680.32 },
+      ];
+      fixture.componentRef.setInput('points', close);
+      fixture.detectChanges();
+
+      const series = (fixture.componentInstance.options() as { series: EndLabelSeries[] }).series;
+      const market = series.find((s) => s.name === 'Market value')!;
+      const cost = series.find((s) => s.name === 'Cost basis')!;
+
+      // Cost ($689.33) is the greater value at the end, so it goes on top
+      // (negative y is up in ECharts' offset convention) and market goes
+      // below — and, above all, they must not land on the same offset.
+      expect(cost.endLabel.offset).not.toEqual(market.endLabel.offset);
+      expect(cost.endLabel.offset[1]).toBeLessThan(0);
+      expect(market.endLabel.offset[1]).toBeGreaterThan(0);
+    });
+
+    it('leaves both end labels un-offset when cost and market are clearly separated', () => {
+      const separated: PerformancePointDto[] = [
+        { date: '2026-07-20', costBasisUsd: 100, marketValueUsd: 100 },
+        { date: '2026-07-24', costBasisUsd: 100, marketValueUsd: 400 },
+      ];
+      fixture.componentRef.setInput('points', separated);
+      fixture.detectChanges();
+
+      const series = (fixture.componentInstance.options() as { series: EndLabelSeries[] }).series;
+      for (const s of series) {
+        expect(s.endLabel.offset).toEqual([0, 0]);
+      }
+    });
+  });
+
+  describe('D19 — x-axis tick format tracks the visible range span', () => {
+    function axisFormatter(fixture: ComponentFixture<CostVsMarketChart>): (value: number) => string {
+      const options = fixture.componentInstance.options() as {
+        xAxis: { axisLabel: { formatter: (value: number) => string } };
+      };
+      return options.xAxis.axisLabel.formatter;
+    }
+
+    /**
+     * The formatter must be exercised with the timestamps ECharts ACTUALLY
+     * hands it, which is the whole point of this helper existing.
+     *
+     * The series data passes plain "YYYY-MM-DD" strings to a `type: 'time'`
+     * axis, and ECharts parses that shape as LOCAL midnight — not the UTC
+     * midnight the native `Date('2026-07-22T00:00:00Z')` parser would give.
+     * The first version of these tests fed in UTC midnight, which no code
+     * path ever produces, and so passed against a formatter that rendered
+     * the real axis a full day early at every positive UTC offset (browser
+     * pass, Asia/Singapore: a Jul 20–24 series labelled "Jul 19 … Jul 23").
+     *
+     * Building the input with the local-midnight constructor keeps these
+     * tests honest in any timezone, and makes them fail if the formatter
+     * goes back to UTC.
+     */
+    const localMidnight = (y: number, monthIndex: number, d: number): number => new Date(y, monthIndex, d).getTime();
+
+    it('shows month + day over a short (1M-scale) span, never a bare day number', () => {
+      const days: PerformancePointDto[] = [
+        { date: '2026-07-20', costBasisUsd: 100, marketValueUsd: 100 },
+        { date: '2026-07-24', costBasisUsd: 100, marketValueUsd: 105 },
+      ];
+      fixture.componentRef.setInput('points', days);
+      fixture.detectChanges();
+
+      const label = axisFormatter(fixture)(localMidnight(2026, 6, 22));
+      expect(label).toBe('Jul 22');
+    });
+
+    it('labels a tick with the same calendar day the tooltip shows, at any UTC offset', () => {
+      // The regression guard for the browser-pass finding. The tooltip reads
+      // the raw date string, so an axis that disagrees with it by a day is
+      // self-evidently wrong — and only reproduces at positive offsets, which
+      // is why a UTC CI container never caught it.
+      const days: PerformancePointDto[] = [
+        { date: '2026-07-20', costBasisUsd: 100, marketValueUsd: 100 },
+        { date: '2026-07-24', costBasisUsd: 100, marketValueUsd: 105 },
+      ];
+      fixture.componentRef.setInput('points', days);
+      fixture.detectChanges();
+
+      // Exactly how ECharts resolves the first point's "2026-07-20".
+      expect(axisFormatter(fixture)(localMidnight(2026, 6, 20))).toBe('Jul 20');
+      expect(axisFormatter(fixture)(localMidnight(2026, 6, 24))).toBe('Jul 24');
+    });
+
+    it('shows month + year over a ~1Y span', () => {
+      const year: PerformancePointDto[] = [
+        { date: '2025-08-01', costBasisUsd: 100, marketValueUsd: 100 },
+        { date: '2026-07-24', costBasisUsd: 100, marketValueUsd: 130 },
+      ];
+      fixture.componentRef.setInput('points', year);
+      fixture.detectChanges();
+
+      const label = axisFormatter(fixture)(localMidnight(2026, 0, 15));
+      expect(label).toBe('Jan 2026');
+    });
+
+    it('shows year only over a multi-year "All" span', () => {
+      const multiYear: PerformancePointDto[] = [
+        { date: '2022-01-01', costBasisUsd: 100, marketValueUsd: 100 },
+        { date: '2026-07-24', costBasisUsd: 100, marketValueUsd: 200 },
+      ];
+      fixture.componentRef.setInput('points', multiYear);
+      fixture.detectChanges();
+
+      const label = axisFormatter(fixture)(localMidnight(2024, 5, 1));
+      expect(label).toBe('2024');
+    });
+  });
 });

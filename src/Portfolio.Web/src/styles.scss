@@ -45,14 +45,28 @@ html {
   --mat-sys-surface-container: var(--ui-color-surface-alt);
   --mat-sys-outline: var(--ui-color-border);
   --mat-sys-outline-variant: var(--ui-color-gridline);
+  // D14 fix: mat.theme() also emits --mat-sys-background/-on-background as a
+  // *separate* role from surface/on-surface, and mat-sidenav-container (plus
+  // anything that inherits its computed `color` without setting its own,
+  // e.g. .detail__price, the sidenav nav icons, the toolbar refresh icon)
+  // paints with on-background, not on-surface. Leaving these two unrepointed
+  // meant they kept mat.theme()'s own native-CSS `light-dark(...)` values
+  // instead of this app's own light/dark steps.
+  --mat-sys-background: var(--ui-color-surface-alt);
+  --mat-sys-on-background: var(--ui-color-on-surface);
 }
 
 body {
-  // Default the application to a light colour theme. `prefers-color-scheme`
-  // and `[data-theme]` in ui.tokens.scss drive the actual palette values;
-  // this only sets the browser's own chrome (scrollbars, form controls) to
-  // match, and is overridden by ui.tokens.scss's own color-scheme rules.
-  color-scheme: light;
+  // D14 fix: do NOT set color-scheme here. `color-scheme` is an inherited
+  // CSS property, and ui.tokens.scss already sets the correct value on
+  // `:root`/`html` — light by default, dark under `prefers-color-scheme` or
+  // `[data-theme="dark"]`. A `color-scheme: light` declaration on `body`
+  // does not defer to that; it *wins* for body's own subtree (more specific
+  // than the inherited value), which pinned every native `light-dark(...)`
+  // value inside `<body>` — including mat.theme()'s own --mat-sys-background
+  // / -on-background — to their light branch even in dark mode. That was the
+  // second half of D14. Simply not declaring it here lets body inherit
+  // :root's correct, theme-aware value.
 
   // Set a default background, font and text colors for the application using
   // Angular Material's system-level CSS variables, themselves now sourced

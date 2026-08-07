@@ -1,4 +1,5 @@
-import { foldToOther, gainLossColor, readChartTokens, seriesColor } from './chart-theme';
+import { computed } from '@angular/core';
+import { foldToOther, gainLossColor, readChartTokens, seriesColor, themeVersion } from './chart-theme';
 
 describe('chart-theme', () => {
   describe('readChartTokens', () => {
@@ -48,6 +49,37 @@ describe('chart-theme', () => {
       expect(gainLossColor(tokens, 12.5)).toBe(tokens.gain);
       expect(gainLossColor(tokens, -0.01)).toBe(tokens.loss);
       expect(gainLossColor(tokens, 0)).toBe(tokens.gain);
+    });
+  });
+
+  describe('themeVersion (D16 — re-resolve on theme change)', () => {
+    // The real trigger is a `matchMedia` change event or a `[data-theme]`
+    // mutation, neither of which jsdom implements (see the guards in
+    // chart-theme.ts, mirroring test-setup.ts's ResizeObserver stub) — so
+    // this proves the *reactive wiring* `readChartTokens()` relies on
+    // (a `computed()` re-running when `themeVersion` changes), not the two
+    // browser listeners that bump it. Those remain unverified outside a
+    // real browser; see the D16 report.
+    afterEach(() => {
+      document.documentElement.style.removeProperty('--ui-color-gain');
+    });
+
+    it('does NOT re-read the DOM on its own when a token value changes underneath it', () => {
+      const tokens = computed(() => readChartTokens());
+      expect(tokens().gain).toBe('#006300');
+
+      document.documentElement.style.setProperty('--ui-color-gain', '#abcdef');
+      expect(tokens().gain).toBe('#006300'); // stale until themeVersion bumps
+    });
+
+    it('re-reads the DOM once themeVersion bumps, exactly the signal the theme-change listeners raise', () => {
+      document.documentElement.style.setProperty('--ui-color-gain', '#abcdef');
+      const tokens = computed(() => readChartTokens());
+      expect(tokens().gain).toBe('#abcdef');
+
+      document.documentElement.style.setProperty('--ui-color-gain', '#123456');
+      themeVersion.update((v) => v + 1);
+      expect(tokens().gain).toBe('#123456');
     });
   });
 

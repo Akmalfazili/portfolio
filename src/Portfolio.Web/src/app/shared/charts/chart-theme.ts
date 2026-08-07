@@ -16,6 +16,8 @@
 // source of truth is not duplicated, it is mirrored for the one place that
 // cannot read a CSS variable at all.
 
+import { signal } from '@angular/core';
+
 /** Mirrors `ui.tokens.scss`'s light-mode `:root` block — see file header. */
 const FALLBACK_LIGHT = {
   surface: '#fcfcfb',
@@ -54,10 +56,51 @@ function readVar(style: CSSStyleDeclaration, name: string, fallback: string): st
   return value ? value : fallback;
 }
 
+// ---------------------------------------------------------------------------
+// D16 — re-resolve on theme change.
+//
+// `readChartTokens()` only ever reads the DOM at the instant it's called; on
+// its own it is not reactive to anything. Every caller invokes it inside a
+// `computed()`, but a `computed()` only re-runs when a *signal it read*
+// changes — a CSS custom property flipping value (an OS dark-mode toggle, or
+// this app's own `[data-theme]` override) is invisible to the signal graph.
+// Measured proof this was really happening: after switching to light mode,
+// `--ui-color-gridline` read `#e1e0d9` from the DOM but the already-rendered
+// chart kept stroking the dark-mode `#2c2c2a`.
+//
+// `themeVersion` closes that gap. It is bumped by two listeners — a
+// `matchMedia` listener for the OS preference, and a `MutationObserver` on
+// `<html>` for the manual `[data-theme]` override ui.tokens.scss also
+// supports — and `readChartTokens()` reads it (value unused) purely to
+// register the dependency, so every chart's option `computed()` re-runs, and
+// therefore re-resolves colours, on either kind of theme change.
+// ---------------------------------------------------------------------------
+export const themeVersion = signal(0);
+
+function bumpThemeVersion(): void {
+  themeVersion.update((v) => v + 1);
+}
+
+// jsdom (unit tests) implements neither API — guarded the same way
+// `src/test-setup.ts` guards `ResizeObserver`, so importing this module
+// never throws outside a real browser.
+if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', bumpThemeVersion);
+}
+if (typeof document !== 'undefined' && typeof MutationObserver !== 'undefined') {
+  new MutationObserver(bumpThemeVersion).observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['data-theme'],
+  });
+}
+
 /** Resolves the live design tokens off the DOM — call this at chart-build
  *  time (inside a `computed()`), never cache it module-wide, so a light/dark
- *  toggle or a stock/crypto section change is picked up on the next render. */
+ *  toggle or a stock/crypto section change is picked up on the next render.
+ *  Reads `themeVersion()` itself (see above) so callers don't each have to
+ *  remember to. */
 export function readChartTokens(root: HTMLElement = document.documentElement): ChartTokens {
+  themeVersion();
   const style = getComputedStyle(root);
   return {
     surface: readVar(style, '--ui-color-surface', FALLBACK_LIGHT.surface),

@@ -4,7 +4,9 @@
     [class.gain-loss--gain]="isGain()"
     [class.gain-loss--loss]="isLoss()"
   >
-    <mat-icon class="gain-loss__icon" [attr.aria-label]="iconLabel()">{{ icon() }}</mat-icon>
+    <span class="gain-loss__icon-wrap" role="img" [attr.aria-label]="iconLabel()">
+      <mat-icon class="gain-loss__icon" aria-hidden="true">{{ icon() }}</mat-icon>
+    </span>
     <span class="gain-loss__value">
       @if (signedAmount(); as amount) {
         <span>{{ amount }}</span>
