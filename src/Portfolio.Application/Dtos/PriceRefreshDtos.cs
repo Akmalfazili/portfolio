@@ -22,17 +22,33 @@ public enum PriceRefreshOutcome
     CooldownActive,
 }
 
-/// <summary>Outcome of refreshing a single provider's batch of assets within one cycle.</summary>
+/// <summary>
+/// Outcome of refreshing a single provider's batch of assets within one cycle.
+///
+/// D10, corrected 2026-08-07: only ever appears in <see cref="PriceRefreshCycleResult.Sources"/>
+/// for a source that was actually fetched — <c>RunCycleAsync</c> records a gated (closed-market)
+/// or not-yet-due source straight to the durable <c>SourceRefreshState</c> table and
+/// <c>continue</c>s without adding it here, so <see cref="Attempted"/> is always <c>true</c> for
+/// every entry this DTO's list ever actually contains; <c>false</c> is reachable only in the
+/// persisted status store, not in this per-cycle result. An earlier version of this comment said
+/// <see cref="Attempted"/> would be <c>false</c> "when the source's market was closed", which
+/// described a shape the API has never actually sent. Do not rely on this list to detect a closed
+/// market — <c>GET /api/prices/status</c> exposes <see cref="PriceRefreshStatus.NyseOpen"/> /
+/// <see cref="PriceRefreshStatus.SgxOpen"/> for exactly that, and the frontend deliberately reads
+/// those instead (see the D10 entry in tracker.md's Decisions/drawback register).
+/// </summary>
 public sealed record SourceRefreshOutcome(
     QuoteProviderKind Source,
-    /// <summary>False when the source's market was closed or its interval had not yet elapsed —
-    /// distinguishes "we chose not to call the provider" from "we called it and it failed".</summary>
+    /// <summary>Always <c>true</c> in practice today — see the type-level remark above.</summary>
     bool Attempted,
     bool Success,
     int SymbolsRefreshed,
     string? Error);
 
-/// <summary>Result of one <see cref="Services.IPriceRefreshService"/> cycle.</summary>
+/// <summary>Result of one <see cref="Services.IPriceRefreshService"/> cycle. <see cref="Sources"/>
+/// lists only the providers actually fetched this cycle — a provider skipped because its market
+/// was closed, or because its interval had not yet elapsed, is never in this list at all (see the
+/// D10 remark on <see cref="SourceRefreshOutcome"/>).</summary>
 public sealed record PriceRefreshCycleResult(
     PriceRefreshOutcome Outcome,
     /// <summary>Only set when <see cref="Outcome"/> is <see cref="PriceRefreshOutcome.CooldownActive"/>.</summary>

@@ -34,6 +34,7 @@ const AAPL_HOLDING: HoldingDto = {
   currentPriceNative: null,
   currentPriceUsd: null,
   priceAsOf: null,
+  priceSource: null,
   marketValueUsd: 0,
   unrealizedPnlUsd: -3864,
   unrealizedPnlPercent: -100,
@@ -47,6 +48,7 @@ const STOCK_SUMMARY_WITH_HOLDING: PortfolioSummaryDto = {
   totalUnrealizedPnlUsd: -3864,
   totalUnrealizedPnlPercent: -100,
   totalRealizedPnlUsd: 23,
+  unpricedHoldingsCount: 1,
   holdings: [AAPL_HOLDING],
 };
 
@@ -57,6 +59,7 @@ const EMPTY_STOCK_SUMMARY: PortfolioSummaryDto = {
   totalUnrealizedPnlUsd: 0,
   totalUnrealizedPnlPercent: null,
   totalRealizedPnlUsd: 0,
+  unpricedHoldingsCount: 0,
   holdings: [],
 };
 
@@ -181,17 +184,46 @@ describe('AssetDetailPage', () => {
   });
 
   it('falls back to the last persisted native price before any live push arrives, never "Waiting" if a snapshot price exists', async () => {
-    const withPrice: HoldingDto = { ...AAPL_HOLDING, currentPriceNative: 333.02, currentPriceUsd: 333.02 };
+    const withPrice: HoldingDto = {
+      ...AAPL_HOLDING,
+      currentPriceNative: 333.02,
+      currentPriceUsd: 333.02,
+      priceAsOf: '2026-08-07T11:15:00+00:00',
+      priceSource: 'Live',
+    };
     fixture.detectChanges();
     httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
     httpMock
       .expectOne(API_ROUTES.portfolioSummary('Stock'))
-      .flush({ ...STOCK_SUMMARY_WITH_HOLDING, holdings: [withPrice] });
+      .flush({ ...STOCK_SUMMARY_WITH_HOLDING, unpricedHoldingsCount: 0, holdings: [withPrice] });
     await flushStockAssetRequests();
     fixture.detectChanges();
 
     expect(fixture.nativeElement.textContent).toContain('$333.02');
     expect(fixture.nativeElement.textContent).not.toContain('Waiting for a live quote');
+    expect(fixture.nativeElement.textContent).not.toContain('Close ·');
+  });
+
+  it('labels a Close-sourced fallback price with its own close date, distinct from a live price', async () => {
+    const closeSourced: HoldingDto = {
+      ...AAPL_HOLDING,
+      currentPriceNative: 333.019989,
+      currentPriceUsd: 333.019989,
+      priceAsOf: '2026-07-24T00:00:00+00:00',
+      priceSource: 'Close',
+    };
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+    httpMock
+      .expectOne(API_ROUTES.portfolioSummary('Stock'))
+      .flush({ ...STOCK_SUMMARY_WITH_HOLDING, unpricedHoldingsCount: 0, holdings: [closeSourced] });
+    await flushStockAssetRequests();
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('$333.02');
+    expect(text).toContain('Close');
+    expect(text).toContain('Fri 24 Jul');
   });
 
   it('shows "Waiting for a live quote" when neither a push nor a persisted quote exists', async () => {

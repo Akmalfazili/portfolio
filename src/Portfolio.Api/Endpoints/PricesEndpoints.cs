@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http.HttpResults;
 using Portfolio.Application.Abstractions;
 using Portfolio.Application.Dtos;
 using Portfolio.Application.Services;
+using Portfolio.Domain.Enums;
 
 namespace Portfolio.Api.Endpoints;
 
@@ -27,6 +28,18 @@ public static class PricesEndpoints
             }
 
             return TypedResults.Ok(result);
+        });
+
+        // D12: manual trigger for backfilling PriceHistory/FxRate — bounded by the same
+        // MaxProviderCallsPerRun the scheduled daily run respects, and safe to call any time,
+        // including while the market is open, since it never touches PriceQuote and is idempotent
+        // against the (AssetId, Date) unique index.
+        group.MapPost("/backfill", async (
+            IPriceBackfillService backfillService,
+            CancellationToken cancellationToken) =>
+        {
+            var summary = await backfillService.RunAsync(RefreshTrigger.BackfillManual, cancellationToken);
+            return TypedResults.Ok(summary);
         });
 
         group.MapGet("/status", async (

@@ -30,3 +30,35 @@ export function todayDateOnly(): Date {
   const now = new Date();
   return new Date(now.getFullYear(), now.getMonth(), now.getDate());
 }
+
+const WEEKDAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTH_ABBR = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+
+/**
+ * Formats a D20 `priceAsOf` CLOSE timestamp — e.g. `"2026-07-24T00:00:00+00:00"`
+ * — as `"Fri 24 Jul"`. Used only for `priceSource: "Close"`, never for a
+ * genuinely live quote; a stale close must never be labelled as if it were
+ * fresh (tracker.md's D20 design note).
+ *
+ * `priceAsOf` is NOT the same shape as `tradeDate` — it carries an explicit
+ * UTC offset because it's a real `DateTimeOffset` on the wire, and the
+ * backend sets it to UTC midnight of the close's own calendar date. That
+ * makes it tempting to reach for `new Date(priceAsOf)` and read the result's
+ * LOCAL getters, the way the rest of this file does for plain `DateOnly`
+ * strings — but that is a DIFFERENT bug from D19a, not the same fix. D19a's
+ * timestamps were LOCAL midnight misread as UTC, which shifted the calendar
+ * day back a day at any POSITIVE UTC offset (this machine's own Asia/Singapore,
+ * UTC+8, is exactly where it was caught). Here the timestamp genuinely IS UTC
+ * midnight, so reading it with local getters is safe at a positive offset —
+ * UTC midnight + 8h is still the same calendar day — but rolls back a day at
+ * any NEGATIVE offset instead: the mirror image of D19a, wrong in the
+ * opposite direction. Slicing the ISO string's own date portion sidesteps the
+ * asymmetry entirely and stays correct at every offset, not only the one this
+ * machine happens to run at.
+ */
+export function formatCloseDate(priceAsOf: string): string {
+  const date = fromDateOnlyString(priceAsOf.slice(0, 10));
+  return `${WEEKDAY_ABBR[date.getDay()]} ${date.getDate()} ${MONTH_ABBR[date.getMonth()]}`;
+}

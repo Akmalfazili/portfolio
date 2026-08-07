@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Portfolio.Application.Dtos;
 using Portfolio.Application.Services;
 using Portfolio.Application.Services.Calculators;
 using Portfolio.Domain.Entities;
@@ -212,5 +213,90 @@ public sealed class PortfolioSummaryServiceTests : IDisposable
         var holding = summary.Holdings.Should().ContainSingle().Subject;
         holding.CurrentPriceUsd.Should().BeNull();
         holding.MarketValueUsd.Should().Be(0m);
+        // D17: no live quote AND no stored close at all — this is the genuinely unpriced case, so
+        // it must be surfaced on the summary rather than silently folded into a $0 total.
+        holding.PriceSource.Should().BeNull();
+        summary.UnpricedHoldingsCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GetSummaryAsync_NoLiveQuote_FallsBackToLastStoredClose_TaggedAsCloseWithItsOwnDate()
+    {
+        // D20: AAPL has a stored close (from a backfill) but no live PriceQuote — the market-closed
+        // case D20 exists for. The fallback must use the close's own date, not "today" (2026-02-01
+        // per _timeProvider), both for the reported priceAsOf and for which historical value to
+        // report to the caller.
+        var aapl = AddAsset(1, "AAPL", AssetClass.Stock, "USD");
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = aapl.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
+            Quantity = 10m, PricePerUnit = 100m, Fees = 0m, Currency = "USD",
+        });
+        _db.PriceHistories.Add(new PriceHistory
+        {
+            AssetId = aapl.Id, Date = new DateOnly(2026, 1, 30), Close = 150m, Currency = "USD",
+        });
+        await _db.SaveChangesAsync();
+
+        var summary = await _sut.GetSummaryAsync(AssetClass.Stock, CancellationToken.None);
+
+        var holding = summary.Holdings.Should().ContainSingle().Subject;
+        holding.PriceSource.Should().Be(PriceSource.Close);
+        holding.CurrentPriceUsd.Should().Be(150m);
+        holding.PriceAsOf.Should().Be(new DateTimeOffset(2026, 1, 30, 0, 0, 0, TimeSpan.Zero));
+        holding.MarketValueUsd.Should().Be(1500m); // 10 * 150, not "today"'s (nonexistent) price
+        summary.UnpricedHoldingsCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task GetSummaryAsync_LiveQuotePresent_TakesPriorityOverStoredClose()
+    {
+        var aapl = AddAsset(1, "AAPL", AssetClass.Stock, "USD");
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = aapl.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
+            Quantity = 10m, PricePerUnit = 100m, Fees = 0m, Currency = "USD",
+        });
+        _db.PriceHistories.Add(new PriceHistory
+        {
+            AssetId = aapl.Id, Date = new DateOnly(2026, 1, 30), Close = 150m, Currency = "USD",
+        });
+        var liveAsOf = new DateTimeOffset(2026, 2, 1, 14, 30, 0, TimeSpan.Zero);
+        _db.PriceQuotes.Add(new PriceQuote { AssetId = aapl.Id, Price = 160m, Currency = "USD", AsOf = liveAsOf });
+        await _db.SaveChangesAsync();
+
+        var summary = await _sut.GetSummaryAsync(AssetClass.Stock, CancellationToken.None);
+
+        var holding = summary.Holdings.Should().ContainSingle().Subject;
+        holding.PriceSource.Should().Be(PriceSource.Live);
+        holding.CurrentPriceUsd.Should().Be(160m);
+        holding.PriceAsOf.Should().Be(liveAsOf);
+    }
+
+    [Fact]
+    public async Task GetSummaryAsync_NoLiveQuote_SgdAsset_ClosePriorToTheOnlyStoredFxRate_StillConverts_ByCarryingRateBack()
+    {
+        // The close predates every stored FX rate (2026-01-15 close, earliest rate 2026-01-20) —
+        // FxRateResolver falls back to the earliest available rate rather than throwing, and the
+        // D20 fallback must use that same carried-back rate, not silently skip the holding.
+        var z74 = AddAsset(3, "Z74", AssetClass.Stock, "SGD");
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = z74.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 20),
+            Quantity = 100m, PricePerUnit = 4m, Fees = 0m, Currency = "SGD",
+        });
+        _db.PriceHistories.Add(new PriceHistory
+        {
+            AssetId = z74.Id, Date = new DateOnly(2026, 1, 15), Close = 4.5m, Currency = "SGD",
+        });
+        _db.FxRates.Add(new FxRate { Date = new DateOnly(2026, 1, 20), Base = "USD", Quote = "SGD", Rate = 1.25m });
+        await _db.SaveChangesAsync();
+
+        var summary = await _sut.GetSummaryAsync(AssetClass.Stock, CancellationToken.None);
+
+        var holding = summary.Holdings.Should().ContainSingle().Subject;
+        holding.PriceSource.Should().Be(PriceSource.Close);
+        holding.CurrentPriceUsd.Should().Be(3.6m); // 4.5 / 1.25
+        summary.UnpricedHoldingsCount.Should().Be(0);
     }
 }

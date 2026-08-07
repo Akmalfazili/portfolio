@@ -7,6 +7,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { routes } from './app.routes';
 import { PortfolioOverviewPage } from './features/portfolio/portfolio-overview.page';
 import { AssetDetailPage } from './features/asset-detail/asset-detail.page';
+import { AssetManagementPage } from './features/asset-management/asset-management.page';
 import { API_ROUTES } from './core/api/api-routes';
 import { PRICES_HUB_CONNECTION_FACTORY } from './core/prices/price-store';
 import { FakeHubConnection } from './core/prices/testing/fake-hub-connection';
@@ -18,6 +19,7 @@ const EMPTY_SUMMARY = (assetClass: 'Stock' | 'Crypto') => ({
   totalUnrealizedPnlUsd: 0,
   totalUnrealizedPnlPercent: null,
   totalRealizedPnlUsd: 0,
+  unpricedHoldingsCount: 0,
   holdings: [],
 });
 
@@ -90,6 +92,12 @@ describe('app routing — assetClass parameterisation', () => {
     expect(instance.assetClass()).toBe('Stock');
     httpMock.expectOne(API_ROUTES.assets).flush([]);
     httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(EMPTY_SUMMARY('Stock'));
+  });
+
+  it('lazy-loads AssetManagementPage for /assets (D24)', async () => {
+    const instance = await harness.navigateByUrl('/assets', AssetManagementPage);
+    expect(instance).toBeTruthy();
+    httpMock.expectOne(API_ROUTES.assets).flush([]);
   });
 
   it('an unknown path redirects to /stocks rather than a blank/broken route', async () => {

@@ -1,6 +1,6 @@
 <div class="stat-tile">
   <p class="stat-tile__label">{{ label() }}</p>
-  <p class="stat-tile__value">{{ value() }}</p>
+  <p class="stat-tile__value" [title]="value()">{{ value() }}</p>
   <div class="stat-tile__delta">
     <ng-content />
   </div>

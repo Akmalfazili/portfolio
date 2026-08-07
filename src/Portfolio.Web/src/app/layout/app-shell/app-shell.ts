@@ -11,6 +11,7 @@ import { filter, map } from 'rxjs';
 
 import { resolveAssetClass } from '../../core/route/asset-class';
 import { RefreshIndicator } from '../refresh-indicator/refresh-indicator';
+import { ThemeToggle } from '../theme-toggle/theme-toggle';
 
 const HANDSET_QUERY = '(max-width: 959.98px)';
 
@@ -35,6 +36,7 @@ const HANDSET_QUERY = '(max-width: 959.98px)';
     MatSidenavModule,
     MatToolbarModule,
     RefreshIndicator,
+    ThemeToggle,
   ],
   templateUrl: './app-shell.html',
   styleUrl: './app-shell.scss',

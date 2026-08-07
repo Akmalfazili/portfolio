@@ -52,22 +52,7 @@ public sealed class AssetService(IPortfolioDbContext db) : IAssetService
 
     public async Task<ServiceResult<AssetDto>> CreateAsync(CreateAssetRequest request, CancellationToken cancellationToken)
     {
-        var errors = new Dictionary<string, string[]>();
-
-        if (string.IsNullOrWhiteSpace(request.Symbol))
-        {
-            errors["symbol"] = ["Symbol is required."];
-        }
-
-        if (string.IsNullOrWhiteSpace(request.Name))
-        {
-            errors["name"] = ["Name is required."];
-        }
-
-        if (string.IsNullOrWhiteSpace(request.Currency) || request.Currency.Length != 3)
-        {
-            errors["currency"] = ["Currency must be a 3-letter ISO 4217 code."];
-        }
+        var errors = ValidateCore(request.Symbol, request.Name, request.Currency, request.QuoteProviderKind, request.ProviderSymbol, request.ProviderCoinId);
 
         if (errors.Count == 0 &&
             await db.Assets.AnyAsync(a => a.Symbol == request.Symbol, cancellationToken))
@@ -97,6 +82,93 @@ public sealed class AssetService(IPortfolioDbContext db) : IAssetService
         await db.SaveChangesAsync(cancellationToken);
 
         return ServiceResult<AssetDto>.Success(ToDto(asset));
+    }
+
+    public async Task<ServiceResult<AssetDto>> UpdateAsync(int id, UpdateAssetRequest request, CancellationToken cancellationToken)
+    {
+        var asset = await db.FindAssetAsync(id, cancellationToken);
+        if (asset is null)
+        {
+            return ServiceResult<AssetDto>.Failure(ServiceError.NotFound());
+        }
+
+        var errors = ValidateCore(request.Symbol, request.Name, request.Currency, request.QuoteProviderKind, request.ProviderSymbol, request.ProviderCoinId);
+
+        if (errors.Count == 0 &&
+            await db.Assets.AnyAsync(a => a.Id != id && a.Symbol == request.Symbol, cancellationToken))
+        {
+            errors["symbol"] = [$"An asset with symbol '{request.Symbol}' already exists."];
+        }
+
+        if (errors.Count > 0)
+        {
+            return ServiceResult<AssetDto>.Failure(ServiceError.Validation(errors));
+        }
+
+        asset.Symbol = request.Symbol;
+        asset.Name = request.Name;
+        asset.AssetClass = request.AssetClass;
+        asset.Exchange = request.Exchange;
+        asset.Currency = request.Currency;
+        asset.QuoteProviderKind = request.QuoteProviderKind;
+        asset.ProviderSymbol = request.ProviderSymbol;
+        asset.ProviderCoinId = request.ProviderCoinId;
+        asset.IsActive = request.IsActive;
+
+        await db.SaveChangesAsync(cancellationToken);
+
+        return ServiceResult<AssetDto>.Success(ToDto(asset));
+    }
+
+    /// <summary>
+    /// D23: beyond the pre-existing "required, unique symbol" checks, the provider identifier
+    /// field matching <paramref name="providerKind"/> is required too. <c>QuoteProviderRouter</c>
+    /// dispatches purely on <see cref="Domain.Enums.QuoteProviderKind"/> — a null identifier for
+    /// the chosen provider means no refresh or backfill cycle can ever price the asset, so this
+    /// must be rejected at creation/update time rather than discovered later as a permanent
+    /// "Awaiting price".
+    /// </summary>
+    private static Dictionary<string, string[]> ValidateCore(
+        string? symbol, string? name, string? currency, QuoteProviderKind providerKind,
+        string? providerSymbol, string? providerCoinId)
+    {
+        var errors = new Dictionary<string, string[]>();
+
+        if (string.IsNullOrWhiteSpace(symbol))
+        {
+            errors["symbol"] = ["Symbol is required."];
+        }
+
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            errors["name"] = ["Name is required."];
+        }
+
+        if (string.IsNullOrWhiteSpace(currency) || currency.Length != 3)
+        {
+            errors["currency"] = ["Currency must be a 3-letter ISO 4217 code."];
+        }
+
+        switch (providerKind)
+        {
+            case QuoteProviderKind.TwelveData:
+            case QuoteProviderKind.Yahoo:
+                if (string.IsNullOrWhiteSpace(providerSymbol))
+                {
+                    errors["providerSymbol"] = [$"ProviderSymbol is required when QuoteProviderKind is {providerKind}."];
+                }
+
+                break;
+            case QuoteProviderKind.CoinGecko:
+                if (string.IsNullOrWhiteSpace(providerCoinId))
+                {
+                    errors["providerCoinId"] = ["ProviderCoinId is required when QuoteProviderKind is CoinGecko (the coin id, e.g. \"ethereum\" — not the ticker)."];
+                }
+
+                break;
+        }
+
+        return errors;
     }
 
     private static AssetDto ToDto(Asset a) => new(

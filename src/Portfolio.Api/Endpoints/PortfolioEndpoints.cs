@@ -1,3 +1,4 @@
+using Portfolio.Api.Binding;
 using Portfolio.Application.Dtos;
 using Portfolio.Application.Services;
 using Portfolio.Domain.Enums;
@@ -16,8 +17,11 @@ public static class PortfolioEndpoints
     {
         var group = app.MapGroup("/api/portfolio").WithTags("Portfolio");
 
+        // AssetClassRouteValue, not a bare AssetClass — see D11: the built-in enum binder is
+        // case-sensitive, so "/api/portfolio/stock/summary" 400ed while only the capitalised
+        // form worked.
         group.MapGet("/{assetClass}/summary", async (
-            AssetClass assetClass,
+            AssetClassRouteValue assetClass,
             IPortfolioSummaryService summaryService,
             CancellationToken cancellationToken) =>
         {
@@ -26,7 +30,7 @@ public static class PortfolioEndpoints
         });
 
         group.MapGet("/{assetClass}/allocation", async (
-            AssetClass assetClass,
+            AssetClassRouteValue assetClass,
             IPortfolioSummaryService summaryService,
             CancellationToken cancellationToken) =>
         {

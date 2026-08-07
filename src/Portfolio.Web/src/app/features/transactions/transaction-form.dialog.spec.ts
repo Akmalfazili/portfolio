@@ -72,6 +72,23 @@ describe('TransactionFormDialog', () => {
 
   afterEach(() => httpMock.verify());
 
+  // D22: the JIT-compile warm-up rationale in confirm-dialog.spec.ts applies
+  // here too, more so — this dialog additionally pulls in
+  // `MatDatepickerModule`/`MatSelectModule`, and it was the file actually
+  // observed timing out (always on this first test, never a later one).
+  // `setup()` here doesn't dispatch a request on its own (only `submit()`
+  // does), so there's nothing for the `afterEach` `httpMock.verify()` above
+  // to trip over before the first real test overwrites `httpMock`.
+  beforeAll(() => {
+    setup({ mode: 'create', assets: [ANVL, AAPL] });
+    // TestBed forbids a second `configureTestingModule()` once instantiated,
+    // and nothing resets it between `beforeAll` and the first real `it()` —
+    // that reset normally happens in TestBed's own `afterEach`, which hasn't
+    // run yet. Reset explicitly so `setup()` inside the first test can
+    // configure a fresh module of its own.
+    TestBed.resetTestingModule();
+  });
+
   it('blocks submit and marks controls touched when required fields are empty', () => {
     const fixture = setup({ mode: 'create', assets: [ANVL, AAPL] });
     fixture.componentInstance.submit();
@@ -79,6 +96,19 @@ describe('TransactionFormDialog', () => {
 
     expect(fixture.componentInstance.form.controls.assetId.touched).toBe(true);
     expect(dialogRef.close).not.toHaveBeenCalled();
+  });
+
+  it('excludes deactivated assets from the picker — GET /api/assets returns them too, but they must not be selectable here', () => {
+    // D24 — the asset-management page's deactivate action is a full-replace
+    // PUT with isActive: false, and GET /api/assets keeps returning the
+    // deactivated row (confirmed live). Nothing about this dialog's own data
+    // shape changes when that happens, so the exclusion has to happen here.
+    const deactivatedMsft = { ...AAPL, id: 2, symbol: 'MSFT', name: 'Microsoft Corporation', isActive: false };
+    const fixture = setup({ mode: 'create', assets: [ANVL, AAPL, deactivatedMsft] });
+
+    const options = fixture.componentInstance.assetOptions();
+    expect(options.map((a) => a.symbol)).toEqual(['AAPL', 'ANVL']);
+    expect(options.some((a) => a.symbol === 'MSFT')).toBe(false);
   });
 
   it('rejects a quantity with more than 10 decimal places at the form layer, per D8', () => {

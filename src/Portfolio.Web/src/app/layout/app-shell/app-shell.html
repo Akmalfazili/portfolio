@@ -37,6 +37,16 @@
         <mat-icon matListItemIcon aria-hidden="true">receipt_long</mat-icon>
         <span matListItemTitle>Transactions</span>
       </a>
+      <a
+        mat-list-item
+        routerLink="/assets"
+        routerLinkActive="shell__nav-link--active"
+        [routerLinkActiveOptions]="{ exact: false }"
+        (click)="isHandset() && sidenav.close()"
+      >
+        <mat-icon matListItemIcon aria-hidden="true">tune</mat-icon>
+        <span matListItemTitle>Assets</span>
+      </a>
     </mat-nav-list>
   </mat-sidenav>
 
@@ -50,6 +60,7 @@
 
       <span class="shell__title">Portfolio Tracker</span>
       <span class="shell__spacer"></span>
+      <app-theme-toggle />
       <app-refresh-indicator />
     </mat-toolbar>
 

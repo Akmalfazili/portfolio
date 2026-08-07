@@ -17,6 +17,7 @@ const STOCK_SUMMARY: PortfolioSummaryDto = {
   totalUnrealizedPnlUsd: -3864,
   totalUnrealizedPnlPercent: -100,
   totalRealizedPnlUsd: 23,
+  unpricedHoldingsCount: 1,
   holdings: [
     {
       assetId: 1,
@@ -29,6 +30,7 @@ const STOCK_SUMMARY: PortfolioSummaryDto = {
       currentPriceNative: null,
       currentPriceUsd: null,
       priceAsOf: null,
+      priceSource: null,
       marketValueUsd: 0,
       unrealizedPnlUsd: -3864,
       unrealizedPnlPercent: -100,
@@ -131,13 +133,30 @@ describe('PortfolioOverviewPage', () => {
 
     const text = fixture.nativeElement.textContent as string;
     expect(text).toContain('AAPL');
-    // The per-holding "no price yet" case, which is the one the tracker
-    // explicitly calls out — the holdings-table/gain-loss-card specs pin the
-    // per-asset -100% suppression in detail; a portfolio-wide total where
-    // EVERY holding is unpriced is a separate, undocumented edge case not
-    // covered here (see the handoff notes).
     expect(text).toContain('Awaiting price');
     expect(text).toContain('Annual return');
+  });
+
+  it('D17 — caveats the totals rather than presenting them as complete when a holding is unpriced', async () => {
+    // STOCK_SUMMARY is exactly the real-world case the tracker calls out:
+    // AAPL has a real cost basis but no quote, so totalMarketValueUsd is 0
+    // and the naive headline reads -100% — the tile caveat must make clear
+    // that's a missing price, not a crash.
+    flushInitial();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('1 holding has no price yet');
+    expect(text).toContain("totals below don't include its market value, not a loss");
+  });
+
+  it('shows no caveat once every holding is priced', async () => {
+    flushInitial({ ...STOCK_SUMMARY, unpricedHoldingsCount: 0 });
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).not.toContain('no price yet');
   });
 
   it('does not render the annual-return chart for crypto', async () => {

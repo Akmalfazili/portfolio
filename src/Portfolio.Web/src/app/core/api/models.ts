@@ -17,6 +17,16 @@ export type TransactionType = 'Buy' | 'Sell';
 
 export type QuoteProviderKind = 'TwelveData' | 'Yahoo' | 'CoinGecko';
 
+/**
+ * D20 — distinguishes a genuinely live quote from a read-time fallback to the
+ * last stored daily close. `null` means neither exists yet (a brand-new
+ * position with no quote and no history at all — "Awaiting price"). A `null`
+ * `priceAsOf`/`currentPriceUsd` always pairs with a `null` `priceSource`; a
+ * `"Close"` source's `priceAsOf` is the CLOSE's own date, not "now" — never
+ * render it as if it were fresh.
+ */
+export type PriceSource = 'Live' | 'Close' | null;
+
 export type RefreshOutcome = 'Completed' | 'NothingDue' | 'CooldownActive';
 
 export interface AssetDto {
@@ -29,6 +39,32 @@ export interface AssetDto {
   quoteProviderKind: QuoteProviderKind;
   providerSymbol: string | null;
   providerCoinId: string | null;
+  isActive: boolean;
+}
+
+/**
+ * D23/D24 — `quoteProviderKind` dictates which identifier field is required:
+ * `providerSymbol` for `TwelveData`/`Yahoo`, `providerCoinId` for
+ * `CoinGecko`. The server is the authority on this rule (`400`
+ * `ValidationProblemDetails` keyed by field name on a mismatch) — the
+ * frontend only guides the user toward the right shape, never blocks on its
+ * own copy of the rule. See tracker.md's D24 design note for the full
+ * asset-class -> provider -> identifier-field routing table.
+ */
+export interface CreateAssetRequest {
+  symbol: string;
+  name: string;
+  assetClass: AssetClass;
+  exchange: string | null;
+  currency: string;
+  quoteProviderKind: QuoteProviderKind;
+  providerSymbol: string | null;
+  providerCoinId: string | null;
+}
+
+/** PUT /api/assets/{id} is a FULL REPLACE — the only way to flip `isActive`;
+ *  there is no separate deactivate/reactivate route. */
+export interface UpdateAssetRequest extends CreateAssetRequest {
   isActive: boolean;
 }
 
@@ -154,13 +190,21 @@ export interface HoldingDto {
   currentPriceNative: number | null;
   currentPriceUsd: number | null;
   priceAsOf: string | null;
+  priceSource: PriceSource;
   marketValueUsd: number;
   unrealizedPnlUsd: number;
   unrealizedPnlPercent: number | null;
   realizedPnlUsd: number;
 }
 
-/** Portfolio-level totals for one AssetClass — stocks and crypto never aggregate together. */
+/**
+ * Portfolio-level totals for one AssetClass — stocks and crypto never
+ * aggregate together. `unpricedHoldingsCount` (D17) is how many holdings
+ * have neither a live quote nor a stored close (`priceSource: null`) and so
+ * contribute `0` to every total above — when it is greater than zero, the
+ * totals are partial and must be captioned as such rather than presented as
+ * a complete, accurate portfolio value.
+ */
 export interface PortfolioSummaryDto {
   assetClass: AssetClass;
   totalCostBasisUsd: number;
@@ -168,6 +212,7 @@ export interface PortfolioSummaryDto {
   totalUnrealizedPnlUsd: number;
   totalUnrealizedPnlPercent: number | null;
   totalRealizedPnlUsd: number;
+  unpricedHoldingsCount: number;
   holdings: HoldingDto[];
 }
 

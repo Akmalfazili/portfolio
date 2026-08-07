@@ -20,6 +20,13 @@
       (action)="goToTransactions()"
     />
   } @else if (summary(); as s) {
+    @if (hasUnpricedHoldings()) {
+      <p class="overview__caveat">
+        <mat-icon aria-hidden="true">warning</mat-icon>
+        {{ unpricedCaveat() }}
+      </p>
+    }
+
     <div class="overview__tiles">
       <app-stat-tile label="Total cost basis" [value]="s.totalCostBasisUsd | money"></app-stat-tile>
       <app-stat-tile label="Total market value" [value]="s.totalMarketValueUsd | money"></app-stat-tile>

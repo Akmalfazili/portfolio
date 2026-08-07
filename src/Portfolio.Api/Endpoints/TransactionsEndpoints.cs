@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http.HttpResults;
+using Portfolio.Api.Binding;
 using Portfolio.Application.Common;
 using Portfolio.Application.Dtos;
 using Portfolio.Application.Services;
@@ -12,13 +13,15 @@ public static class TransactionsEndpoints
     {
         var group = app.MapGroup("/api/transactions").WithTags("Transactions");
 
+        // AssetClassRouteValue?, not AssetClass? — see D11: the built-in enum binder is
+        // case-sensitive on the query string too ("?assetClass=stock" 400ed).
         group.MapGet("/", async (
-            AssetClass? assetClass,
+            AssetClassRouteValue? assetClass,
             int? assetId,
             ITransactionService transactionService,
             CancellationToken cancellationToken) =>
         {
-            var transactions = await transactionService.ListAsync(assetClass, assetId, cancellationToken);
+            var transactions = await transactionService.ListAsync(assetClass?.Value, assetId, cancellationToken);
             return TypedResults.Ok(transactions);
         });
 

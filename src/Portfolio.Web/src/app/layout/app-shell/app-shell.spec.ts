@@ -17,6 +17,7 @@ const EMPTY_SUMMARY = (assetClass: 'Stock' | 'Crypto') => ({
   totalUnrealizedPnlUsd: 0,
   totalUnrealizedPnlPercent: null,
   totalRealizedPnlUsd: 0,
+  unpricedHoldingsCount: 0,
   holdings: [],
 });
 
@@ -53,6 +54,39 @@ describe('AppShell — section accent token switching', () => {
   afterEach(() => {
     httpMock.verify();
     document.documentElement.removeAttribute('data-section');
+  });
+
+  // D22: unlike the other three tests here (which only ever visit /stocks or
+  // /crypto), the last test below is the *only* one that navigates to
+  // /transactions — a separate `loadComponent` lazy chunk with its own
+  // one-time dynamic-`import()` cost, distinct from (and in addition to)
+  // AppShell's own JIT-compile cost that every `beforeEach` above already
+  // pays. That import result is cached by the module loader itself once
+  // resolved, regardless of TestBed's per-test resets, so triggering it once
+  // here — under a hook, not a single 5s-budgeted test — means the real test
+  // that needs it starts from a warm cache instead of occasionally absorbing
+  // that load under CPU contention (observed timing out intermittently).
+  beforeAll(async () => {
+    TestBed.configureTestingModule({
+      imports: [AppShell],
+      providers: [
+        provideRouter(routes, withComponentInputBinding()),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideNoopAnimations(),
+        { provide: PRICES_HUB_CONNECTION_FACTORY, useValue: () => new FakeHubConnection() },
+      ],
+    });
+    const warmupRouter = TestBed.inject(Router);
+    const warmupHttpMock = TestBed.inject(HttpTestingController);
+    const warmupFixture = TestBed.createComponent(AppShell);
+    warmupFixture.detectChanges();
+    await warmupRouter.navigateByUrl('/transactions');
+    warmupFixture.detectChanges();
+    warmupHttpMock.expectOne(API_ROUTES.transactions).flush([]);
+    warmupHttpMock.expectOne(API_ROUTES.assets).flush([]);
+    document.documentElement.removeAttribute('data-section');
+    TestBed.resetTestingModule();
   });
 
   function flushStockOverview() {

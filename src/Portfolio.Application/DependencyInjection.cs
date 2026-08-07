@@ -13,6 +13,7 @@ public static class DependencyInjection
         services.AddScoped<IAssetService, AssetService>();
         services.AddScoped<ITransactionService, TransactionService>();
         services.AddScoped<IPriceBackfillService, PriceBackfillService>();
+        services.AddHostedService<PriceBackfillBackgroundService>();
 
         // Pure, stateless calculators — no DB dependency, so singletons rather than scoped.
         services.AddSingleton<ICostBasisCalculator, AverageCostCalculator>();

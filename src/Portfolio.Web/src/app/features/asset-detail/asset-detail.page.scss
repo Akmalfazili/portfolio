@@ -36,6 +36,15 @@
   color: var(--ui-color-on-surface-muted);
 }
 
+// D20 — a Close-sourced fallback price must read as visually distinct from a
+// live one, not just an identical-looking number with no caveat.
+.detail__price-source {
+  margin: var(--ui-space-1) 0 0;
+  font-size: var(--ui-font-size-sm);
+  font-weight: var(--ui-font-weight-regular);
+  color: var(--ui-color-status-warning);
+}
+
 .detail__note {
   margin-top: var(--ui-space-6);
   font-size: var(--ui-font-size-sm);

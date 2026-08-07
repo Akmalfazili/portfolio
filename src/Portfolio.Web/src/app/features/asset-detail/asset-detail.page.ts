@@ -8,6 +8,7 @@ import { PriceStore } from '../../core/prices/price-store';
 import { MoneyPipe } from '../../shared/pipes/money.pipe';
 import { QuantityPipe } from '../../shared/pipes/quantity.pipe';
 import { StateMessage } from '../../shared/state-message/state-message';
+import { formatCloseDate } from '../../shared/util/local-date';
 import { GainLossCard } from './components/gain-loss-card';
 import { CostVsMarketChart } from './components/cost-vs-market-chart';
 
@@ -90,6 +91,20 @@ export class AssetDetailPage {
   readonly fallbackPrice = computed(() => {
     const holding = this.holding();
     return holding?.currentPriceNative ?? null;
+  });
+
+  /**
+   * D20 — a genuine SignalR push (`quote()`) is always live. The fallback
+   * snapshot price, by contrast, may itself be a read-time fallback to the
+   * last stored CLOSE rather than a live quote (market closed, no
+   * `PriceQuote` yet) — that case must render distinctly, labelled with the
+   * close's own date via `priceAsOf`, never presented as if it were fresh.
+   */
+  readonly isCloseSourced = computed(() => this.quote() === undefined && this.holding()?.priceSource === 'Close');
+
+  readonly closeDateLabel = computed(() => {
+    const asOf = this.holding()?.priceAsOf;
+    return asOf ? formatCloseDate(asOf) : '';
   });
 
   private lastAppliedRefreshAt: string | null = null;

@@ -37,3 +37,13 @@
   color: var(--ui-color-on-surface-muted);
   font-style: italic;
 }
+
+// D20 — a Close-sourced price must read as visually distinct from a live
+// one, not just a bare number identical to the live case.
+.holdings-table__price-source {
+  display: block;
+  color: var(--ui-color-status-warning);
+  font-size: var(--ui-font-size-xs);
+  font-weight: var(--ui-font-weight-regular);
+  font-style: normal;
+}

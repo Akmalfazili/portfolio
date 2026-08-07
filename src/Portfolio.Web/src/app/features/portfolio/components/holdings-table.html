@@ -21,6 +21,9 @@
         <td class="holdings-table__num">
           @if (hasPrice(holding)) {
             {{ holding.currentPriceUsd | money }}
+            @if (isCloseSourced(holding)) {
+              <span class="holdings-table__price-source">Close &middot; {{ closeDateLabel(holding) }}</span>
+            }
           } @else {
             <span class="holdings-table__pending">Awaiting price</span>
           }

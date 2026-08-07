@@ -1,0 +1,82 @@
+<section class="asset-management">
+  <header class="asset-management__toolbar">
+    <h1 class="asset-management__title">Assets</h1>
+
+    <button mat-flat-button color="primary" type="button" (click)="openCreateDialog()">
+      <mat-icon aria-hidden="true">add</mat-icon>
+      Track a new asset
+    </button>
+  </header>
+
+  @if (actionError(); as error) {
+    <p class="asset-management__warning">
+      <mat-icon aria-hidden="true">error_outline</mat-icon>
+      {{ error }}
+      <button mat-button type="button" (click)="dismissActionError()">Dismiss</button>
+    </p>
+  }
+
+  @if (isLoading()) {
+    <app-state-message variant="loading" title="Loading assets…" />
+  } @else if (hasError()) {
+    <app-state-message
+      variant="error"
+      title="Couldn't load assets"
+      description="Check that the API is running, then try again."
+      actionLabel="Retry"
+      (action)="retry()"
+    />
+  } @else if (isEmpty()) {
+    <app-state-message
+      variant="empty"
+      title="No assets tracked yet"
+      description="Add the stocks or crypto you want to track."
+      actionLabel="Track a new asset"
+      (action)="openCreateDialog()"
+    />
+  } @else {
+    <table class="asset-management__table">
+      <thead>
+        <tr>
+          <th>Symbol</th>
+          <th>Name</th>
+          <th>Class</th>
+          <th>Currency</th>
+          <th>Provider</th>
+          <th>Identifier</th>
+          <th>Status</th>
+          <th class="asset-management__actions-header">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (asset of assets(); track asset.id) {
+          <tr [class.asset-management__row--inactive]="!asset.isActive">
+            <td class="asset-management__symbol">{{ asset.symbol }}</td>
+            <td>{{ asset.name }}</td>
+            <td>{{ asset.assetClass }}</td>
+            <td>{{ asset.currency }}</td>
+            <td>{{ asset.quoteProviderKind }}</td>
+            <td>{{ asset.providerSymbol ?? asset.providerCoinId }}</td>
+            <td>
+              @if (asset.isActive) {
+                <span class="asset-management__badge asset-management__badge--active">Active</span>
+              } @else {
+                <span class="asset-management__badge asset-management__badge--inactive">Inactive</span>
+              }
+            </td>
+            <td class="asset-management__actions">
+              <button
+                mat-button
+                type="button"
+                [attr.aria-label]="(asset.isActive ? 'Deactivate ' : 'Reactivate ') + asset.symbol"
+                (click)="toggleActive(asset)"
+              >
+                {{ asset.isActive ? 'Deactivate' : 'Reactivate' }}
+              </button>
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  }
+</section>

@@ -14,4 +14,11 @@ public sealed class PriceBackfillOptions
 
     /// <summary>Maximum number of upstream historical-data calls (across all providers) in one run.</summary>
     public int MaxProviderCallsPerRun { get; set; } = 20;
+
+    /// <summary>How often <c>PriceBackfillBackgroundService</c> wakes up to check whether a
+    /// scheduled backfill is due (see <see cref="Services.IPriceBackfillService.RunIfDueAsync"/>).
+    /// Deliberately coarse — the check itself costs no provider call, and the gate it evaluates
+    /// (NYSE closed, not already run today) only actually becomes true once a day, so there is no
+    /// benefit to polling as tightly as the live-quote refresh loop does.</summary>
+    public TimeSpan SchedulePollInterval { get; set; } = TimeSpan.FromMinutes(15);
 }

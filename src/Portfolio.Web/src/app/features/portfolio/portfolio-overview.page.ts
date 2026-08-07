@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, input, si
 import { httpResource } from '@angular/common/http';
 import { Router } from '@angular/router';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
+import { MatIconModule } from '@angular/material/icon';
 
 import { AllocationItemDto, AnnualReturnsDto, AssetClass, PortfolioAllocationDto, PortfolioSummaryDto } from '../../core/api/models';
 import { API_ROUTES } from '../../core/api/api-routes';
@@ -32,6 +33,7 @@ type AllocationMode = 'market' | 'cost';
     StatTile,
     GainLoss,
     MatButtonToggleModule,
+    MatIconModule,
     AllocationPieChart,
     AnnualReturnChart,
     HoldingsTable,
@@ -65,6 +67,21 @@ export class PortfolioOverviewPage {
   readonly holdings = computed(() => this.summary()?.holdings ?? []);
 
   readonly isEmpty = computed(() => !this.isLoading() && !this.hasError() && this.holdings().length === 0);
+
+  /**
+   * D17 — a holding with no price yet contributes `0` to every total, so a
+   * *partly* priced portfolio otherwise reads exactly like a genuine crash
+   * (the AAPL-only case: cost basis real, market value 0, so the headline
+   * shows −82.76%). `unpricedHoldingsCount > 0` means the totals above are
+   * partial and must say so, rather than presenting a complete number.
+   */
+  readonly unpricedHoldingsCount = computed(() => this.summary()?.unpricedHoldingsCount ?? 0);
+  readonly hasUnpricedHoldings = computed(() => this.unpricedHoldingsCount() > 0);
+  readonly unpricedCaveat = computed(() => {
+    const count = this.unpricedHoldingsCount();
+    const noun = count === 1 ? 'holding has' : 'holdings have';
+    return `${count} ${noun} no price yet — the totals below don't include ${count === 1 ? 'its' : 'their'} market value, not a loss.`;
+  });
 
   readonly sectionLabel = computed(() => (this.assetClass() === 'Crypto' ? 'Crypto' : 'Stocks'));
   readonly basePath = computed(() => (this.assetClass() === 'Crypto' ? '/crypto' : '/stocks'));

@@ -7,6 +7,11 @@
   flex-direction: column;
   gap: var(--ui-space-1);
   min-width: 0;
+  // Lets --ui-font-size-tile-value below read the tile's own rendered width
+  // (`cqi`) rather than the viewport's — the same clamp then does the right
+  // thing whether this tile sits in the overview's 4-up grid or the detail
+  // page's narrower one, with no page-specific override needed.
+  container-type: inline-size;
 }
 
 .stat-tile__label {
@@ -17,13 +22,25 @@
 
 .stat-tile__value {
   margin: 0;
-  font-size: var(--ui-font-size-2xl);
+  // D21: a monetary value must never break or wrap mid-digit, so it fluidly
+  // shrinks to the tile's own width instead — clamped between a floor that
+  // stays legible as a headline number and the full 2xl ceiling for tiles
+  // with room to spare. `overflow-wrap`/`white-space` guarantee it stays on
+  // one line rather than ever wrapping onto a second; `text-overflow` is the
+  // last-resort safety net for a value so long (a six/seven-figure loss)
+  // that even the floor size can't fit it — the full figure is still on the
+  // element as `title` text and in the accessible text content, only the
+  // *visual* rendering is ever truncated, and only in that rare case.
+  font-size: clamp(var(--ui-font-size-lg), 9cqi, var(--ui-font-size-2xl));
   font-weight: var(--ui-font-weight-semibold);
   color: var(--ui-color-on-surface);
   // Proportional figures, never tabular-nums — a large standalone value
   // looks loose with equal-width digits (marks-and-anatomy.md).
   font-variant-numeric: normal;
-  overflow-wrap: break-word;
+  overflow-wrap: normal;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .stat-tile__delta {

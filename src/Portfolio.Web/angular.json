@@ -53,6 +53,14 @@
                   "maximumError": "8kB"
                 }
               ],
+              "optimization": {
+                "scripts": true,
+                "fonts": false,
+                "styles": {
+                  "minify": true,
+                  "inlineCritical": false
+                }
+              },
               "outputHashing": "all"
             },
             "development": {
@@ -83,7 +91,8 @@
           "options": {
             "setupFiles": [
               "src/test-setup.ts"
-            ]
+            ],
+            "runnerConfig": true
           }
         }
       }

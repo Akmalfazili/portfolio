@@ -2,6 +2,46 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <!--
+      D25: applies the persisted theme choice to <html> before any CSS is
+      parsed, so the first paint never briefly shows the wrong theme and then
+      flips. Must run this early (ahead of the stylesheet link the Angular
+      build injects) and stay in sync with core/theme/theme-store.ts, which
+      re-applies the same attribute once the app itself is running (so a
+      toggle click works) and owns every write after this one. "system" (or
+      nothing stored) needs no attribute at all — the CSS
+      `@media (prefers-color-scheme: dark)` branch in ui.tokens.scss already
+      handles that case unassisted.
+
+      This alone is not sufficient — verified against a real production
+      build (`ng build`). Angular's default production optimization inlines
+      "critical" CSS into a <style> block right here in <head> and defers the
+      full stylesheet behind a non-blocking <link media="print"> swap. That
+      critical-CSS extraction has no idea this script exists or ever sets
+      `data-theme`, so it inlines only the plain `:root` (light) rules and
+      drops both the `@media (prefers-color-scheme: dark)` block and the
+      `[data-theme='dark']` override entirely — confirmed by grepping the
+      built index.html, which contains neither. The browser's first paint
+      would therefore always be light, dark override or not, until the full
+      stylesheet finished loading a moment later — the exact flash this
+      script exists to prevent. `angular.json`'s production configuration
+      turns `optimization.styles.inlineCritical` off for this reason, so the
+      full stylesheet (dark rules included) loads and applies in the normal,
+      blocking way instead.
+    -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('portfolio-web:theme');
+          if (stored === 'light' || stored === 'dark') {
+            document.documentElement.setAttribute('data-theme', stored);
+          }
+        } catch (e) {
+          // localStorage can throw in a locked-down context — fall back to
+          // the OS preference silently rather than break the page.
+        }
+      })();
+    </script>
     <title>PortfolioWeb</title>
     <base href="/" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />

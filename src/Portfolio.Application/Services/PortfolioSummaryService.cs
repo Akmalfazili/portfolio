@@ -25,6 +25,10 @@ public sealed class PortfolioSummaryService(
         var totalUnrealized = holdings.Sum(h => h.UnrealizedPnlUsd);
         var totalRealized = holdings.Sum(h => h.RealizedPnlUsd);
 
+        // D17: only currently-held positions need a price at all — a fully closed position has
+        // zero market value by construction and nothing to caveat.
+        var unpricedHoldingsCount = holdings.Count(h => h.QuantityHeld > 0m && h.PriceSource is null);
+
         return new PortfolioSummaryDto(
             assetClass,
             totalCostBasis,
@@ -32,6 +36,7 @@ public sealed class PortfolioSummaryService(
             totalUnrealized,
             totalCostBasis > 0m ? DisplayRounding.Percent(totalUnrealized / totalCostBasis * 100m) : null,
             totalRealized,
+            unpricedHoldingsCount,
             holdings);
     }
 
@@ -74,6 +79,17 @@ public sealed class PortfolioSummaryService(
             .Where(q => assetIds.Contains(q.AssetId))
             .ToDictionaryAsync(q => q.AssetId, cancellationToken);
 
+        // D20: the last-close fallback source, keyed to one row per asset (the newest date). Only
+        // stocks ever have PriceHistory rows at all (crypto keeps none, by decision), so this is a
+        // no-op dictionary for a crypto assetClass call — deliberately loaded generically rather
+        // than special-cased so the fallback logic below does not need to know the asset class.
+        var lastCloseByAsset = (await db.PriceHistories
+                .Where(p => assetIds.Contains(p.AssetId))
+                .OrderByDescending(p => p.Date)
+                .ToListAsync(cancellationToken))
+            .GroupBy(p => p.AssetId)
+            .ToDictionary(g => g.Key, g => g.First());
+
         var fxRatesByCurrency = await LoadFxRatesAsync(assets, transactionsByAsset.Keys, cancellationToken);
 
         var holdings = new List<HoldingDto>();
@@ -96,8 +112,12 @@ public sealed class PortfolioSummaryService(
             var finalStep = costBasisCalculator.Calculate(costBasisTransactions)[^1];
 
             quotesByAsset.TryGetValue(asset.Id, out var quote);
+            lastCloseByAsset.TryGetValue(asset.Id, out var lastClose);
 
+            decimal? currentPriceNative = null;
             decimal? currentPriceUsd = null;
+            DateTimeOffset? priceAsOf = null;
+            PriceSource? priceSource = null;
             var marketValueUsd = 0m;
 
             if (quote is not null)
@@ -105,7 +125,37 @@ public sealed class PortfolioSummaryService(
                 var todayRate = asset.Currency == ReportingCurrency
                     ? 1m
                     : FxRateResolver.Resolve(fxRates, today);
+                currentPriceNative = quote.Price;
                 currentPriceUsd = quote.Price / todayRate;
+                priceAsOf = quote.AsOf;
+                priceSource = PriceSource.Live;
+                marketValueUsd = finalStep.QuantityHeld * currentPriceUsd.Value;
+            }
+            else if (lastClose is not null && (asset.Currency == ReportingCurrency || fxRates.Count > 0))
+            {
+                // D20: no live quote yet (market closed, or the asset was only just added and the
+                // next refresh cycle has not ticked) — fall back to the newest stored daily close
+                // rather than reporting zero market value for a real position. priceAsOf carries
+                // the CLOSE'S OWN date, never "now", and PriceSource.Close tells the caller exactly
+                // which state this is rather than leaving it to infer from the date alone — the
+                // D4 mistake (a stale price wearing a fresh-looking timestamp) must not repeat.
+                // Converted at the close's own date's rate, not today's — consistent with the rest
+                // of this codebase's "historical series use historical rates" rule (FxRateResolver
+                // carries the nearest prior rate forward, or the earliest rate back, so it only
+                // throws for a currency with zero stored rates at all). The fxRates.Count > 0 guard
+                // is defensive: reaching this branch already implies at least one transaction in
+                // this currency converted successfully via CostBasisTransactionFactory above, which
+                // itself requires a non-empty rate list or throws — so this is currently
+                // unreachable in practice, kept only so a future change to that invariant fails
+                // safe (unpriced, see PortfolioSummaryDto.UnpricedHoldingsCount) rather than
+                // mis-converting at an implicit 1:1 rate.
+                var closeRate = asset.Currency == ReportingCurrency
+                    ? 1m
+                    : FxRateResolver.Resolve(fxRates, lastClose.Date);
+                currentPriceNative = lastClose.Close;
+                currentPriceUsd = lastClose.Close / closeRate;
+                priceAsOf = new DateTimeOffset(lastClose.Date.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+                priceSource = PriceSource.Close;
                 marketValueUsd = finalStep.QuantityHeld * currentPriceUsd.Value;
             }
 
@@ -124,9 +174,10 @@ public sealed class PortfolioSummaryService(
                 asset.Currency,
                 finalStep.QuantityHeld,
                 costBasisUsd,
-                quote?.Price,
+                currentPriceNative,
                 DisplayRounding.Price(currentPriceUsd),
-                quote?.AsOf,
+                priceAsOf,
+                priceSource,
                 marketValueUsd,
                 unrealizedPnlUsd,
                 unrealizedPnlPercent,

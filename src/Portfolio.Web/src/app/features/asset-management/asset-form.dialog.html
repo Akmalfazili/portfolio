@@ -1,0 +1,140 @@
+<h2 mat-dialog-title>Track a new asset</h2>
+
+<form [formGroup]="form" (ngSubmit)="submit()">
+  <mat-dialog-content class="asset-form">
+    <table class="asset-form__routing" aria-label="Provider routing rules">
+      <caption>Which provider to pick, and what identifier it needs</caption>
+      <thead>
+        <tr>
+          <th scope="col">Asset</th>
+          <th scope="col">Provider</th>
+          <th scope="col">Identifier format</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>US equity</td>
+          <td>Twelve Data</td>
+          <td>Plain ticker — <code>AAPL</code></td>
+        </tr>
+        <tr>
+          <td>SGX equity</td>
+          <td>Yahoo</td>
+          <td><code>.SI</code> suffix — <code>Z74.SI</code></td>
+        </tr>
+        <tr>
+          <td>Crypto</td>
+          <td>CoinGecko</td>
+          <td>Coin ID, not ticker — <code>ethereum</code>, not <code>ETH</code></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <mat-form-field appearance="outline">
+      <mat-label>Symbol</mat-label>
+      <input matInput [formControl]="form.controls.symbol" placeholder="AAPL" />
+      <mat-hint>Your own ticker for this asset — uppercased automatically.</mat-hint>
+      @if (fieldError('symbol'); as error) {
+        <mat-error>{{ error }}</mat-error>
+      }
+    </mat-form-field>
+
+    <mat-form-field appearance="outline">
+      <mat-label>Name</mat-label>
+      <input matInput [formControl]="form.controls.name" placeholder="Apple Inc." />
+      @if (fieldError('name'); as error) {
+        <mat-error>{{ error }}</mat-error>
+      }
+    </mat-form-field>
+
+    <mat-form-field appearance="outline">
+      <mat-label>Asset class</mat-label>
+      <mat-select [formControl]="form.controls.assetClass">
+        <mat-option value="Stock">Stock</mat-option>
+        <mat-option value="Crypto">Crypto</mat-option>
+      </mat-select>
+      @if (fieldError('assetClass'); as error) {
+        <mat-error>{{ error }}</mat-error>
+      }
+    </mat-form-field>
+
+    <mat-form-field appearance="outline">
+      <mat-label>Exchange</mat-label>
+      <input matInput [formControl]="form.controls.exchange" placeholder="NASDAQ" />
+      <mat-hint>Optional — informational only, not used for routing.</mat-hint>
+    </mat-form-field>
+
+    <mat-form-field appearance="outline">
+      <mat-label>Currency</mat-label>
+      <input matInput [formControl]="form.controls.currency" placeholder="USD" maxlength="3" />
+      <mat-hint>3-letter ISO code. Only USD and SGD have FX coverage today.</mat-hint>
+      @if (fieldError('currency'); as error) {
+        <mat-error>{{ error }}</mat-error>
+      }
+    </mat-form-field>
+
+    <mat-form-field appearance="outline">
+      <mat-label>Quote provider</mat-label>
+      <mat-select [formControl]="form.controls.quoteProviderKind">
+        <mat-option value="TwelveData">Twelve Data</mat-option>
+        <mat-option value="Yahoo">Yahoo</mat-option>
+        <mat-option value="CoinGecko">CoinGecko</mat-option>
+      </mat-select>
+      @if (isCrypto()) {
+        <mat-hint>Crypto always routes through CoinGecko.</mat-hint>
+      }
+      @if (fieldError('quoteProviderKind'); as error) {
+        <mat-error>{{ error }}</mat-error>
+      }
+    </mat-form-field>
+
+    @if (showsCreditWarning()) {
+      <p class="asset-form__warning">
+        <mat-icon aria-hidden="true">warning</mat-icon>
+        Every Twelve Data symbol costs a credit per refresh cycle, against an 800/day budget.
+        At the 5-minute open-market cadence, one US symbol is roughly 78 credits over a single
+        6.5-hour session — keep US equities well under ten symbols total. Yahoo and CoinGecko
+        are unmetered.
+      </p>
+    }
+
+    @if (usesCoinId()) {
+      <mat-form-field appearance="outline">
+        <mat-label>CoinGecko coin ID</mat-label>
+        <input matInput [formControl]="form.controls.providerCoinId" placeholder="ethereum" />
+        <mat-hint>{{ identifierHint() }}</mat-hint>
+        @if (fieldError('providerCoinId'); as error) {
+          <mat-error>{{ error }}</mat-error>
+        }
+      </mat-form-field>
+    } @else {
+      <mat-form-field appearance="outline">
+        <mat-label>Provider symbol</mat-label>
+        <input matInput [formControl]="form.controls.providerSymbol" placeholder="AAPL" />
+        <mat-hint>{{ identifierHint() }}</mat-hint>
+        @if (fieldError('providerSymbol'); as error) {
+          <mat-error>{{ error }}</mat-error>
+        }
+      </mat-form-field>
+    }
+
+    <p class="asset-form__note">
+      A new asset has no price history yet, so its chart and its contribution to annual returns
+      stay empty until a backfill runs.
+    </p>
+
+    @if (serverError(); as error) {
+      <p class="asset-form__error">
+        <mat-icon aria-hidden="true">error_outline</mat-icon>
+        {{ error }}
+      </p>
+    }
+  </mat-dialog-content>
+
+  <mat-dialog-actions align="end">
+    <button mat-button type="button" (click)="close()" [disabled]="submitting()">Cancel</button>
+    <button mat-flat-button type="submit" color="primary" [disabled]="submitting()">
+      {{ submitting() ? 'Saving…' : 'Save' }}
+    </button>
+  </mat-dialog-actions>
+</form>

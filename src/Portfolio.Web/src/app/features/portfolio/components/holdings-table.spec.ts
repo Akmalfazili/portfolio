@@ -15,6 +15,7 @@ const AAPL_NO_PRICE: HoldingDto = {
   currentPriceNative: null,
   currentPriceUsd: null,
   priceAsOf: null,
+  priceSource: null,
   marketValueUsd: 0,
   unrealizedPnlUsd: -3864,
   unrealizedPnlPercent: -100,
@@ -32,9 +33,31 @@ const ANVL_SUBCENT: HoldingDto = {
   currentPriceNative: 0.00050448,
   currentPriceUsd: 0.00050448,
   priceAsOf: '2026-08-01T10:48:50+00:00',
+  priceSource: 'Live',
   marketValueUsd: 504.48,
   unrealizedPnlUsd: 104.38,
   unrealizedPnlPercent: 26.0885,
+  realizedPnlUsd: 0,
+};
+
+// D20/D17 — a stock priced from the last stored CLOSE rather than a live
+// quote (market closed, no PriceQuote yet). priceAsOf carries the CLOSE's
+// own date, not "now" — see tracker.md's D20 design note.
+const MSFT_CLOSE: HoldingDto = {
+  assetId: 2,
+  symbol: 'MSFT',
+  name: 'Microsoft Corporation',
+  assetClass: 'Stock',
+  currency: 'USD',
+  quantityHeld: 3,
+  costBasisUsd: 1000,
+  currentPriceNative: 381.700012,
+  currentPriceUsd: 381.700012,
+  priceAsOf: '2026-07-24T00:00:00+00:00',
+  priceSource: 'Close',
+  marketValueUsd: 1145.1,
+  unrealizedPnlUsd: 145.1,
+  unrealizedPnlPercent: 14.51,
   realizedPnlUsd: 0,
 };
 
@@ -76,5 +99,26 @@ describe('HoldingsTable', () => {
 
     const link = fixture.nativeElement.querySelector('a.holdings-table__symbol') as HTMLAnchorElement;
     expect(link.getAttribute('href')).toBe('/stocks/ANVL');
+  });
+
+  it('labels a Close-sourced price with its own close date, distinct from a live price', () => {
+    fixture.componentRef.setInput('holdings', [MSFT_CLOSE]);
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('$381.70');
+    expect(text).toContain('Close');
+    expect(text).toContain('Fri 24 Jul');
+
+    const priceCell = fixture.nativeElement.querySelector('.holdings-table__price-source') as HTMLElement | null;
+    expect(priceCell).not.toBeNull();
+  });
+
+  it('renders a live price with no close-date caveat', () => {
+    fixture.componentRef.setInput('holdings', [ANVL_SUBCENT]);
+    fixture.detectChanges();
+
+    const priceCell = fixture.nativeElement.querySelector('.holdings-table__price-source') as HTMLElement | null;
+    expect(priceCell).toBeNull();
   });
 });

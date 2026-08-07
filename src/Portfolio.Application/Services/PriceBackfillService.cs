@@ -20,20 +20,51 @@ public sealed class PriceBackfillService(
     IPortfolioDbContext db,
     IQuoteProviderRouter router,
     IFxRateProvider fxRateProvider,
+    IMarketCalendar calendar,
     TimeProvider timeProvider,
     IOptions<PriceBackfillOptions> options,
     ILogger<PriceBackfillService> logger) : IPriceBackfillService
 {
     private const string ReportingCurrency = "USD";
 
-    public async Task<PriceBackfillSummary> RunAsync(CancellationToken cancellationToken)
+    public async Task<PriceBackfillRunResult> RunIfDueAsync(CancellationToken cancellationToken)
     {
-        var today = DateOnly.FromDateTime(timeProvider.GetUtcNow().UtcDateTime);
+        var now = timeProvider.GetUtcNow();
+
+        // Don't spend a call mid-session — the day's own close is not on the wire yet, and this
+        // would just re-fetch yesterday's, which is already in PriceHistory from the last run.
+        if (calendar.IsOpen(Market.Nyse, now))
+        {
+            return new PriceBackfillRunResult(PriceBackfillOutcome.MarketOpen, null);
+        }
+
+        var today = DateOnly.FromDateTime(now.UtcDateTime);
+        var lastScheduledRunAt = await db.RefreshRuns
+            .Where(r => r.Trigger == RefreshTrigger.BackfillScheduled)
+            .OrderByDescending(r => r.StartedAt)
+            .Select(r => (DateTimeOffset?)r.StartedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (lastScheduledRunAt is { } last && DateOnly.FromDateTime(last.UtcDateTime) == today)
+        {
+            return new PriceBackfillRunResult(PriceBackfillOutcome.AlreadyRanToday, null);
+        }
+
+        var summary = await RunAsync(RefreshTrigger.BackfillScheduled, cancellationToken);
+        return new PriceBackfillRunResult(PriceBackfillOutcome.Completed, summary);
+    }
+
+    public async Task<PriceBackfillSummary> RunAsync(RefreshTrigger trigger, CancellationToken cancellationToken)
+    {
+        var now = timeProvider.GetUtcNow();
+        var today = DateOnly.FromDateTime(now.UtcDateTime);
         var budget = options.Value.MaxProviderCallsPerRun;
         var callsUsed = 0;
 
         var assetsProcessed = new List<string>();
-        var assetsSkipped = new List<string>();
+        var assetsSkippedForBudget = new List<string>();
+        var assetsFailed = new List<AssetBackfillFailure>();
+        var assetsSkippedTodayNotClosed = new List<string>();
         var assetsTruncated = new List<string>();
         var priceHistoryInserted = 0;
         var fxRateInserted = 0;
@@ -64,9 +95,26 @@ public sealed class PriceBackfillService(
                 currenciesNeedingFx.Add(asset.Currency);
             }
 
+            if (from == today)
+            {
+                // The requested range collapses to today alone, and an equity provider cannot
+                // return a daily close for a session that has not finished — Twelve Data returns
+                // HTTP 400 for exactly this, every time, regardless of budget. Short-circuit before
+                // spending a call: raising MaxProviderCallsPerRun would not fix a guaranteed
+                // failure, so this must never be reported as a budget skip (or a failure — it isn't
+                // one, it is simply premature). A later run, once "today" has become a past date,
+                // will pick this asset up with a normal multi-day range.
+                logger.LogInformation(
+                    "Historical price backfill deferred for asset {AssetId} ({Symbol}): earliest trade date is today, no close published yet",
+                    asset.Id,
+                    asset.Symbol);
+                assetsSkippedTodayNotClosed.Add(asset.Symbol);
+                continue;
+            }
+
             if (callsUsed >= budget)
             {
-                assetsSkipped.Add(asset.Symbol);
+                assetsSkippedForBudget.Add(asset.Symbol);
                 continue;
             }
 
@@ -84,7 +132,7 @@ public sealed class PriceBackfillService(
                     "Historical price backfill failed for asset {AssetId} ({Symbol})",
                     asset.Id,
                     asset.Symbol);
-                assetsSkipped.Add(asset.Symbol);
+                assetsFailed.Add(new AssetBackfillFailure(asset.Symbol, ex.Message));
                 continue;
             }
 
@@ -95,7 +143,7 @@ public sealed class PriceBackfillService(
                     asset.Id,
                     asset.Symbol,
                     historyResult.Error);
-                assetsSkipped.Add(asset.Symbol);
+                assetsFailed.Add(new AssetBackfillFailure(asset.Symbol, historyResult.Error ?? "Provider reported failure without a message."));
                 continue;
             }
 
@@ -142,18 +190,26 @@ public sealed class PriceBackfillService(
 
         foreach (var currency in currenciesNeedingFx)
         {
-            if (callsUsed >= budget)
-            {
-                assetsSkipped.Add($"FX:{ReportingCurrency}/{currency}");
-                continue;
-            }
-
             // The earliest date any asset in this currency needs a converted value.
             var from = assets
                 .Where(a => a.Currency == currency && earliestTradeDateByAsset.ContainsKey(a.Id))
                 .Select(a => earliestTradeDateByAsset[a.Id])
                 .DefaultIfEmpty(today)
                 .Min();
+
+            if (from == today)
+            {
+                // Same reasoning as the per-asset guard above: a same-day range cannot succeed, so
+                // do not spend a call finding that out.
+                assetsSkippedTodayNotClosed.Add($"FX:{ReportingCurrency}/{currency}");
+                continue;
+            }
+
+            if (callsUsed >= budget)
+            {
+                assetsSkippedForBudget.Add($"FX:{ReportingCurrency}/{currency}");
+                continue;
+            }
 
             IReadOnlyList<FxRatePoint> fxPoints;
             try
@@ -168,7 +224,7 @@ public sealed class PriceBackfillService(
                     "Historical FX backfill failed for {Base}/{Quote}",
                     ReportingCurrency,
                     currency);
-                assetsSkipped.Add($"FX:{ReportingCurrency}/{currency}");
+                assetsFailed.Add(new AssetBackfillFailure($"FX:{ReportingCurrency}/{currency}", ex.Message));
                 continue;
             }
 
@@ -196,14 +252,65 @@ public sealed class PriceBackfillService(
             }
         }
 
+        // Audit row alongside the quote-refresh RefreshRuns (see RefreshTrigger), so the manual
+        // POST /api/prices/backfill endpoint and the daily scheduled run both leave a durable
+        // record — and so RunIfDueAsync's own "already ran today" check has something to read.
+        db.AddRefreshRun(new RefreshRun
+        {
+            Trigger = trigger,
+            AssetClass = AssetClass.Stock,
+            StartedAt = now,
+            CompletedAt = timeProvider.GetUtcNow(),
+            Success = assetsFailed.Count == 0,
+            ErrorMessage = BuildRunSummary(assetsSkippedForBudget, assetsFailed, assetsSkippedTodayNotClosed, assetsTruncated),
+            SymbolsRefreshed = assetsProcessed.Count,
+        });
+
         await db.SaveChangesAsync(cancellationToken);
 
         return new PriceBackfillSummary(
             assetsProcessed,
-            assetsSkipped,
+            assetsSkippedForBudget,
+            assetsFailed,
+            assetsSkippedTodayNotClosed,
             priceHistoryInserted,
             fxRateInserted,
             callsUsed,
             assetsTruncated);
+    }
+
+    /// <summary>Best-effort backfill has no single pass/fail flag — a skipped or truncated asset
+    /// is not an error, just something worth a human noticing in the audit trail. Kept separated
+    /// by reason, not merged into one bag of strings, for the same reason the summary DTO keeps
+    /// them separate: "budget", "failed", and "today, not closed yet" call for different human
+    /// responses.</summary>
+    private static string? BuildRunSummary(
+        IReadOnlyList<string> skippedForBudget,
+        IReadOnlyList<AssetBackfillFailure> failed,
+        IReadOnlyList<string> skippedTodayNotClosed,
+        IReadOnlyList<string> truncated)
+    {
+        var parts = new List<string>();
+        if (skippedForBudget.Count > 0)
+        {
+            parts.Add($"{skippedForBudget.Count} skipped for budget: {string.Join(", ", skippedForBudget)}");
+        }
+
+        if (failed.Count > 0)
+        {
+            parts.Add($"{failed.Count} failed: {string.Join(", ", failed.Select(f => $"{f.Symbol} ({f.Error})"))}");
+        }
+
+        if (skippedTodayNotClosed.Count > 0)
+        {
+            parts.Add($"{skippedTodayNotClosed.Count} deferred (today not closed yet): {string.Join(", ", skippedTodayNotClosed)}");
+        }
+
+        if (truncated.Count > 0)
+        {
+            parts.Add($"{truncated.Count} truncated: {string.Join(", ", truncated)}");
+        }
+
+        return parts.Count == 0 ? null : string.Join("; ", parts);
     }
 }

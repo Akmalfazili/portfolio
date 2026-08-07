@@ -25,6 +25,9 @@
         <p class="detail__price">{{ q.price | money: q.currency }}</p>
       } @else if (fallbackPrice(); as native) {
         <p class="detail__price">{{ native | money: found.currency }}</p>
+        @if (isCloseSourced()) {
+          <p class="detail__price-source">Close &middot; {{ closeDateLabel() }}</p>
+        }
       } @else {
         <p class="detail__price detail__price--pending">Waiting for a live quote…</p>
       }

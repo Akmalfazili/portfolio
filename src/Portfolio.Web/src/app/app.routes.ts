@@ -32,5 +32,10 @@ export const routes: Routes = [
     path: 'transactions',
     loadComponent: () => import('./features/transactions/transactions.page').then((m) => m.TransactionsPage),
   },
+  {
+    path: 'assets',
+    loadComponent: () =>
+      import('./features/asset-management/asset-management.page').then((m) => m.AssetManagementPage),
+  },
   { path: '**', redirectTo: 'stocks' },
 ];
