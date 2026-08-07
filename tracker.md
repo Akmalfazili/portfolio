@@ -35,8 +35,9 @@ so each session stays focused and its context stays clean.
 | 7 | Angular scaffold + shell | `frontend-angular` | ✅ Done — verified |
 | 8 | Transactions UI | `frontend-angular` | ✅ Done — verified |
 | 9 | Overview + detail pages | `frontend-angular` | ✅ Done — built and wire-verified; no browser driven |
-| 10 | Podman stack | `container-podman` | ⬜ Not started |
-| 11 | End-to-end verification | — | ⬜ Not started |
+| 10 | Podman stack | `container-podman` | ⬜ Not started — **unblocked 2026-08-07** |
+| 12 | Asset management + theme toggle | `backend-dotnet` + `frontend-angular` | ⬜ Not started — **added 2026-08-07** |
+| 11 | End-to-end verification | — | ⬜ Not started — do last |
 
 **Currently active:** none — Phases 1–9 closed out, Phases 6, 8 and 9 on 2026-08-01. Phase 9 was
 **browser-verified on 2026-08-01**, the first rendered-pixel confirmation this app has had, finding
@@ -74,8 +75,16 @@ about half the time.
 > "What was NOT verified" list under Phase 9 before trusting any visual claim about the charts.
 >
 > **Phase 10 became unblocked on 2026-08-07** — Podman 5.8.5 is installed (machine created but
-> stopped). The queued frontend fix pass for **D14–D19** and the backend **D20** work are both
-> independent of it, so they can run in parallel terminals.
+> stopped).
+>
+> ⚠️ **The most consequential open item is D12, and it was mis-scoped until 2026-08-07.** The
+> backfill service has **no caller anywhere in `src/`**, so `PriceHistory` never grows: the
+> cost-vs-market chart and every annual-return figure are frozen at a 5-day window from July while
+> presenting as current. It is also the real prerequisite for **D20**, not D14. Everything else open
+> is cosmetic or additive by comparison.
+>
+> **Phase 12** (asset management + theme toggle) was added the same day — the app can only track the
+> six seeded assets, and has no in-app light/dark toggle despite the tokens being complete.
 
 ---
 
@@ -538,6 +547,33 @@ start it first.
 - [ ] Verified: `podman compose up -d` → all healthy, app loads, SignalR shows status 101
 - [ ] Verified: `down` then `up` preserves data
 
+### ⬜ Phase 12 — Asset management + theme toggle
+
+**Added 2026-08-07**, from questions that surfaced three real gaps rather than one. Independent of
+Phases 10 and 11; nothing blocks it. Do the backend item first — the form should surface the
+provider rules as server validation, not reimplement them client-side.
+
+**`backend-dotnet` — D23:**
+
+- [ ] `AssetService.CreateAsync` requires the provider field matching `QuoteProviderKind`:
+      `ProviderSymbol` for `TwelveData`/`Yahoo`, `ProviderCoinId` for `CoinGecko`. `400` naming the
+      offending field, never a `201` for an asset that can never be priced
+- [ ] Optional, bigger: verify the symbol actually resolves at the provider before accepting it
+- [ ] `PUT`/deactivate for an existing asset (`IsActive` exists on the entity and is set to `true`
+      on create, but nothing ever flips it)
+
+**`frontend-angular` — D24, D25:**
+
+- [ ] Asset management page — list, create, deactivate. The create form encodes the routing table in
+      the **D24 design note**: asset class → provider → which identifier field, with the `.SI`
+      suffix and the CoinGecko-id-not-ticker rules surfaced as help text, not folklore
+- [ ] Warn on the credit cost when adding a Twelve Data symbol (see the design note's ceiling)
+- [ ] **Theme toggle** in the toolbar — writes `data-theme` on `<html>`, persists to `localStorage`,
+      three states (Light / Dark / Follow OS). All the token plumbing already exists and the D16
+      chart-repaint fix has landed, so charts will follow correctly
+- [ ] Verify in a browser that toggling repaints charts *and* that "Follow OS" genuinely returns to
+      the media-query branch rather than pinning the last explicit choice
+
 ### ⬜ Phase 11 — End-to-end verification
 
 - [ ] Enter a fractional crypto buy; confirm it persists and the gain/loss card recalculates
@@ -568,7 +604,7 @@ so the list stays a record and not just a to-do.
 | D9 | ~~Angular CLI's Node check is patched in `node_modules`~~ **Fixed 2026-07-31** — Node upgraded to 22.23.2, patch and `postinstall` hook deleted, pristine CLI gate confirmed restored | 7 | — | — |
 | D10 | **A gated provider vanishes from `PriceRefreshCycleResult.sources`** | 5 | `SourceRefreshOutcome.Attempted` is documented as "false when the source's market was closed", but `RunCycleAsync` records that outcome to the status store and then `continue`s **without adding it to the returned list** — so a closed market yields no entry at all, not an `attempted: false` one. Any client reading the skipped set off `sources` gets nothing; the Phase 7 UI derives it from `nyseOpen`/`sgxOpen` instead, which is authoritative. Not a bug in behaviour, but the DTO's own doc comment describes a shape the API never emits. | Low — either add the gated outcome to `outcomes` or correct the doc comment. A `backend-dotnet` call. |
 | D11 | **`AssetClass` route/query binding is case-sensitive** | 3, 6 | `/api/portfolio/stock/summary` returns **400**; only `/api/portfolio/Stock/summary` binds. Pre-existing, not a Phase 6 regression — `/api/assets?assetClass=stock` 400s on unmodified Phase 3 code too. Route *literals* are case-**in**sensitive, so `/api/portfolio/{Stock,stock}/annual-returns` both work; only the enum-bound segment is fussy. **The safe frontend rule is to send `Stock`/`Crypto` capitalised everywhere** — that form works on every route. Deliberately not special-cased on the new routes alone, which would create exactly the two-encodings-of-one-field drift D7 warns about. | Low — a custom binder or a `[FromRoute]` string parsed case-insensitively, applied to *both* the route and the Phase 3 query parameter together, never just one. |
-| D12 | **Crypto's exclusion from backfill is unit-tested but never observed live** | 6 | `PriceBackfillService` now filters to `AssetClass.Stock`, proven by a unit test (asset skipped, router never consulted, zero rows written). But **no HTTP endpoint triggers a backfill** — true before this phase too — so it has never been watched against a real provider call. | Low, but needs a trigger to exist. Fold into Phase 11. |
+| D12 | **`PriceHistory` is never refreshed — the backfill service has no caller at all** | 4, 6 | **Re-examined 2026-08-07 and it is materially worse than this row previously said.** The original text ("crypto's exclusion is unit-tested but never observed live") described a testing gap. The actual defect is structural: `IPriceBackfillService.RunAsync` is implemented and registered in DI, but **grepping `src/` finds no call site whatsoever** — no endpoint, no background service, no startup hook. `PriceBackfillService` is the *only* writer of `PriceHistory`, so in normal operation **that table never grows**. Confirmed against dev SQLEXPRESS: `PriceHistories` holds 5 rows each for AAPL and Z74 spanning `2026-07-20 → 2026-07-24`, written by a manual Phase 4 test, and unchanged **14 days later**. Consequences, all currently live: the cost-vs-market chart and **all annual returns** read only `PriceHistory`, so they are frozen at that 5-day window forever and silently look "current"; and **D20's recommended last-close fallback would read from this same frozen table**, so it would surface a two-week-old close. Not a rate-limit or market-hours issue — Twelve Data and Yahoo would both serve this data on request; nothing asks. | Low to fix, high value: add a `POST /api/prices/backfill` endpoint (bounded by the existing `MaxProviderCallsPerRun`), and/or run it on a daily schedule after each market's close. **This is now the real prerequisite for D20**, and it independently unblocks D13. A `backend-dotnet` call. |
 | D13 | **Annual returns have only ever run over 5 days of real data** | 6 | Dev SQLEXPRESS holds `PriceHistory` for 2026-07-20→24 only, so the live TWR figure covered one partial week and the union-of-dates timeline never spanned a weekend gap, a year boundary, or two assets with divergent calendars. The *algorithm* is proven by the hand-computed two-year unit test and the cash-flow-alignment tests; the *assembly* of real multi-year inputs is not. | Low — needs a wider backfill or a real holding period. Belongs to Phase 11. |
 | D14 | ~~**The live price is invisible in dark mode on every detail page**~~ **Fixed 2026-08-07 — browser-confirmed at 17.42:1** (was 1.01:1); sidenav/toolbar icons 13.49:1 (were 1.87:1); the full-page contrast sweep now finds **0** elements under 3:1 (was 4). Both root causes addressed: the two missing `--mat-sys-background`/`-on-background` overrides added, and `body { color-scheme: light }` deleted rather than left with a false comment. Kept in full below. | 7, 9 | `.detail__price` renders `rgb(26,27,31)` on `rgb(26,26,25)` — a contrast ratio of **1.01:1**. The 24px live price, the most prominent number on both `/stocks/:symbol` and `/crypto/:symbol`, cannot be read at all in dark mode; it is legible in light mode, which is why no static review caught it. **Root cause is two compounding bugs, and it is not in the Phase 9 component.** (1) `styles.scss`'s `:root` block repoints `--mat-sys-surface`/`-on-surface` but **not `--mat-sys-background`/`-on-background`**, which keep `mat.theme()`'s own `light-dark(#faf9fd, #121316)` / `light-dark(#1a1b1f, #e3e2e6)`. (2) `styles.scss` sets `body { color-scheme: light; }`, which forces every `light-dark()` inside `<body>` to the **light** branch regardless of OS preference — its own comment claims this "is overridden by ui.tokens.scss's own color-scheme rules", and that is **false**: ui.tokens sets `color-scheme` on `:root`/`html`, and `body`'s own declaration wins for body's subtree. `mat-sidenav-container` then paints `color: var(--mat-sys-on-background)` = near-black and that colour **inherits down the entire content tree**. Every element that sets its own colour is unaffected, which is why only the one element that doesn't — `.detail__price` — is visibly broken. Same mechanism dims the sidenav Crypto/Transactions icons and the toolbar refresh icon to **1.87:1** (Phase 7, pre-existing). | Low, but get the diagnosis right: adding a colour to `.detail__price` treats the symptom and leaves the inherited near-black waiting for the next element that omits one. Fix is to add the two missing `--mat-sys-*` overrides and delete or correct the `body { color-scheme: light }` rule. |
 | D15 | ~~**The cost-vs-market chart's two end labels overlap illegibly**~~ **Fixed 2026-08-07 — browser-confirmed** against a deliberately harder case than the original: cost `$4,995.00` vs market `$4,995.30`, **30 cents apart**, where the original finding was nine dollars apart. Collision is detected relative to the visible value range (so it works for a $5 ANVL position and a $50k stock alike) and the labels are nudged 14px apart, greater value on top. Kept in full below. | 9 | When cost basis and market value are close at the right edge — `$689.33` vs `$680.32`, about nine dollars apart on a $700 axis — the two `endLabel`s render on top of each other as an unreadable blob. Predicted by the agent as an open risk; the fallback it named (legend + tooltip) does not rescue the rendered label, and near-equal cost and market value is the *normal* case for a recently-opened position, not an edge case. | Low — offset colliding labels, add leader lines, or drop `endLabel` and rely on the legend. |
@@ -581,6 +617,33 @@ so the list stays a record and not just a to-do.
 
 | D21 | **Stat-tile values break mid-number on the detail page** | 9 | **Found 2026-08-07 by looking at rendered output.** The gain/loss card's tiles render `$4,995.00` across **two lines**, breaking between the `0` and the final `0` — a monetary figure split mid-digit. Measured: the value box is **128.9px** wide with a **32px** font and `overflow-wrap: break-word`, so a 9-character amount cannot fit on one line. The **overview** page's tiles are wider and unaffected — this is the detail page's narrower 4-up grid only. Not caught by the 2026-08-01 pass because its probe amounts were shorter. Real-world trigger is any holding at or above $1,000, i.e. most of them. | Low, but it is a token decision, not a one-liner: either widen `--ui-layout-tile-min-width`, clamp the value font size, or set `overflow-wrap: normal` and let the tile scroll/ellipsize. Breaking a number mid-digit is never right, so `break-word` on a numeric value is the actual defect. A `frontend-angular` call. |
 | D22 | **`transaction-form.dialog.spec.ts` is intermittently failing** | 8 | **Observed 2026-08-07 across four consecutive full runs: 147/147, then 1 failed, then 147/147, then 1 failed** — roughly one run in two. The failing case is *"blocks submit and marks controls touched when required fields are empty"*. Pre-existing and unrelated to the D14–D19 work (nothing in that change set touches transactions); the `frontend-angular` agent independently observed the same flakiness and checked it against a stashed baseline. A suite that fails half the time is a suite nobody will trust, and it will mask a real regression the first time one lands here. | Low–medium — needs diagnosis rather than a retry wrapper. Likely a zoneless-harness timing assumption (the same class of issue as the `whenStable()` deadlock recorded in the Phase 9 handoff), not a genuine app defect. |
+
+| D23 | **`POST /api/assets` will happily create an asset that can never be priced** | 3 | **Found 2026-08-07, answering "what if I want to add my own stocks?"** The endpoint exists and works, but `AssetService.CreateAsync` validates only that `Symbol`, `Name` and a 3-letter `Currency` are present and the symbol is unique. It does **not** check that the provider routing fields are coherent: a `QuoteProviderKind.TwelveData` or `.Yahoo` asset with a null `ProviderSymbol`, or a `.CoinGecko` asset with a null `ProviderCoinId`, is accepted with a `201`. Since `QuoteProviderKind` is the dispatch key, such an asset is **silently unpriceable forever** — it shows *Awaiting price* with no indication that the cause is a malformed record rather than a closed market. Nor is the symbol verified against the provider, so a typo (`APPL` for `AAPL`) produces the same permanent silence. | Low — require the provider field matching the chosen `QuoteProviderKind`, and reject the mismatch with a `400` naming the field. A live symbol-resolution check is a bigger, optional step. `backend-dotnet`. |
+| D24 | **There is no UI for adding an asset — the six seeded ones are all you get** | 7, 8, 9 | **Found 2026-08-07.** `api-routes.ts` exposes `assets` but the frontend only ever `GET`s it, to populate the transaction form's dropdown; there is no create/edit/deactivate screen anywhere. Adding a holding therefore means hand-crafting a `POST /api/assets` with the right `QuoteProviderKind` + provider id — which also means knowing the routing rules that are currently documented only in this file (Twelve Data cannot serve SGX, so SGX symbols need Yahoo with a `.SI` suffix; CoinGecko wants the coin **id** `ethereum`, not the ticker `ETH`). For a single-user personal tracker that is a real ceiling on usefulness, not a cosmetic gap. | Medium — a form plus an asset-management page. Worth doing **after** D23, so the UI can surface the provider rules as validation rather than reimplementing them client-side. See the design note below. |
+| D25 | **No in-app light/dark toggle — the app follows the OS only** | 7 | **Found 2026-08-07.** All the plumbing exists and is complete: `ui.tokens.scss` defines `:root[data-theme='dark']` / `[data-theme='light']` overrides that beat the OS preference **in both directions**, and as of the D16 fix `chart-theme.ts` actively listens for `[data-theme]` changes via `MutationObserver` and repaints. But **nothing in the app ever sets the attribute** — grepping the whole `src/app` tree finds `data-theme` only in stylesheets and in the listener. It was only reachable during verification by setting it from devtools by hand. So the design system's most visible affordance is built, tested, and unreachable. | Low — a toolbar toggle writing `data-theme` on `<html>` and persisting to `localStorage`, with "follow OS" as a third state. The D16 fix was the hard prerequisite and it has landed, so the toggle will not look broken. `frontend-angular`. |
+
+### D24 design note — the provider rules a "add your own asset" form has to encode
+
+These are already established elsewhere in this file; collected here because an asset form is exactly
+where getting them wrong becomes a permanently unpriceable holding (**D23**).
+
+| Asset | `QuoteProviderKind` | Identifier field | Format |
+|---|---|---|---|
+| US equity | `TwelveData` | `ProviderSymbol` | Plain ticker — `AAPL` |
+| SGX equity | `Yahoo` | `ProviderSymbol` | **`.SI` suffix** — `Z74.SI`. Twelve Data's free tier **cannot** serve SGX at all |
+| Crypto | `CoinGecko` | `ProviderCoinId` | CoinGecko **id**, not ticker — `ethereum`, not `ETH` |
+
+Three further constraints worth stating before someone adds twenty symbols:
+
+- **Every Twelve Data symbol costs a credit per refresh cycle**, against 800/day. At the 5-minute
+  open-market cadence a single US symbol is ~78 credits over a 6.5-hour session, so the practical
+  ceiling is well under ten US stocks before the budget needs rethinking. Yahoo and CoinGecko are
+  unmetered.
+- **A new asset has no `PriceHistory`**, so its chart and its contribution to annual returns are
+  empty until a backfill runs — which, per **D12**, currently never happens.
+- **Currency matters**: transactions are stored natively and converted at each date's stored FX
+  rate. A new non-USD asset needs its pair covered by `TwelveDataFxProvider`, which today handles
+  USD/SGD only.
 
 ### D20 design note — decide this before writing code
 
@@ -611,13 +674,32 @@ Whichever is chosen, the UI must **distinguish the two states** rather than show
 sets a colour while `.detail__price` does not, so the fallback state is currently *legible* and the
 priced state is not; fix D14 first or the new close price will render invisible in dark mode.
 
+**Does a last-close fallback change the yearly returns? No — and the reason matters.** Asked
+2026-08-07, and checked in the code rather than assumed: `PortfolioPerformanceService` reads
+**`PriceHistories` only**, for both the cost-vs-market series and `annual-returns`. It never touches
+`PriceQuotes`. So a read-time fallback in the summary/allocation assembly is invisible to TWR by
+construction — it changes what the *tiles and holdings rows* say, not what the charts compute.
+
+**A closed market is also not, in itself, a problem for TWR.** The calculator links sub-periods
+geometrically across gaps and attributes each cash flow to the first valuation on or after its date
+(Phase 6), so a weekend or holiday with no stored close is handled correctly — you simply have one
+fewer valuation.
+
+What *does* damage yearly returns is **D12**: because nothing ever calls the backfill,
+`PriceHistory` stops at whatever was last written, so annual returns are computed over a frozen
+window and keep reporting a stale figure that looks current. Confirmed live — dev history ends
+`2026-07-24` while the date is `2026-08-07`. **Fix D12 and the yearly-return staleness goes away on
+its own; fix D20 alone and it does not.**
+
 Two limits worth knowing before estimating this:
 
 - **`PriceHistory` only exists for assets that have been backfilled**, which runs from an asset's
   first trade date. Held stocks have it (AAPL and Z74 have 5 rows each); MSFT, which has no
-  transactions, has **zero**. That is the right shape for a portfolio view — but see **D12**: *no
-  HTTP endpoint triggers a backfill*, so history can be arbitrarily stale, and the fallback is only
-  as fresh as the last backfill run. Closing D12 is arguably a prerequisite.
+  transactions, has **zero**. That is the right shape for a portfolio view — but see **D12**, whose
+  severity was corrected on 2026-08-07: the backfill has **no caller at all**, so history is not
+  merely "arbitrarily stale", it is frozen at `2026-07-24` and will never advance. A last-close
+  fallback built on it today would surface a two-week-old close. **Closing D12 is no longer
+  "arguably" a prerequisite — it is one.**
 - **Crypto has no `PriceHistory` at all, by decision, and needs none** — CoinGecko is unmetered and
   never gated, so a crypto quote is always live. This is a stocks-only concern.
 
@@ -921,15 +1003,77 @@ Tick a box only for something you have personally seen pass, say plainly what yo
 not verify, then append to the handoff log, write the next session prompt, and commit.
 ```
 
-**Also queued — `backend-dotnet`: D20, show the last close when the market is closed.** Its D14
-prerequisite is now **met**, so the recovered price will render legibly. **Read the D20 design note
-under the drawback register before starting** — the obvious implementation (writing a `PriceQuote`
-from the last close) repeats the D4 mistake of making a stale price look current. The recommended
-read-time fallback is spelled out there, along with its remaining prerequisite (**D12**). Closing
-D20 also largely closes **D17**.
+**Highest value — `backend-dotnet`: D12 then D20, in that order.** This ordering was corrected on
+2026-08-07 after four questions were investigated (see the Q&A note below). D14 is no longer the
+blocker on D20; **D12 is**, and D12 turns out to be the single most consequential open item in the
+project. Paste:
+
+```
+Read tracker.md, then the D12 row and the D20 design note. Use the backend-dotnet agent.
+
+Do D12 FIRST. It is not the testing gap the row used to describe. IPriceBackfillService
+.RunAsync is implemented and registered in DI but has NO CALLER anywhere in src/ — no
+endpoint, no background service, no startup hook. PriceBackfillService is the only writer
+of PriceHistory, so that table never grows. Confirmed against dev SQLEXPRESS: history
+ends 2026-07-24 and the date is 2026-08-07.
+
+That single gap is why the cost-vs-market chart and ALL annual returns are frozen at a
+5-day window while looking current, and it is why D20's last-close fallback would serve
+a two-week-old close. Add a bounded trigger (POST /api/prices/backfill, respecting the
+existing MaxProviderCallsPerRun) and/or a daily post-close schedule.
+
+Mind the budget: every Twelve Data symbol costs a credit and the free tier is 800/day.
+Backfill is idempotent against the unique indexes, so re-running is safe and is how a
+budget-truncated run resumes — but a naive "backfill everything from first trade date"
+on a wide portfolio can burn the day's budget in one call. Check the market calendar
+before spending credits, as everywhere else in this codebase.
+
+THEN D20. The recommended read-time fallback is spelled out in its design note — do not
+write a PriceQuote row from the last close, which repeats D4's mistake of making a stale
+price look current. Carry the close's own date into priceAsOf and add a discriminator so
+the API stays honest about what it handed back.
+
+Note what D20 does NOT affect, already checked in the code so you need not re-derive it:
+PortfolioPerformanceService reads PriceHistories only and never touches PriceQuotes, so
+the fallback is invisible to TWR by construction. It changes the tiles and holdings rows,
+not the charts.
+
+Closing D20 also largely closes D17.
+
+Tick a box only for something you have personally seen pass, say plainly what you did not
+verify, then append to the handoff log, write the next session prompt, and commit.
+```
+
+**Also ready — Phase 12 (asset management + theme toggle)**, added 2026-08-07 from the same round of
+questions. Three gaps: **D23** (the API accepts an asset that can never be priced), **D24** (no UI
+for adding assets at all — the six seeded ones are all you get), **D25** (no light/dark toggle,
+though every token and the D16 chart-repaint listener are already in place). Do D23 before D24 so
+the form validates server-side rather than reimplementing the provider rules. See the **D24 design
+note** for the routing table any asset form has to encode.
 
 **Small and unowned:** **D21** (money breaking mid-digit in the detail tiles — a token decision, see
 the row) and **D22** (a test failing about one run in two). Both `frontend-angular`.
+
+### Q&A note — four questions asked 2026-08-07, and what investigating them turned up
+
+Recorded because two of the four changed the project's priorities, and one corrected a claim in this
+file.
+
+1. **"Can we show the last close when the market is closed?"** Yes — that is **D20**, already
+   designed, and AAPL's `333.019989` for 2026-07-24 is on disk right now. But investigating it
+   promoted **D12** from a testing gap to a hard prerequisite: the table D20 would read from is
+   never updated.
+2. **"How does that affect yearly returns?"** It does not — checked in the code, not assumed.
+   Performance and annual returns read `PriceHistories` only and never `PriceQuotes`, so a
+   summary-level fallback is invisible to TWR. A closed market is likewise fine for TWR, which links
+   sub-periods across gaps by design. **The thing that actually damages yearly returns is D12**, and
+   fixing D12 fixes it without touching the calculator.
+3. **"What if I want stocks/crypto outside the seeded list?"** The backend endpoint exists, but the
+   frontend has no UI for it (**D24**) and the endpoint will accept a permanently unpriceable asset
+   (**D23**). Became Phase 12.
+4. **"Where is the light/dark toggle?"** There is none (**D25**). Every token and, since the D16
+   fix, the chart repaint listener are in place — nothing ever sets the attribute. During
+   verification it was only reachable from devtools by hand.
 
 <details>
 <summary>D14–D19 fix prompt — completed 2026-08-07, kept for reference</summary>
