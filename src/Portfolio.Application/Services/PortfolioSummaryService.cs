@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Portfolio.Application.Abstractions;
 using Portfolio.Application.Dtos;
 using Portfolio.Application.Services.Calculators;
+using Portfolio.Application.Services.Calendar;
 using Portfolio.Domain.Entities;
 using Portfolio.Domain.Enums;
 
@@ -9,7 +10,10 @@ namespace Portfolio.Application.Services;
 
 /// <summary>See <see cref="IPortfolioSummaryService"/>.</summary>
 public sealed class PortfolioSummaryService(
-    IPortfolioDbContext db, TimeProvider timeProvider, ICostBasisCalculator costBasisCalculator)
+    IPortfolioDbContext db,
+    TimeProvider timeProvider,
+    ICostBasisCalculator costBasisCalculator,
+    IMarketCalendar calendar)
     : IPortfolioSummaryService
 {
     private const string ReportingCurrency = CostBasisTransactionFactory.ReportingCurrency;
@@ -52,15 +56,24 @@ public sealed class PortfolioSummaryService(
                 h.Symbol,
                 h.Name,
                 h.MarketValueUsd,
-                total > 0m ? DisplayRounding.Percent(h.MarketValueUsd / total * 100m) : 0m))
+                total > 0m ? DisplayRounding.Percent(h.MarketValueUsd / total * 100m) : 0m,
+                // D17 residual. Note this is the same PriceSource null-check the summary uses, on
+                // the same holdings built by the same BuildHoldingsAsync — so the pie and the
+                // tiles can never disagree about which holdings are unpriced.
+                h.PriceSource is not null))
             .ToList();
 
-        return new PortfolioAllocationDto(assetClass, total, items);
+        return new PortfolioAllocationDto(
+            assetClass,
+            total,
+            items,
+            items.Count(i => !i.HasPrice));
     }
 
     private async Task<IReadOnlyList<HoldingDto>> BuildHoldingsAsync(AssetClass assetClass, CancellationToken cancellationToken)
     {
-        var today = DateOnly.FromDateTime(timeProvider.GetUtcNow().UtcDateTime);
+        var now = timeProvider.GetUtcNow();
+        var today = DateOnly.FromDateTime(now.UtcDateTime);
 
         var assets = await db.Assets
             .Where(a => a.AssetClass == assetClass)
@@ -120,15 +133,45 @@ public sealed class PortfolioSummaryService(
             PriceSource? priceSource = null;
             var marketValueUsd = 0m;
 
-            if (quote is not null)
+            // D4: a stored quote is only "live" if it belongs to the current trading session. See
+            // IsQuoteLive — a quote from an earlier session is a close, and is reported as one.
+            var quoteIsLive = quote is not null && IsQuoteLive(asset, quote.AsOf, now);
+
+            // D4: a quote that is NOT live is still a real price, and is usually newer than the
+            // last backfilled close (backfill runs daily; quotes go stale within hours). Treat it
+            // as another close candidate rather than discarding it, and let the newer of the two
+            // win, so falling back never shows an older number than the one already on hand.
+            var staleQuoteDate = !quoteIsLive && quote is not null
+                ? DateOnly.FromDateTime(quote.AsOf.UtcDateTime)
+                : (DateOnly?)null;
+            var useStaleQuoteAsClose = staleQuoteDate is { } sqd
+                && (lastClose is null || sqd >= lastClose.Date);
+
+            if (quoteIsLive)
             {
                 var todayRate = asset.Currency == ReportingCurrency
                     ? 1m
                     : FxRateResolver.Resolve(fxRates, today);
-                currentPriceNative = quote.Price;
+                currentPriceNative = quote!.Price;
                 currentPriceUsd = quote.Price / todayRate;
                 priceAsOf = quote.AsOf;
                 priceSource = PriceSource.Live;
+                marketValueUsd = finalStep.QuantityHeld * currentPriceUsd.Value;
+            }
+            else if (useStaleQuoteAsClose && (asset.Currency == ReportingCurrency || fxRates.Count > 0))
+            {
+                // D4: the price Yahoo/Twelve Data handed us, from a session that has already
+                // ended. Converted at that session's own FX rate, not today's — the same rule the
+                // PriceHistory branch below follows, and the reason this cannot just fall through
+                // to the Live branch with a different label.
+                var quoteDate = staleQuoteDate!.Value;
+                var quoteRate = asset.Currency == ReportingCurrency
+                    ? 1m
+                    : FxRateResolver.Resolve(fxRates, quoteDate);
+                currentPriceNative = quote!.Price;
+                currentPriceUsd = quote.Price / quoteRate;
+                priceAsOf = quote.AsOf;
+                priceSource = PriceSource.Close;
                 marketValueUsd = finalStep.QuantityHeld * currentPriceUsd.Value;
             }
             else if (lastClose is not null && (asset.Currency == ReportingCurrency || fxRates.Count > 0))
@@ -186,6 +229,11 @@ public sealed class PortfolioSummaryService(
 
         return holdings;
     }
+
+    /// <summary>D4 — see <see cref="QuoteFreshness"/>, which owns this rule so the read path here
+    /// and the SignalR broadcast path in <c>PriceRefreshService</c> cannot drift apart.</summary>
+    private bool IsQuoteLive(Asset asset, DateTimeOffset quoteAsOf, DateTimeOffset now) =>
+        QuoteFreshness.Classify(calendar, asset.QuoteProviderKind, quoteAsOf, now) == PriceSource.Live;
 
     private async Task<Dictionary<string, List<FxRate>>> LoadFxRatesAsync(
         List<Asset> assets, IEnumerable<int> assetIdsWithTransactions, CancellationToken cancellationToken)

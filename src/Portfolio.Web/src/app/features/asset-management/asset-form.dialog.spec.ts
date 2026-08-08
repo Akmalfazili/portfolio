@@ -19,6 +19,8 @@ const CREATED: AssetDto = {
   providerSymbol: 'GOOGL',
   providerCoinId: null,
   isActive: true,
+  createdAt: '2026-08-08T12:00:00+00:00',
+  hasEverBeenPriced: false,
 };
 
 describe('AssetFormDialog', () => {

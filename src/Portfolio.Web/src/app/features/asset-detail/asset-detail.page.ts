@@ -94,16 +94,28 @@ export class AssetDetailPage {
   });
 
   /**
-   * D20 — a genuine SignalR push (`quote()`) is always live. The fallback
-   * snapshot price, by contrast, may itself be a read-time fallback to the
-   * last stored CLOSE rather than a live quote (market closed, no
-   * `PriceQuote` yet) — that case must render distinctly, labelled with the
-   * close's own date via `priceAsOf`, never presented as if it were fresh.
+   * D20 — a price that is really the last stored CLOSE must render distinctly,
+   * labelled with the close's own date, never presented as if it were fresh.
+   *
+   * D4 corrected the original version of this, which read `quote() === undefined
+   * && ...` on the stated reasoning that "a genuine SignalR push is always live".
+   * That was false, and false in exactly the case D4 is about: on an unmodelled
+   * SGX lunar holiday the refresh service polls anyway, Yahoo returns the
+   * previous session's close, and it is pushed over the hub like any other tick.
+   * A push therefore *overrode* the honest label rather than confirming it —
+   * making this the one place the stale price still read as live.
+   *
+   * Both sources now answer the same question the same way, and whichever is
+   * being displayed is the one asked.
    */
-  readonly isCloseSourced = computed(() => this.quote() === undefined && this.holding()?.priceSource === 'Close');
+  readonly isCloseSourced = computed(() => {
+    const pushed = this.quote();
+    return pushed ? pushed.source === 'Close' : this.holding()?.priceSource === 'Close';
+  });
 
+  /** The as-of instant belonging to whichever price is actually on screen. */
   readonly closeDateLabel = computed(() => {
-    const asOf = this.holding()?.priceAsOf;
+    const asOf = this.quote()?.asOf ?? this.holding()?.priceAsOf;
     return asOf ? formatCloseDate(asOf) : '';
   });
 

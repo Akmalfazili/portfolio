@@ -39,10 +39,18 @@ const STOCK_SUMMARY: PortfolioSummaryDto = {
   ],
 };
 
+/**
+ * The D17 case, as the live API really sends it: AAPL has a real cost basis but
+ * no price from any source, so its market value is 0 because the value is
+ * UNKNOWN — not because the position is worthless.
+ */
 const STOCK_ALLOCATION: PortfolioAllocationDto = {
   assetClass: 'Stock',
   totalMarketValueUsd: 0,
-  items: [{ assetId: 1, symbol: 'AAPL', name: 'Apple Inc.', marketValueUsd: 0, percentageOfTotal: 0 }],
+  items: [
+    { assetId: 1, symbol: 'AAPL', name: 'Apple Inc.', marketValueUsd: 0, percentageOfTotal: 0, hasPrice: false },
+  ],
+  unpricedHoldingsCount: 1,
 };
 
 const ANNUAL_RETURNS: AnnualReturnsDto = { years: [{ year: 2026, timeWeightedReturnPercent: 1.7775 }] };

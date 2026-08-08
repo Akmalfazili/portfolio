@@ -1,6 +1,6 @@
-using System.Text.Json.Serialization;
 using Portfolio.Api.Endpoints;
 using Portfolio.Api.Hubs;
+using Portfolio.Api.Serialization;
 using Portfolio.Application;
 using Portfolio.Application.Abstractions;
 using Portfolio.Infrastructure;
@@ -12,22 +12,17 @@ builder.Services.AddProblemDetails();
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddApplication();
 
-// SignalR has its own protocol serializer — it does NOT inherit ConfigureHttpJsonOptions below,
-// which only configures the minimal-API response serializer. Without this, enums cross the hub
-// as raw ints ("source":0) while the REST API sends them as names ("source":"TwelveData"), the
-// same field encoded two different ways in payloads the frontend has to merge. Register the same
-// JsonStringEnumConverter here so the hub matches REST.
+// D7: both JSON serializers this process runs are built from ONE definition. SignalR does not
+// inherit ConfigureHttpJsonOptions — it has an entirely separate serializer — so these two calls
+// are the only places the contract is applied, and PortfolioJsonSerialization.Apply is the only
+// place it is decided. JsonSerializationParityTests asserts the two produce byte-identical JSON.
 builder.Services.AddSignalR()
-    .AddJsonProtocol(options =>
-        options.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
+    .AddJsonProtocol(options => PortfolioJsonSerialization.Apply(options.PayloadSerializerOptions));
 // SignalR is the only place IPriceUpdateBroadcaster is implemented — Portfolio.Application only
 // ever sees the interface, never a SignalR type.
 builder.Services.AddSingleton<IPriceUpdateBroadcaster, SignalRPriceBroadcaster>();
 
-// Enums serialize as their names ("Buy", "Crypto", ...) rather than raw ints — much friendlier
-// for API consumers than a magic number that silently drifts if the enum is reordered.
-builder.Services.ConfigureHttpJsonOptions(options =>
-    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
+builder.Services.ConfigureHttpJsonOptions(options => PortfolioJsonSerialization.Apply(options.SerializerOptions));
 
 var app = builder.Build();
 

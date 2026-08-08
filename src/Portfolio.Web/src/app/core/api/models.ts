@@ -40,6 +40,27 @@ export interface AssetDto {
   providerSymbol: string | null;
   providerCoinId: string | null;
   isActive: boolean;
+
+  /** When the asset was added. Pairs with `hasEverBeenPriced` — see below. */
+  createdAt: string;
+
+  /**
+   * D27 — false when no source has ever produced a price for this asset:
+   * neither a live quote nor a single backfilled close.
+   *
+   * The gap it covers: `POST /api/assets` rejects a *malformed* record (D23),
+   * but cannot cheaply reject a **well-formed but wrong** one — `APPL` for
+   * `AAPL`, or a CoinGecko id that does not exist — because checking means
+   * calling the provider, which costs a credit per creation. Such an asset is
+   * accepted and then shows "Awaiting price" forever, indistinguishable from a
+   * closed market.
+   *
+   * Read it together with `createdAt`: minutes of silence is normal (no refresh
+   * cycle has run), days of it means the identifier is probably wrong. It is a
+   * hint pointing at the record, not proof the record is invalid — a delisted
+   * symbol looks identical.
+   */
+  hasEverBeenPriced: boolean;
 }
 
 /**
@@ -96,13 +117,25 @@ export interface CreateTransactionRequest {
 
 export type UpdateTransactionRequest = CreateTransactionRequest;
 
-/** SignalR "QuoteUpdated" payload. */
+/**
+ * SignalR "QuoteUpdated" payload.
+ *
+ * D4 — `source` is not decoration. A pushed quote is *freshly fetched*, which
+ * is not the same as *fresh*: the refresh service polls whenever its calendar
+ * believes a market is open, and on an unmodelled SGX lunar holiday that belief
+ * is wrong, so Yahoo answers with the previous session's close and it arrives
+ * here looking exactly like a live tick. The backend classifies it (same rule,
+ * same code path as `HoldingDto.priceSource`) precisely so the browser does not
+ * have to reimplement exchange-session arithmetic to tell the difference.
+ * Never assume a push is live because it arrived.
+ */
 export interface QuoteUpdateNotification {
   assetId: number;
   symbol: string;
   price: number;
   currency: string;
   asOf: string;
+  source: Exclude<PriceSource, null>;
 }
 
 export interface SourceRefreshStatus {
@@ -223,12 +256,31 @@ export interface AllocationItemDto {
   name: string;
   marketValueUsd: number;
   percentageOfTotal: number;
+
+  /**
+   * D17 residual — false when this holding has no price from any source, so
+   * `marketValueUsd` is 0 because the value is *unknown*, not because the
+   * position is worthless. Render those two cases differently: a `0.0%` that
+   * means ignorance must not look like a `0.0%` that means a tiny position.
+   *
+   * Only meaningful for the market-value pie. Cost basis is known for every
+   * holding, so a cost-basis allocation has nothing to caveat.
+   */
+  hasPrice: boolean;
 }
 
 export interface PortfolioAllocationDto {
   assetClass: AssetClass;
   totalMarketValueUsd: number;
   items: AllocationItemDto[];
+
+  /**
+   * D17 residual — how many `items` have `hasPrice: false`. Carried on the
+   * allocation payload itself, not just the summary's own
+   * `unpricedHoldingsCount`, so a caller that fetches only this endpoint can
+   * still tell that the pie is partial without a second request.
+   */
+  unpricedHoldingsCount: number;
 }
 
 /**

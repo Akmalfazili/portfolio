@@ -3,13 +3,18 @@ using Microsoft.EntityFrameworkCore;
 using Portfolio.Application.Common;
 using Portfolio.Application.Dtos;
 using Portfolio.Application.Services;
+using Portfolio.Domain.Entities;
 using Portfolio.Domain.Enums;
 using Portfolio.Infrastructure.Persistence;
+using Portfolio.UnitTests.TestSupport;
 
 namespace Portfolio.UnitTests.Services;
 
 public sealed class AssetServiceTests : IDisposable
 {
+    /// <summary>Fixed so D27's <c>CreatedAt</c> stamp is assertable rather than "roughly now".</summary>
+    private static readonly DateTimeOffset Now = new(2026, 8, 8, 12, 0, 0, TimeSpan.Zero);
+
     private readonly PortfolioDbContext _db;
     private readonly AssetService _sut;
 
@@ -20,7 +25,7 @@ public sealed class AssetServiceTests : IDisposable
             .Options;
 
         _db = new PortfolioDbContext(options);
-        _sut = new AssetService(_db);
+        _sut = new AssetService(_db, new FixedTimeProvider(Now));
     }
 
     public void Dispose() => _db.Dispose();
@@ -108,6 +113,100 @@ public sealed class AssetServiceTests : IDisposable
         var result = await _sut.CreateAsync(request, CancellationToken.None);
 
         result.IsSuccess.Should().BeTrue();
+    }
+
+    // --- D27: distinguishing "your record is wrong" from "the market is closed", without
+    // spending a provider credit to do it.
+
+    [Fact]
+    public async Task CreateAsync_StampsCreatedAt_AndReportsNotYetPriced()
+    {
+        var request = new CreateAssetRequest("APPL", "Apple (typo'd)", AssetClass.Stock, "NASDAQ", "USD", QuoteProviderKind.TwelveData, "APPL", null);
+
+        var result = await _sut.CreateAsync(request, CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.CreatedAt.Should().Be(Now);
+        result.Value.HasEverBeenPriced.Should().BeFalse(
+            "nothing has had a chance to price it yet — this is the benign case the UI must not "
+            + "confuse with a wrong symbol");
+    }
+
+    /// <summary>
+    /// The D27 case itself: a well-formed but wrong symbol that D23 cannot reject. It is accepted,
+    /// and stays unpriced forever — so the flag that says so is the only signal pointing at the
+    /// record rather than at the market.
+    /// </summary>
+    [Fact]
+    public async Task ListAsync_AssetThatNoSourceHasEverPriced_ReportsHasEverBeenPricedFalse()
+    {
+        await _sut.CreateAsync(
+            new CreateAssetRequest("APPL", "Apple (typo'd)", AssetClass.Stock, "NASDAQ", "USD", QuoteProviderKind.TwelveData, "APPL", null),
+            CancellationToken.None);
+
+        var assets = await _sut.ListAsync(null, CancellationToken.None);
+
+        assets.Should().ContainSingle().Which.HasEverBeenPriced.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ListAsync_AssetWithALiveQuote_ReportsHasEverBeenPricedTrue()
+    {
+        var created = await _sut.CreateAsync(
+            new CreateAssetRequest("AAPL", "Apple Inc.", AssetClass.Stock, "NASDAQ", "USD", QuoteProviderKind.TwelveData, "AAPL", null),
+            CancellationToken.None);
+        _db.PriceQuotes.Add(new PriceQuote
+        {
+            AssetId = created.Value!.Id, Price = 333.02m, Currency = "USD", AsOf = Now,
+        });
+        await _db.SaveChangesAsync();
+
+        var assets = await _sut.ListAsync(null, CancellationToken.None);
+
+        assets.Should().ContainSingle().Which.HasEverBeenPriced.Should().BeTrue();
+    }
+
+    /// <summary>
+    /// PriceHistory counts too. A backfilled stock outside market hours has no <c>PriceQuote</c>
+    /// at all — treating that as "never priced" would fire the D27 hint at every US stock every
+    /// weekend, which is exactly the false alarm that would train the user to ignore it.
+    /// </summary>
+    [Fact]
+    public async Task ListAsync_AssetWithOnlyBackfilledHistory_ReportsHasEverBeenPricedTrue()
+    {
+        var created = await _sut.CreateAsync(
+            new CreateAssetRequest("AAPL", "Apple Inc.", AssetClass.Stock, "NASDAQ", "USD", QuoteProviderKind.TwelveData, "AAPL", null),
+            CancellationToken.None);
+        _db.PriceHistories.Add(new PriceHistory
+        {
+            AssetId = created.Value!.Id, Date = new DateOnly(2026, 7, 24), Close = 333.02m, Currency = "USD",
+        });
+        await _db.SaveChangesAsync();
+
+        var assets = await _sut.ListAsync(null, CancellationToken.None);
+
+        assets.Should().ContainSingle().Which.HasEverBeenPriced.Should().BeTrue();
+    }
+
+    /// <summary>
+    /// Renaming or deactivating an asset must not reset the clock — the whole value of the hint is
+    /// that it measures how long the silence has lasted.
+    /// </summary>
+    [Fact]
+    public async Task UpdateAsync_DoesNotResetCreatedAt()
+    {
+        var created = await _sut.CreateAsync(
+            new CreateAssetRequest("APPL", "Apple (typo'd)", AssetClass.Stock, "NASDAQ", "USD", QuoteProviderKind.TwelveData, "APPL", null),
+            CancellationToken.None);
+        var id = created.Value!.Id;
+
+        var updated = await _sut.UpdateAsync(
+            id,
+            new UpdateAssetRequest("APPL", "Apple (renamed)", AssetClass.Stock, "NASDAQ", "USD", QuoteProviderKind.TwelveData, "APPL", null, false),
+            CancellationToken.None);
+
+        updated.Value!.CreatedAt.Should().Be(Now);
+        updated.Value.HasEverBeenPriced.Should().BeFalse();
     }
 
     // --- UpdateAsync / deactivate (Phase 12)

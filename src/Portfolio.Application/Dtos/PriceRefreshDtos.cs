@@ -56,13 +56,24 @@ public sealed record PriceRefreshCycleResult(
     IReadOnlyList<SourceRefreshOutcome> Sources,
     int TotalSymbolsRefreshed);
 
-/// <summary>One asset's freshly fetched quote, broadcast to connected clients over SignalR.</summary>
+/// <summary>
+/// One asset's freshly fetched quote, broadcast to connected clients over SignalR.
+///
+/// <para><b>"Freshly fetched" is not the same as "fresh" (D4).</b> The refresh service polls
+/// whenever its calendar believes a market is open, and on an unmodelled SGX lunar holiday that
+/// belief is wrong: Yahoo answers with the previous session's close and this notification carries
+/// it. The client cannot tell from <see cref="Price"/> and <see cref="AsOf"/> alone without
+/// reimplementing exchange-session arithmetic in the browser, so <see cref="Source"/> carries the
+/// backend's verdict — the same one <c>PortfolioSummaryService</c> puts on <c>HoldingDto</c>, from
+/// the same <c>QuoteFreshness</c> rule.</para>
+/// </summary>
 public sealed record QuoteUpdateNotification(
     int AssetId,
     string Symbol,
     decimal Price,
     string Currency,
-    DateTimeOffset AsOf);
+    DateTimeOffset AsOf,
+    PriceSource Source);
 
 /// <summary>Point-in-time status of one provider, for the "last refreshed" UI indicator.</summary>
 public sealed record SourceRefreshStatus(

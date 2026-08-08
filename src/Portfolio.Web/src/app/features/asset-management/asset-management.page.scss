@@ -99,6 +99,34 @@
   color: var(--ui-color-on-surface-muted);
 }
 
+/* D27 — reads as a footnote to the identifier above it, not as a second value. */
+.asset-management__price-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-1);
+  margin-top: var(--ui-space-1);
+  font-size: var(--ui-font-size-xs);
+  color: var(--ui-color-on-surface-muted);
+
+  mat-icon {
+    flex: none;
+    width: var(--ui-size-icon-xs);
+    height: var(--ui-size-icon-xs);
+    font-size: var(--ui-size-icon-xs);
+  }
+}
+
+/* Past the provider's threshold. Same amber as every other "this is not what it
+   looks like" signal in the app (the `Close ·` caption, the unpriced-holdings
+   banner) — a new colour here would imply a new category of problem. */
+.asset-management__price-hint--suspicious {
+  color: var(--ui-color-status-warning);
+
+  mat-icon {
+    color: var(--ui-color-status-warning);
+  }
+}
+
 .asset-management__actions-header {
   text-align: right;
 }

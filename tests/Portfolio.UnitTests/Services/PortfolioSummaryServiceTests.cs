@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Portfolio.Application.Dtos;
 using Portfolio.Application.Services;
 using Portfolio.Application.Services.Calculators;
+using Portfolio.Application.Services.Calendar;
 using Portfolio.Domain.Entities;
 using Portfolio.Domain.Enums;
 using Portfolio.Infrastructure.Persistence;
@@ -17,6 +18,18 @@ namespace Portfolio.UnitTests.Services;
 /// </summary>
 public sealed class PortfolioSummaryServiceTests : IDisposable
 {
+    /// <summary>
+    /// "Now" for every test here: Monday 2026-02-02, 15:00 UTC — which is 10:00 ET, inside the
+    /// NYSE session. Deliberately after the only stored FX rate, so the carry-forward path is
+    /// exercised for the live quote too and not only for historical legs.
+    ///
+    /// <para>D4 made the choice of instant load-bearing. A stored quote now only counts as
+    /// <see cref="PriceSource.Live"/> if it belongs to the current trading session, so a fixture
+    /// frozen on a Sunday (as this one was) would classify every quote below as a stale close and
+    /// quietly stop testing the live path at all.</para>
+    /// </summary>
+    private static readonly DateTimeOffset NyseSessionNow = new(2026, 2, 2, 15, 0, 0, TimeSpan.Zero);
+
     private readonly PortfolioDbContext _db;
     private readonly PortfolioSummaryService _sut;
     private readonly FixedTimeProvider _timeProvider;
@@ -28,10 +41,11 @@ public sealed class PortfolioSummaryServiceTests : IDisposable
             .Options;
         _db = new PortfolioDbContext(options);
 
-        // "Today" for market-value conversion, deliberately after the only stored FX rate so the
-        // carry-forward path is exercised for the live quote too, not only historical legs.
-        _timeProvider = new FixedTimeProvider(new DateTimeOffset(2026, 2, 1, 0, 0, 0, TimeSpan.Zero));
-        _sut = new PortfolioSummaryService(_db, _timeProvider, new AverageCostCalculator());
+        _timeProvider = new FixedTimeProvider(NyseSessionNow);
+        // The real calendar, not a stub: D4's classification depends on genuine exchange-local
+        // date arithmetic and real session hours, and a stub would only assert this test's own
+        // assumptions back at it.
+        _sut = new PortfolioSummaryService(_db, _timeProvider, new AverageCostCalculator(), new MarketCalendar());
     }
 
     public void Dispose() => _db.Dispose();
@@ -60,7 +74,7 @@ public sealed class PortfolioSummaryServiceTests : IDisposable
             AssetId = aapl.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
             Quantity = 10m, PricePerUnit = 100m, Fees = 5m, Currency = "USD",
         });
-        _db.PriceQuotes.Add(new PriceQuote { AssetId = aapl.Id, Price = 120m, Currency = "USD", AsOf = DateTimeOffset.UtcNow });
+        _db.PriceQuotes.Add(new PriceQuote { AssetId = aapl.Id, Price = 120m, Currency = "USD", AsOf = NyseSessionNow });
         await _db.SaveChangesAsync();
 
         var summary = await _sut.GetSummaryAsync(AssetClass.Stock, CancellationToken.None);
@@ -87,8 +101,8 @@ public sealed class PortfolioSummaryServiceTests : IDisposable
             AssetId = z74.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
             Quantity = 100m, PricePerUnit = 4m, Fees = 1m, Currency = "SGD",
         });
-        _db.PriceQuotes.Add(new PriceQuote { AssetId = z74.Id, Price = 4.20m, Currency = "SGD", AsOf = DateTimeOffset.UtcNow });
-        // Only one stored FX rate, dated at the trade — "today" (2026-02-01, per _timeProvider)
+        _db.PriceQuotes.Add(new PriceQuote { AssetId = z74.Id, Price = 4.20m, Currency = "SGD", AsOf = NyseSessionNow });
+        // Only one stored FX rate, dated at the trade — "today" (2026-02-02, per _timeProvider)
         // has no rate of its own, so the live market value must carry this one forward too.
         _db.FxRates.Add(new FxRate { Date = new DateOnly(2026, 1, 1), Base = "USD", Quote = "SGD", Rate = 1.25m });
         await _db.SaveChangesAsync();
@@ -175,7 +189,7 @@ public sealed class PortfolioSummaryServiceTests : IDisposable
             AssetId = aapl.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
             Quantity = 10m, PricePerUnit = 100m, Fees = 0m, Currency = "USD",
         });
-        _db.PriceQuotes.Add(new PriceQuote { AssetId = aapl.Id, Price = 100m, Currency = "USD", AsOf = DateTimeOffset.UtcNow });
+        _db.PriceQuotes.Add(new PriceQuote { AssetId = aapl.Id, Price = 100m, Currency = "USD", AsOf = NyseSessionNow });
 
         // MSFT bought and fully sold — must not appear in the allocation pie at all.
         _db.Transactions.Add(new Transaction
@@ -219,11 +233,53 @@ public sealed class PortfolioSummaryServiceTests : IDisposable
         summary.UnpricedHoldingsCount.Should().Be(1);
     }
 
+    /// <summary>
+    /// D17 residual. The summary tiles have carried an unpriced caveat since D17, but the
+    /// allocation payload had no equivalent, so an unpriced holding arrived as a bare
+    /// <c>marketValueUsd: 0 / percentageOfTotal: 0</c> — indistinguishable on the wire from a
+    /// holding that really is worth nothing.
+    /// </summary>
+    [Fact]
+    public async Task GetAllocationAsync_UnpricedHolding_IsFlagged_NotSilently0Percent()
+    {
+        var aapl = AddAsset(1, "AAPL", AssetClass.Stock, "USD");
+        var msft = AddAsset(2, "MSFT", AssetClass.Stock, "USD");
+
+        // AAPL: real cost basis, no quote and no stored close at all — genuinely unpriced.
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = aapl.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
+            Quantity = 10m, PricePerUnit = 100m, Fees = 0m, Currency = "USD",
+        });
+
+        // MSFT: priced normally, so the pie still has something real in it.
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = msft.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
+            Quantity = 5m, PricePerUnit = 100m, Fees = 0m, Currency = "USD",
+        });
+        _db.PriceQuotes.Add(new PriceQuote { AssetId = msft.Id, Price = 200m, Currency = "USD", AsOf = NyseSessionNow });
+        await _db.SaveChangesAsync();
+
+        var allocation = await _sut.GetAllocationAsync(AssetClass.Stock, CancellationToken.None);
+
+        var unpriced = allocation.Items.Should().ContainSingle(i => i.Symbol == "AAPL").Subject;
+        unpriced.HasPrice.Should().BeFalse();
+        unpriced.MarketValueUsd.Should().Be(0m, "nothing is guessed — the value is simply unknown");
+
+        allocation.Items.Should().ContainSingle(i => i.Symbol == "MSFT")
+            .Which.HasPrice.Should().BeTrue();
+
+        allocation.UnpricedHoldingsCount.Should().Be(
+            1,
+            "a caller fetching only this endpoint must be able to tell the pie is partial");
+    }
+
     [Fact]
     public async Task GetSummaryAsync_NoLiveQuote_FallsBackToLastStoredClose_TaggedAsCloseWithItsOwnDate()
     {
         // D20: AAPL has a stored close (from a backfill) but no live PriceQuote — the market-closed
-        // case D20 exists for. The fallback must use the close's own date, not "today" (2026-02-01
+        // case D20 exists for. The fallback must use the close's own date, not "today" (2026-02-02
         // per _timeProvider), both for the reported priceAsOf and for which historical value to
         // report to the caller.
         var aapl = AddAsset(1, "AAPL", AssetClass.Stock, "USD");
@@ -261,7 +317,8 @@ public sealed class PortfolioSummaryServiceTests : IDisposable
         {
             AssetId = aapl.Id, Date = new DateOnly(2026, 1, 30), Close = 150m, Currency = "USD",
         });
-        var liveAsOf = new DateTimeOffset(2026, 2, 1, 14, 30, 0, TimeSpan.Zero);
+        // 14:30 UTC = 09:30 ET on the same trading day as NyseSessionNow — a genuinely live quote.
+        var liveAsOf = new DateTimeOffset(2026, 2, 2, 14, 30, 0, TimeSpan.Zero);
         _db.PriceQuotes.Add(new PriceQuote { AssetId = aapl.Id, Price = 160m, Currency = "USD", AsOf = liveAsOf });
         await _db.SaveChangesAsync();
 

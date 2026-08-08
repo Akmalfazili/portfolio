@@ -10,6 +10,13 @@ namespace Portfolio.Infrastructure.Persistence.Seed;
 /// </summary>
 public static class SeedData
 {
+    /// <summary>
+    /// <c>HasData</c> requires literal, deterministic values — a moving "now" would make EF detect
+    /// a model change on every build. The initial migration's own date is used, which is also
+    /// honest: these six rows have existed since the schema did.
+    /// </summary>
+    private static readonly DateTimeOffset SeededAt = new(2026, 7, 26, 0, 0, 0, TimeSpan.Zero);
+
     public static readonly Asset[] Assets =
     [
         new()
@@ -24,6 +31,7 @@ public static class SeedData
             ProviderSymbol = "AAPL",
             ProviderCoinId = null,
             IsActive = true,
+            CreatedAt = SeededAt,
         },
         new()
         {
@@ -37,6 +45,7 @@ public static class SeedData
             ProviderSymbol = "MSFT",
             ProviderCoinId = null,
             IsActive = true,
+            CreatedAt = SeededAt,
         },
         new()
         {
@@ -54,6 +63,7 @@ public static class SeedData
             ProviderSymbol = "Z74.SI",
             ProviderCoinId = null,
             IsActive = true,
+            CreatedAt = SeededAt,
         },
         new()
         {
@@ -67,6 +77,7 @@ public static class SeedData
             ProviderSymbol = null,
             ProviderCoinId = "ethereum",
             IsActive = true,
+            CreatedAt = SeededAt,
         },
         new()
         {
@@ -80,6 +91,7 @@ public static class SeedData
             ProviderSymbol = null,
             ProviderCoinId = "amp-token",
             IsActive = true,
+            CreatedAt = SeededAt,
         },
         new()
         {
@@ -93,6 +105,7 @@ public static class SeedData
             ProviderSymbol = null,
             ProviderCoinId = "anvil",
             IsActive = true,
+            CreatedAt = SeededAt,
         },
     ];
 }

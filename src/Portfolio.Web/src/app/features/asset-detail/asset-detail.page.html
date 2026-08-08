@@ -25,11 +25,20 @@
         <p class="detail__price">{{ q.price | money: q.currency }}</p>
       } @else if (fallbackPrice(); as native) {
         <p class="detail__price">{{ native | money: found.currency }}</p>
-        @if (isCloseSourced()) {
-          <p class="detail__price-source">Close &middot; {{ closeDateLabel() }}</p>
-        }
       } @else {
         <p class="detail__price detail__price--pending">Waiting for a live quote…</p>
+      }
+      <!--
+        D4 — the caption sits OUTSIDE the branches above, not inside the fallback
+        one where it used to live. A pushed quote can be a stale close too (an
+        unmodelled SGX lunar holiday makes the refresh service poll anyway and
+        Yahoo answers with the previous session's close), so nesting the caption
+        under the snapshot branch left the push path structurally unable to admit
+        it. isCloseSourced() is false whenever there is no price at all, so this
+        cannot render against the "Waiting" state.
+      -->
+      @if (isCloseSourced()) {
+        <p class="detail__price-source">Close &middot; {{ closeDateLabel() }}</p>
       }
     </header>
 

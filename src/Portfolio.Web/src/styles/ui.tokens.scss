@@ -144,6 +144,9 @@
   // value, without a second number to keep in sync.
   --ui-layout-tile-min-width: 200px;
 
+  // xs pairs with --ui-font-size-xs body text, for an icon sitting inside a
+  // footnote-scale line (D27's unpriced-asset hint) rather than beside a control.
+  --ui-size-icon-xs: 16px;
   --ui-size-icon-sm: 20px;
   --ui-size-icon-md: 24px;
 

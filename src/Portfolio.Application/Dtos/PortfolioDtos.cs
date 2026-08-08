@@ -79,12 +79,29 @@ public sealed record AllocationItemDto(
     string Symbol,
     string Name,
     decimal MarketValueUsd,
-    decimal PercentageOfTotal);
+    decimal PercentageOfTotal,
+
+    /// <summary>
+    /// D17 residual — false when this holding has no price from any source, so its
+    /// <see cref="MarketValueUsd"/> is <c>0</c> because the value is <i>unknown</i>, not because
+    /// the position is worthless.
+    ///
+    /// <para><see cref="PortfolioSummaryDto.UnpricedHoldingsCount"/> let the summary tiles caveat
+    /// their totals, but nothing equivalent reached here, so an unpriced holding rendered as a
+    /// silent <c>0%</c> slice — which reads as "you hold none of this" rather than "we don't know
+    /// what this is worth". A 0% that means ignorance and a 0% that means a genuinely tiny position
+    /// must not look identical.</para>
+    /// </summary>
+    bool HasPrice);
 
 public sealed record PortfolioAllocationDto(
     AssetClass AssetClass,
     decimal TotalMarketValueUsd,
-    IReadOnlyList<AllocationItemDto> Items);
+    IReadOnlyList<AllocationItemDto> Items,
+
+    /// <summary>D17 residual — how many of <see cref="Items"/> have <c>HasPrice == false</c>, so a
+    /// caller can caveat the whole pie without scanning it. Zero in the common case.</summary>
+    int UnpricedHoldingsCount);
 
 /// <summary>One point on a cost-basis-vs-market-value chart, both USD.</summary>
 public sealed record PerformancePointDto(DateOnly Date, decimal CostBasisUsd, decimal MarketValueUsd);

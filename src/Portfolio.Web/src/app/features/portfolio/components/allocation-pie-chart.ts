@@ -12,6 +12,17 @@ export interface AllocationSlice {
   name: string;
   value: number;
   percent: number;
+
+  /**
+   * D17 residual — this holding has no price from any source, so `value` is 0
+   * because it is *unknown*, not because the position is worthless. The legend
+   * says so instead of rendering a `0.0% / $0.00` row that reads identically to
+   * a genuinely negligible position.
+   *
+   * Only ever true in market-value mode: cost basis is known for every holding,
+   * priced or not, so the cost pie has nothing to caveat.
+   */
+  unpriced?: boolean;
 }
 
 interface Slot extends AllocationSlice {
@@ -66,6 +77,9 @@ export class AllocationPieChart {
         name: `${rest.length} smaller holdings`,
         value: rest.reduce((sum, r) => sum + r.value, 0),
         percent: rest.reduce((sum, r) => sum + r.percent, 0),
+        // An aggregate of several holdings is not itself "the unpriced one",
+        // even if some of what it folded in was unpriced.
+        unpriced: false,
       }),
       8,
     );

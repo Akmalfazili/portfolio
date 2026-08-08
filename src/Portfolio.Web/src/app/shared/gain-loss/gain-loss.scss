@@ -14,10 +14,17 @@
   color: var(--ui-color-loss);
 }
 
+.gain-loss__icon-wrap {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* D18 — an <svg>, no longer a font glyph, so it needs no font-size and it
+   inherits its fill from the .gain-loss colour token via currentColor. */
 .gain-loss__icon {
-  font-size: var(--ui-size-icon-sm);
   width: var(--ui-size-icon-sm);
   height: var(--ui-size-icon-sm);
+  display: block;
 }
 
 .gain-loss__value {

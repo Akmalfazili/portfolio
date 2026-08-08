@@ -13,8 +13,18 @@
         <li class="allocation-pie__row">
           <span class="allocation-pie__swatch" [style.background]="row.color"></span>
           <span class="allocation-pie__symbol">{{ row.symbol }}</span>
-          <span class="allocation-pie__percent">{{ row.percent | number: '1.1-1' }}%</span>
-          <span class="allocation-pie__value">{{ row.value | money }}</span>
+          <!--
+            D17 residual — an unpriced holding has value 0 because its price is
+            UNKNOWN, not because it is worthless. Rendering "0.0% / $0.00" here
+            made it indistinguishable from a genuinely negligible position, so
+            the row says which of the two it is instead.
+          -->
+          @if (row.unpriced) {
+            <span class="allocation-pie__unpriced">No price yet</span>
+          } @else {
+            <span class="allocation-pie__percent">{{ row.percent | number: '1.1-1' }}%</span>
+            <span class="allocation-pie__value">{{ row.value | money }}</span>
+          }
         </li>
       }
     </ul>

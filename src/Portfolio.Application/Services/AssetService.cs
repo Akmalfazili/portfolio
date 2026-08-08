@@ -7,7 +7,7 @@ using Portfolio.Domain.Enums;
 
 namespace Portfolio.Application.Services;
 
-public sealed class AssetService(IPortfolioDbContext db) : IAssetService
+public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvider) : IAssetService
 {
     public async Task<IReadOnlyList<AssetDto>> ListAsync(AssetClass? assetClass, CancellationToken cancellationToken)
     {
@@ -30,7 +30,13 @@ public sealed class AssetService(IPortfolioDbContext db) : IAssetService
                 a.QuoteProviderKind,
                 a.ProviderSymbol,
                 a.ProviderCoinId,
-                a.IsActive))
+                a.IsActive,
+                a.CreatedAt,
+                // D27. Translated to SQL by EF, so this stays one query rather than an N+1 across
+                // the asset list. PriceHistory is included as well as PriceQuote because a stock
+                // that was backfilled but has no live quote HAS been priced — only an asset that
+                // no source has ever produced a number for is worth pointing at.
+                a.PriceQuote != null || a.PriceHistories.Any()))
             .ToListAsync(cancellationToken);
     }
 
@@ -47,7 +53,13 @@ public sealed class AssetService(IPortfolioDbContext db) : IAssetService
                 a.QuoteProviderKind,
                 a.ProviderSymbol,
                 a.ProviderCoinId,
-                a.IsActive))
+                a.IsActive,
+                a.CreatedAt,
+                // D27. Translated to SQL by EF, so this stays one query rather than an N+1 across
+                // the asset list. PriceHistory is included as well as PriceQuote because a stock
+                // that was backfilled but has no live quote HAS been priced — only an asset that
+                // no source has ever produced a number for is worth pointing at.
+                a.PriceQuote != null || a.PriceHistories.Any()))
             .SingleOrDefaultAsync(cancellationToken);
 
     public async Task<ServiceResult<AssetDto>> CreateAsync(CreateAssetRequest request, CancellationToken cancellationToken)
@@ -76,12 +88,16 @@ public sealed class AssetService(IPortfolioDbContext db) : IAssetService
             ProviderSymbol = request.ProviderSymbol,
             ProviderCoinId = request.ProviderCoinId,
             IsActive = true,
+            CreatedAt = timeProvider.GetUtcNow(),
         };
 
         db.AddAsset(asset);
         await db.SaveChangesAsync(cancellationToken);
 
-        return ServiceResult<AssetDto>.Success(ToDto(asset));
+        // Freshly created: no source has had a chance to price it yet, so HasEverBeenPriced is
+        // false by construction rather than by query. That is the normal, benign case D27's UI
+        // has to distinguish from a wrong symbol — hence CreatedAt travelling alongside it.
+        return ServiceResult<AssetDto>.Success(ToDto(asset, hasEverBeenPriced: false));
     }
 
     public async Task<ServiceResult<AssetDto>> UpdateAsync(int id, UpdateAssetRequest request, CancellationToken cancellationToken)
@@ -114,10 +130,15 @@ public sealed class AssetService(IPortfolioDbContext db) : IAssetService
         asset.ProviderSymbol = request.ProviderSymbol;
         asset.ProviderCoinId = request.ProviderCoinId;
         asset.IsActive = request.IsActive;
+        // CreatedAt is deliberately not settable through an update: D27's hint measures how long
+        // an asset has gone unpriced, and letting a rename reset that clock would erase the signal.
 
         await db.SaveChangesAsync(cancellationToken);
 
-        return ServiceResult<AssetDto>.Success(ToDto(asset));
+        var hasEverBeenPriced = await db.PriceQuotes.AnyAsync(q => q.AssetId == id, cancellationToken)
+            || await db.PriceHistories.AnyAsync(p => p.AssetId == id, cancellationToken);
+
+        return ServiceResult<AssetDto>.Success(ToDto(asset, hasEverBeenPriced));
     }
 
     /// <summary>
@@ -171,7 +192,7 @@ public sealed class AssetService(IPortfolioDbContext db) : IAssetService
         return errors;
     }
 
-    private static AssetDto ToDto(Asset a) => new(
+    private static AssetDto ToDto(Asset a, bool hasEverBeenPriced) => new(
         a.Id,
         a.Symbol,
         a.Name,
@@ -181,5 +202,7 @@ public sealed class AssetService(IPortfolioDbContext db) : IAssetService
         a.QuoteProviderKind,
         a.ProviderSymbol,
         a.ProviderCoinId,
-        a.IsActive);
+        a.IsActive,
+        a.CreatedAt,
+        hasEverBeenPriced);
 }

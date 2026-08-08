@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Portfolio.Application.Abstractions;
 using Portfolio.Application.Dtos;
+using Portfolio.Application.Services.Calendar;
 using Portfolio.Domain.Entities;
 using Portfolio.Domain.Enums;
 
@@ -25,15 +26,6 @@ public sealed class PriceRefreshService(
     IOptions<PriceRefreshOptions> options,
     ILogger<PriceRefreshService> logger) : IPriceRefreshService
 {
-    /// <summary>Which market gates each provider's equities, or null for crypto (no market — 24/7).</summary>
-    private static readonly IReadOnlyDictionary<QuoteProviderKind, Market?> MarketByProvider =
-        new Dictionary<QuoteProviderKind, Market?>
-        {
-            [QuoteProviderKind.TwelveData] = Market.Nyse,
-            [QuoteProviderKind.Yahoo] = Market.Sgx,
-            [QuoteProviderKind.CoinGecko] = null,
-        };
-
     public Task<PriceRefreshCycleResult> RefreshDueAsync(CancellationToken cancellationToken) =>
         RunCycleAsync(force: false, cancellationToken);
 
@@ -74,7 +66,7 @@ public sealed class PriceRefreshService(
         foreach (var group in groups)
         {
             var source = group.Key;
-            var market = MarketByProvider.GetValueOrDefault(source);
+            var market = ProviderMarkets.For(source);
 
             // Never spend a provider credit polling a closed equity market — not even on a
             // manual trigger. Crypto has no market entry here, so it is never gated.
@@ -96,7 +88,7 @@ public sealed class PriceRefreshService(
             }
 
             var groupAssets = group.ToList();
-            var outcome = await RefreshGroupAsync(source, groupAssets, cancellationToken);
+            var outcome = await RefreshGroupAsync(source, groupAssets, now, cancellationToken);
 
             var interval = market is not null ? options.Value.StockOpenInterval : options.Value.CryptoInterval;
             await statusStore.RecordOutcomeAsync(outcome, now, now + interval, cancellationToken);
@@ -138,7 +130,10 @@ public sealed class PriceRefreshService(
     /// caught here so the group degrades to its last stored quote and the cycle continues with
     /// the remaining groups.</summary>
     private async Task<SourceRefreshOutcome> RefreshGroupAsync(
-        QuoteProviderKind source, IReadOnlyList<Asset> groupAssets, CancellationToken cancellationToken)
+        QuoteProviderKind source,
+        IReadOnlyList<Asset> groupAssets,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
     {
         IReadOnlyList<QuoteFetchResult> results;
         try
@@ -178,8 +173,18 @@ public sealed class PriceRefreshService(
             var asset = groupAssets.FirstOrDefault(a => a.Id == result.AssetId);
             if (asset is not null)
             {
+                // D4: a successful fetch is not automatically a live price. On an unmodelled SGX
+                // lunar holiday this poll should never have happened, and what came back is the
+                // previous session's close — so classify it the same way the read path does rather
+                // than letting the push be the one place that still says "live" unconditionally.
                 await broadcaster.BroadcastQuoteUpdatedAsync(
-                    new QuoteUpdateNotification(asset.Id, asset.Symbol, price, result.Currency, asOf),
+                    new QuoteUpdateNotification(
+                        asset.Id,
+                        asset.Symbol,
+                        price,
+                        result.Currency,
+                        asOf,
+                        QuoteFreshness.Classify(calendar, asset.QuoteProviderKind, asOf, now)),
                     cancellationToken);
             }
         }

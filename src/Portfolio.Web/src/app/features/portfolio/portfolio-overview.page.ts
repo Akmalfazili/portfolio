@@ -98,6 +98,8 @@ export class PortfolioOverviewPage {
       name: item.name,
       value: item.marketValueUsd,
       percent: item.percentageOfTotal,
+      // D17 residual — a 0 here can mean "worth nothing" or "we don't know".
+      unpriced: !item.hasPrice,
     })),
   );
 
@@ -115,6 +117,10 @@ export class PortfolioOverviewPage {
         name: h.name,
         value: h.costBasisUsd,
         percent: totalCost > 0 ? (h.costBasisUsd / totalCost) * 100 : 0,
+        // Never unpriced in cost mode: cost basis comes from the transactions,
+        // which are known for every holding whether or not a quote ever arrived.
+        // This is why the D17 residual only ever affected the market-value pie.
+        unpriced: false,
       }));
   });
 

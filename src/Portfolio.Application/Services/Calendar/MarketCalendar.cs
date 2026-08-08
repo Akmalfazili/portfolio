@@ -35,6 +35,16 @@ public sealed class MarketCalendar : IMarketCalendar
         _ => throw new ArgumentOutOfRangeException(nameof(market), market, "Unknown market."),
     };
 
+    public DateOnly LocalDateOn(Market market, DateTimeOffset instant) =>
+        DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(instant, ZoneFor(market)).DateTime);
+
+    private static TimeZoneInfo ZoneFor(Market market) => market switch
+    {
+        Market.Nyse => NyseZone,
+        Market.Sgx => SgxZone,
+        _ => throw new ArgumentOutOfRangeException(nameof(market), market, "Unknown market."),
+    };
+
     private static bool IsNyseOpen(DateTimeOffset instant)
     {
         var local = TimeZoneInfo.ConvertTime(instant, NyseZone);

@@ -49,14 +49,38 @@
         </tr>
       </thead>
       <tbody>
-        @for (asset of assets(); track asset.id) {
+        @for (row of rows(); track row.asset.id) {
+          @let asset = row.asset;
           <tr [class.asset-management__row--inactive]="!asset.isActive">
             <td class="asset-management__symbol">{{ asset.symbol }}</td>
             <td>{{ asset.name }}</td>
             <td>{{ asset.assetClass }}</td>
             <td>{{ asset.currency }}</td>
             <td>{{ asset.quoteProviderKind }}</td>
-            <td>{{ asset.providerSymbol ?? asset.providerCoinId }}</td>
+            <td>
+              {{ asset.providerSymbol ?? asset.providerCoinId }}
+              <!--
+                D27 — sits under the identifier deliberately, because the
+                identifier is the thing to go and check. Two wordings, not one:
+                a brand-new asset simply has not been reached by a refresh cycle
+                yet, and saying "check the identifier" then would be wrong.
+              -->
+              @if (row.unpriced; as unpriced) {
+                @if (unpriced.suspicious) {
+                  <span class="asset-management__price-hint asset-management__price-hint--suspicious">
+                    <mat-icon aria-hidden="true">warning_amber</mat-icon>
+                    <span
+                      >No price in {{ unpriced.days }} days — check this identifier is right for
+                      {{ asset.quoteProviderKind }}</span
+                    >
+                  </span>
+                } @else {
+                  <span class="asset-management__price-hint">
+                    <span>No price yet — waiting for the next refresh</span>
+                  </span>
+                }
+              }
+            </td>
             <td>
               @if (asset.isActive) {
                 <span class="asset-management__badge asset-management__badge--active">Active</span>

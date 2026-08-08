@@ -50,6 +50,16 @@
   font-variant-numeric: var(--ui-font-numeric-variant);
 }
 
+/* D17 residual — replaces the percent+value pair for a holding whose price is
+   unknown. Amber, matching every other "this is not what it looks like" signal
+   in the app (the `Close ·` caption, the unpriced-holdings banner) rather than
+   introducing a new colour for the same idea. */
+.allocation-pie__unpriced {
+  margin-left: auto;
+  color: var(--ui-color-status-warning);
+  font-size: var(--ui-font-size-xs);
+}
+
 .allocation-pie__empty {
   color: var(--ui-color-on-surface-muted);
   font-size: var(--ui-font-size-sm);

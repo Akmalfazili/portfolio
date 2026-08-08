@@ -53,6 +53,54 @@ describe('AllocationPieChart', () => {
     expect(fixture.componentInstance.legendRows().at(-1)?.symbol).toBe('Other');
   });
 
+  /**
+   * D17 residual. Before this, an unpriced holding rendered a `0.0% / $0.00`
+   * legend row — visually identical to a genuinely negligible position, so a
+   * holding whose value is simply unknown read as one worth nothing. The
+   * summary tiles had carried this caveat since D17; the pie never did.
+   */
+  /** The legend row for one symbol, so assertions target that row and not the
+   *  whole component's text (where "100.0%" trivially contains "0.0%"). */
+  function rowTextFor(symbol: string): string {
+    const rows = Array.from(
+      fixture.nativeElement.querySelectorAll('.allocation-pie__row'),
+    ) as HTMLElement[];
+    const row = rows.find((r) => r.querySelector('.allocation-pie__symbol')?.textContent?.trim() === symbol);
+    if (!row) {
+      throw new Error(`No legend row for ${symbol}`);
+    }
+    return row.textContent ?? '';
+  }
+
+  it('says "No price yet" instead of 0.0% for a holding whose price is unknown', () => {
+    fixture.componentRef.setInput('slices', [
+      { assetId: 1, symbol: 'AAPL', name: 'Apple Inc.', value: 0, percent: 0, unpriced: true },
+      { assetId: 4, symbol: 'ETH', name: 'Ethereum', value: 932.625, percent: 100 },
+    ] satisfies AllocationSlice[]);
+    fixture.detectChanges();
+
+    const aapl = rowTextFor('AAPL');
+    expect(aapl).toContain('No price yet');
+    // The misleading pair must not be rendered for that row at all.
+    expect(aapl).not.toContain('%');
+    expect(aapl).not.toContain('$0.00');
+
+    // The priced holding alongside it is untouched.
+    expect(rowTextFor('ETH')).toContain('$932.63');
+  });
+
+  it('still shows a real 0.0% for a priced but negligible holding', () => {
+    fixture.componentRef.setInput('slices', [
+      { assetId: 1, symbol: 'AAPL', name: 'Apple Inc.', value: 0.001, percent: 0, unpriced: false },
+      { assetId: 4, symbol: 'ETH', name: 'Ethereum', value: 932.625, percent: 100 },
+    ] satisfies AllocationSlice[]);
+    fixture.detectChanges();
+
+    const aapl = rowTextFor('AAPL');
+    expect(aapl).toContain('0.0%');
+    expect(aapl).not.toContain('No price yet');
+  });
+
   it('assigns colour by asset identity, not by current value rank', () => {
     fixture.componentRef.setInput('slices', SLICES);
     fixture.detectChanges();

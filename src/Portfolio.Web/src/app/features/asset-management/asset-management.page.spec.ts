@@ -20,6 +20,8 @@ const AAPL: AssetDto = {
   providerSymbol: 'AAPL',
   providerCoinId: null,
   isActive: true,
+  createdAt: '2026-07-26T00:00:00+00:00',
+  hasEverBeenPriced: true,
 };
 
 // D24 real gap — GET /api/assets returns inactive assets too (confirmed
@@ -36,6 +38,8 @@ const MSFT_INACTIVE: AssetDto = {
   providerSymbol: 'MSFT',
   providerCoinId: null,
   isActive: false,
+  createdAt: '2026-07-26T00:00:00+00:00',
+  hasEverBeenPriced: true,
 };
 
 describe('AssetManagementPage', () => {
@@ -94,6 +98,106 @@ describe('AssetManagementPage', () => {
     expect(text).toContain('Inactive');
   });
 
+  // --- D27: an asset that no source has ever priced. A well-formed but WRONG
+  // provider identifier ("APPL" for "AAPL") is accepted by the API — D23 only
+  // rejects a malformed record — and then reads as "Awaiting price" forever,
+  // indistinguishable from a closed market. These pin the hint that separates
+  // the two, and the thresholds that stop it crying wolf.
+
+  /** Days before "now", as an ISO instant, so these tests do not rot. */
+  function daysAgo(days: number): string {
+    return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  }
+
+  function unpricedAsset(overrides: Partial<AssetDto>): AssetDto {
+    return { ...AAPL, id: 99, symbol: 'APPL', hasEverBeenPriced: false, ...overrides };
+  }
+
+  it('flags a long-unpriced asset and points at the identifier (D27)', async () => {
+    fixture.detectChanges();
+    httpMock
+      .expectOne(API_ROUTES.assets)
+      .flush([unpricedAsset({ createdAt: daysAgo(9), providerSymbol: 'APPL' })]);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('No price in 9 days');
+    expect(text).toContain('check this identifier');
+  });
+
+  it('does not cry wolf over a just-added asset that no cycle has reached yet', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([unpricedAsset({ createdAt: daysAgo(0) })]);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('waiting for the next refresh');
+    expect(text).not.toContain('check this identifier');
+  });
+
+  /**
+   * The case that set the stock threshold at 3 days rather than 1. A US stock
+   * added on a Friday evening cannot be priced until Monday, because the refresh
+   * service deliberately never polls a closed market — about 65 hours of
+   * completely correct silence. Warning then would fire on every stock added
+   * over a weekend, and a warning that is usually wrong gets ignored when it is
+   * finally right.
+   */
+  it('stays quiet for a stock added over a weekend, when no poll could have happened', async () => {
+    fixture.detectChanges();
+    httpMock
+      .expectOne(API_ROUTES.assets)
+      .flush([unpricedAsset({ createdAt: daysAgo(2), quoteProviderKind: 'TwelveData' })]);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).not.toContain('check this identifier');
+  });
+
+  /** Crypto has no such excuse — CoinGecko is unmetered, ungated, polled every 2 minutes. */
+  it('flags an unpriced crypto asset after a single day', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([
+      unpricedAsset({
+        symbol: 'ETHEREUM',
+        createdAt: daysAgo(2),
+        assetClass: 'Crypto',
+        quoteProviderKind: 'CoinGecko',
+        providerSymbol: null,
+        providerCoinId: 'etherium',
+      }),
+    ]);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain('check this identifier');
+  });
+
+  it('says nothing about a deactivated asset, which is excluded from refresh cycles anyway', async () => {
+    fixture.detectChanges();
+    httpMock
+      .expectOne(API_ROUTES.assets)
+      .flush([unpricedAsset({ createdAt: daysAgo(30), isActive: false })]);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).not.toContain('check this identifier');
+    expect(text).not.toContain('waiting for the next refresh');
+  });
+
+  it('says nothing about an asset that has been priced', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).not.toContain('No price');
+  });
+
   it('adds a newly-created asset to the list without a full reload', async () => {
     fixture.detectChanges();
     httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
@@ -112,6 +216,8 @@ describe('AssetManagementPage', () => {
       providerSymbol: 'GOOGL',
       providerCoinId: null,
       isActive: true,
+      createdAt: '2026-08-08T12:00:00+00:00',
+      hasEverBeenPriced: false,
     };
     vi.spyOn(dialog, 'open').mockReturnValue({
       afterClosed: () => of({ kind: 'saved', asset: created }),

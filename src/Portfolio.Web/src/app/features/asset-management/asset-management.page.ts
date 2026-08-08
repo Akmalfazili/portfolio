@@ -4,7 +4,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
 
-import { AssetDto, UpdateAssetRequest } from '../../core/api/models';
+import { AssetDto, QuoteProviderKind, UpdateAssetRequest } from '../../core/api/models';
 import { API_ROUTES } from '../../core/api/api-routes';
 import { StateMessage } from '../../shared/state-message/state-message';
 import { ConfirmDialog, ConfirmDialogData } from '../../shared/confirm-dialog/confirm-dialog';
@@ -14,6 +14,55 @@ import { AssetFormDialog, AssetFormDialogData, AssetFormDialogResult } from './a
  *  toggling one doesn't jump it around the list. */
 function sortAssets(assets: AssetDto[]): AssetDto[] {
   return [...assets].sort((a, b) => a.symbol.localeCompare(b.symbol));
+}
+
+/**
+ * D27 — how long total price silence has to last before it stops being normal
+ * and starts suggesting the identifier is wrong.
+ *
+ * These are not arbitrary. A US or SGX stock added on a Friday evening cannot
+ * be priced until the exchange reopens on Monday, because the refresh service
+ * deliberately never polls a closed market — about 65 hours of entirely correct
+ * silence. A threshold under that would fire on every stock added over a
+ * weekend, which is precisely the false alarm that teaches someone to ignore
+ * the warning. Crypto has no such excuse: CoinGecko is unmetered, never gated,
+ * and polled every two minutes, so a day without a single price is already
+ * evidence of a bad coin id.
+ *
+ * Note the backfill cannot rescue a new asset either — it only runs for assets
+ * that have transactions, so a newly tracked holding with no trades yet depends
+ * entirely on the refresh cycle.
+ */
+const STALE_AFTER_DAYS: Record<QuoteProviderKind, number> = {
+  TwelveData: 3,
+  Yahoo: 3,
+  CoinGecko: 1,
+};
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** D27 view state for one row: null when there is nothing to say. */
+export interface UnpricedState {
+  /** Whole days since the asset was added. */
+  readonly days: number;
+  /** Past this provider's threshold — worth pointing at the identifier. */
+  readonly suspicious: boolean;
+}
+
+export interface AssetRow {
+  readonly asset: AssetDto;
+  readonly unpriced: UnpricedState | null;
+}
+
+function unpricedState(asset: AssetDto, now: number): UnpricedState | null {
+  // An inactive asset is excluded from every refresh cycle, so its silence is
+  // expected and says nothing about whether its identifier is correct.
+  if (asset.hasEverBeenPriced || !asset.isActive) {
+    return null;
+  }
+
+  const days = Math.floor((now - new Date(asset.createdAt).getTime()) / MS_PER_DAY);
+  return { days, suspicious: days >= STALE_AFTER_DAYS[asset.quoteProviderKind] };
 }
 
 /**
@@ -48,6 +97,18 @@ export class AssetManagementPage {
   readonly hasError = computed(() => this.assetsResource.error() != null);
   readonly assets = computed(() => sortAssets(this.assetsResource.value() ?? []));
   readonly isEmpty = computed(() => !this.isLoading() && !this.hasError() && this.assets().length === 0);
+
+  /**
+   * D27 — rows decorated with their unpriced state. `Date.now()` is read once
+   * per recomputation rather than tracked as a signal: this is a page, not a
+   * live clock, and the distinction it draws is measured in days, so a value
+   * that refreshes when the list does is precise enough by three orders of
+   * magnitude.
+   */
+  readonly rows = computed<AssetRow[]>(() => {
+    const now = Date.now();
+    return this.assets().map((asset) => ({ asset, unpriced: unpricedState(asset, now) }));
+  });
 
   readonly actionError = signal<string | null>(null);
 

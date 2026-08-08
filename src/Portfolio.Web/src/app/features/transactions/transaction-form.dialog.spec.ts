@@ -19,6 +19,8 @@ const ANVL: AssetDto = {
   providerSymbol: null,
   providerCoinId: 'anvil',
   isActive: true,
+  createdAt: '2026-07-26T00:00:00+00:00',
+  hasEverBeenPriced: true,
 };
 
 const AAPL: AssetDto = {
@@ -32,6 +34,8 @@ const AAPL: AssetDto = {
   providerSymbol: 'AAPL',
   providerCoinId: null,
   isActive: true,
+  createdAt: '2026-07-26T00:00:00+00:00',
+  hasEverBeenPriced: true,
 };
 
 const EXISTING: TransactionDto = {

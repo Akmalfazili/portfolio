@@ -21,6 +21,8 @@ const AAPL: AssetDto = {
   providerSymbol: 'AAPL',
   providerCoinId: null,
   isActive: true,
+  createdAt: '2026-07-26T00:00:00+00:00',
+  hasEverBeenPriced: true,
 };
 
 const AAPL_HOLDING: HoldingDto = {
@@ -116,6 +118,7 @@ async function waitForRequest(httpMock: HttpTestingController, url: string, trie
 describe('AssetDetailPage', () => {
   let fixture: ComponentFixture<AssetDetailPage>;
   let httpMock: HttpTestingController;
+  let fakeHub: FakeHubConnection;
 
   beforeEach(() => {
     TestBed.configureTestingModule({
@@ -125,7 +128,13 @@ describe('AssetDetailPage', () => {
         provideHttpClientTesting(),
         provideRouter([]),
         provideEchartsCore({ echarts: () => import('echarts') }),
-        { provide: PRICES_HUB_CONNECTION_FACTORY, useValue: () => new FakeHubConnection() },
+        {
+          provide: PRICES_HUB_CONNECTION_FACTORY,
+          // Captured (rather than discarded) so a test can push a QuoteUpdated
+          // frame through the real PriceStore, which is the only way to exercise
+          // the pushed-quote branch of the price header — see the D4 test below.
+          useValue: () => (fakeHub = new FakeHubConnection()),
+        },
       ],
     });
     httpMock = TestBed.inject(HttpTestingController);
@@ -224,6 +233,68 @@ describe('AssetDetailPage', () => {
     expect(text).toContain('$333.02');
     expect(text).toContain('Close');
     expect(text).toContain('Fri 24 Jul');
+  });
+
+  /**
+   * D4. The original `isCloseSourced` read `quote() === undefined && ...`, on the
+   * stated reasoning that a genuine SignalR push is always live. It is not: on an
+   * unmodelled SGX lunar holiday the refresh service polls anyway, Yahoo answers
+   * with the previous session's close, and that gets broadcast like any other
+   * tick. A push therefore *overrode* the honest label — leaving the most
+   * prominent number on the page as the one place the stale price still read as
+   * live, on exactly the days D4 is about.
+   *
+   * This drives the real `PriceStore` with a real hub frame rather than stubbing
+   * the computed, because the defect lived in how the two sources were combined.
+   */
+  it('labels a PUSHED quote as a close when the backend classifies it as one (D4)', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY_WITH_HOLDING);
+    await flushStockAssetRequests();
+    fixture.detectChanges();
+
+    // What the hub actually sends on a lunar holiday: a successful fetch whose
+    // payload is the previous session's close, stamped with that session's time.
+    fakeHub.emit('QuoteUpdated', {
+      assetId: 1,
+      symbol: 'AAPL',
+      price: 333.019989,
+      currency: 'USD',
+      asOf: '2026-07-24T08:00:00+00:00',
+      source: 'Close',
+    });
+    await Promise.resolve();
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('$333.02');
+    // The caption must carry the pushed quote's OWN date, not "now".
+    expect(text).toContain('Close');
+    expect(text).toContain('Fri 24 Jul');
+  });
+
+  it('still treats a pushed Live quote as live', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY_WITH_HOLDING);
+    await flushStockAssetRequests();
+    fixture.detectChanges();
+
+    fakeHub.emit('QuoteUpdated', {
+      assetId: 1,
+      symbol: 'AAPL',
+      price: 340.5,
+      currency: 'USD',
+      asOf: '2026-08-07T15:30:00+00:00',
+      source: 'Live',
+    });
+    await Promise.resolve();
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('$340.50');
+    expect(text).not.toContain('Close ·');
   });
 
   it('shows "Waiting for a live quote" when neither a push nor a persisted quote exists', async () => {

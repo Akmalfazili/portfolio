@@ -43,6 +43,18 @@ public class Asset
 
     public bool IsActive { get; set; } = true;
 
+    /// <summary>
+    /// When this asset was added. Exists for D27: a well-formed but <i>wrong</i> provider
+    /// identifier (<c>APPL</c> for <c>AAPL</c>, or a CoinGecko id that does not exist) is accepted
+    /// at creation and then renders "Awaiting price" forever, giving no hint that the record rather
+    /// than the market is the cause. Verifying the symbol against the provider costs a credit per
+    /// creation and needs its own provider-unavailable design, so instead the age of an asset that
+    /// has still never received any price is surfaced — which needs no provider call at all, and
+    /// separates "added a minute ago, the next cycle has not run" from "added last week and the
+    /// symbol is wrong".
+    /// </summary>
+    public DateTimeOffset CreatedAt { get; set; }
+
     public ICollection<Transaction> Transactions { get; set; } = new List<Transaction>();
 
     public ICollection<PriceHistory> PriceHistories { get; set; } = new List<PriceHistory>();

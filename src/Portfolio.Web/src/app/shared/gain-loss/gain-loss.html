@@ -4,8 +4,17 @@
     [class.gain-loss--gain]="isGain()"
     [class.gain-loss--loss]="isLoss()"
   >
+    <!--
+      D18 — inline SVG rather than a <mat-icon> ligature. The accessible name is
+      unchanged (role="img" + aria-label on the wrapper, the glyph itself hidden),
+      but there is no longer any icon-name text inside the element for raw
+      textContent extraction to pick up. `fill="currentColor"` keeps the arrow on
+      the same gain/loss token as the number beside it, with no second colour rule.
+    -->
     <span class="gain-loss__icon-wrap" role="img" [attr.aria-label]="iconLabel()">
-      <mat-icon class="gain-loss__icon" aria-hidden="true">{{ icon() }}</mat-icon>
+      <svg class="gain-loss__icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+        <path [attr.d]="iconPath()" />
+      </svg>
     </span>
     <span class="gain-loss__value">
       @if (signedAmount(); as amount) {
