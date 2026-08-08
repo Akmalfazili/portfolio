@@ -5,7 +5,7 @@ namespace Portfolio.Application.Services.Calendar;
 /// <summary>
 /// See <see cref="IMarketCalendar"/>. Converts the UTC instant into each exchange's local
 /// wall-clock time via <see cref="TimeZoneInfo"/> (IANA ids — resolvable on both Windows and
-/// Linux since .NET 6's ICU-backed lookup, so this works unchanged in the Podman container)
+/// Linux since .NET 6's ICU-backed lookup, so this works unchanged in the Docker container)
 /// rather than a hard-coded offset, which is what makes it safe across NYSE's twice-yearly DST
 /// shift. SGX has no DST, but NYSE's shift still changes the *gap* between the two markets'
 /// local time twice a year, so both conversions go through the same mechanism rather than one

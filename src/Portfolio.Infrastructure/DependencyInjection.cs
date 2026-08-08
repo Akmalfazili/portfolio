@@ -19,7 +19,7 @@ public static class DependencyInjection
     /// <summary>
     /// Registers <see cref="PortfolioDbContext"/> against the "Portfolio" connection string.
     /// The same registration works for both environments: locally it resolves the Windows-auth
-    /// SQLEXPRESS string from <c>appsettings.Development.json</c>; in the Podman container it
+    /// SQLEXPRESS string from <c>appsettings.Development.json</c>; in the Docker container it
     /// resolves the SQL-auth string supplied via the <c>ConnectionStrings__Portfolio</c>
     /// environment variable, which the standard configuration provider chain overrides
     /// appsettings.json with automatically. Never hardcode a connection string here.

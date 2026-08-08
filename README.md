@@ -17,8 +17,8 @@ All values report in **USD**; SGD holdings are converted at the FX rate for the 
 |---|---|
 | .NET SDK 10.0 LTS | https://dotnet.microsoft.com/download |
 | Node.js 20.19+ | Angular 22 requirement |
-| SQL Server Express | Local development. A container is used for the Podman stack. |
-| Podman | Optional — only for the containerized stack. `winget install RedHat.Podman-Desktop` |
+| SQL Server Express | Local development. A container is used for the Docker stack. |
+| Docker Desktop | Optional — only for the containerized stack. `winget install Docker.DockerDesktop` |
 
 You'll also need two free API keys (neither requires a card):
 
@@ -47,12 +47,11 @@ npm start          # http://localhost:4200
 ## Running the containerized stack
 
 ```bash
-podman machine init     # first time only
-podman machine start
+# Docker Desktop must be running (and not paused) before any of this
 
 cp .env.example .env    # then fill in the API keys and SA password
 
-podman compose up -d    # http://localhost:8080
+docker compose up -d    # http://localhost:8080
 ```
 
 The stack runs its own SQL Server container rather than your local SQLEXPRESS instance —

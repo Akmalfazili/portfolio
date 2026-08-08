@@ -13,7 +13,7 @@ Single user, no authentication. Reporting currency is **USD**.
 | Backend | .NET 10 LTS, ASP.NET Core Minimal APIs, EF Core 10 (SQL Server), SignalR |
 | Frontend | Angular 22 (standalone, signals, zoneless), Angular Material, ngx-echarts |
 | Database | SQL Server — local `SQLEXPRESS` for dev, `mssql/server` container for the stack |
-| Containers | Rootless Podman, `compose.yaml` (db / api / web) |
+| Containers | Docker (Desktop, WSL2 backend), `compose.yaml` (db / api / web) |
 
 ## Layout
 
@@ -39,7 +39,7 @@ agent that owns the area rather than working across boundaries:
 
 - **`backend-dotnet`** — anything under `src/Portfolio.{Domain,Application,Infrastructure,Api}` or `tests/`
 - **`frontend-angular`** — anything under `src/Portfolio.Web`
-- **`container-podman`** — `Containerfile.*`, `compose.yaml`, `nginx.conf`, Podman operations
+- **`container-docker`** — `Dockerfile.*`, `compose.yaml`, `nginx.conf`, Docker operations
 
 When a phase completes and the next belongs to a different agent, stop, update `tracker.md`,
 and issue a handoff prompt for the next terminal.
@@ -66,7 +66,7 @@ integers or two decimal places.
 One codebase, one migration set, two environments:
 
 - Local `dotnet run` → `Server=localhost\SQLEXPRESS;...;Trusted_Connection=True` (Windows Auth)
-- Podman → SQL auth against the `db` service via the `ConnectionStrings__Portfolio` env var
+- Docker → SQL auth against the `db` service via the `ConnectionStrings__Portfolio` env var
 
 Windows Authentication cannot work from a Linux container — never assume it's available.
 
@@ -108,7 +108,7 @@ dotnet run --project src/Portfolio.Api          # API on https://localhost:7xxx
 cd src/Portfolio.Web && npm start               # Angular dev server on :4200
 cd src/Portfolio.Web && npm run build && npm test
 
-podman compose up -d                            # full stack on http://localhost:8080
+docker compose up -d                            # full stack on http://localhost:8080
 ```
 
 ## Secrets

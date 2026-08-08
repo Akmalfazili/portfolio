@@ -48,7 +48,7 @@ Never rely on a convention or a default. Configure each one explicitly, and add 
 The same code and the same migrations run in two environments:
 
 - **Local `dotnet run`** — `Server=localhost\SQLEXPRESS;Database=Portfolio;Trusted_Connection=True;TrustServerCertificate=True` (Windows Auth)
-- **Podman container** — SQL auth against the `db` service, supplied via the `ConnectionStrings__Portfolio` environment variable
+- **Docker container** — SQL auth against the `db` service, supplied via the `ConnectionStrings__Portfolio` environment variable
 
 Never hardcode a connection string outside `appsettings.Development.json`. Never assume Windows Auth is available — the container has no Windows identity. Both paths must work off one migration set.
 

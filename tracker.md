@@ -35,7 +35,7 @@ so each session stays focused and its context stays clean.
 | 7 | Angular scaffold + shell | `frontend-angular` | ✅ Done — verified |
 | 8 | Transactions UI | `frontend-angular` | ✅ Done — verified |
 | 9 | Overview + detail pages | `frontend-angular` | ✅ Done — built and wire-verified; no browser driven |
-| 10 | Podman stack | `container-podman` | ⬜ Not started — **unblocked 2026-08-07**, deliberately deferred |
+| 10 | Docker stack | `container-docker` | ⬜ Not started — **unblocked 2026-08-07**, deliberately deferred. **Retargeted from Podman to Docker 2026-08-08** |
 | 12 | Asset management + theme toggle | `backend-dotnet` + `frontend-angular` | ✅ Done — browser-verified 2026-08-07 |
 | 11 | End-to-end verification | — | ⬜ Not started — **partly blocked**, see the note under the phase |
 
@@ -82,8 +82,10 @@ reading the payload, not by reading the code: `assetsSkippedForBudget: ["AAPL"]`
 > **This is the one phase that genuinely needed a browser and didn't get one** — read the
 > "What was NOT verified" list under Phase 9 before trusting any visual claim about the charts.
 >
-> **Phase 10 became unblocked on 2026-08-07** — Podman 5.8.5 is installed (machine created but
-> stopped).
+> **Phase 10 became unblocked on 2026-08-07**, and was **retargeted from Podman to Docker on
+> 2026-08-08** — the user uninstalled Podman and installed Docker Desktop. `podman` is gone from
+> the machine; Docker 29.6.2 with Compose v5.3.1 is present. No container artifact had been written
+> yet, so nothing was ported — only the docs and the agent definition changed.
 >
 > ✅ **Phase 12 is complete and browser-verified.** Assets can be added, deactivated and reactivated
 > from the UI, the create form surfaces the provider routing rules as *server* validation (D23) plus
@@ -96,7 +98,7 @@ reading the payload, not by reading the code: `assetsSkippedForBudget: ["AAPL"]`
 > overview caveats totals that exclude an unpriced holding instead of reading as a portfolio-wide
 > crash. Both confirmed at the rendered-pixel level.
 >
-> **Only Phases 10 and 11 remain.** Phase 10 (Podman) is unblocked but was explicitly deferred by
+> **Only Phases 10 and 11 remain.** Phase 10 (now Docker) is unblocked but was explicitly deferred by
 > the user on 2026-08-07. Phase 11 cannot fully close until Phase 10 lands — see its own note.
 
 ---
@@ -112,7 +114,8 @@ Blocking items you need to handle before the relevant phase can start.
 | .NET 10 SDK | ✅ Installed (10.0.302) | Phase 1 | — |
 | **Twelve Data API key** | ✅ Set | Phase 4 | In `dotnet user-secrets` under `src/Portfolio.Api` as `TwelveData:ApiKey` |
 | **CoinGecko Demo key** | ✅ Not needed | Phase 4 | Keyless public API works — optional, see Decisions |
-| **Podman** | ✅ Installed (5.8.5) | Phase 10 | Confirmed 2026-08-07. `podman-machine-default` exists but is **stopped** — run `podman machine start` before any compose work. **Phase 10 is no longer blocked.** |
+| ~~**Podman**~~ | ❌ **Uninstalled 2026-08-08** | — | Replaced by Docker at the user's choice. `podman` is no longer on PATH. Nothing had been built against it — the swap cost documentation only. |
+| **Docker Desktop** | ✅ Installed (29.6.2, Compose v5.3.1) | Phase 10 | Confirmed 2026-08-08. **Desktop was manually paused** at the time of checking — `docker info` fails with *"Docker Desktop is manually paused"*, which reads like a config error. Unpause from the Whale menu before any compose work. **Phase 10 is not blocked.** |
 
 .NET SDKs install side by side, so adding 10 will not disturb existing .NET 9 projects.
 
@@ -124,7 +127,7 @@ Blocking items you need to handle before the relevant phase can start.
 
 - [x] `.claude/agents/backend-dotnet.md`
 - [x] `.claude/agents/frontend-angular.md`
-- [x] `.claude/agents/container-podman.md`
+- [x] `.claude/agents/container-podman.md` — **replaced by `container-docker.md` on 2026-08-08**
 - [x] `CLAUDE.md` — architecture and conventions
 - [x] `README.md`, `.gitignore`, `.env.example`
 - [x] `git init` + initial commit
@@ -547,18 +550,31 @@ from the browser pass are marked inline.**
 
 ---
 
-### ⬜ Phase 10 — Podman stack · `container-podman`
+### ⬜ Phase 10 — Docker stack · `container-docker`
 
-**Unblocked 2026-08-07** — Podman 5.8.5 installed. `podman-machine-default` is created but stopped;
-start it first.
+**Unblocked 2026-08-07. Retargeted from Podman to Docker on 2026-08-08** — the user uninstalled
+Podman and installed Docker Desktop 29.6.2 (Compose v5.3.1). Because **no container artifact had
+ever been written**, nothing needed porting: the retarget touched only this file, `CLAUDE.md`,
+`README.md`, two XML doc comments, and the agent definition. Start Docker Desktop and confirm it is
+**not paused** (`docker info`) before any build.
 
-- [ ] `Containerfile.api` — sdk:10.0 → aspnet:10.0-noble-chiseled, non-root, port 8080
-- [ ] `Containerfile.web` — node:22-alpine → nginx:alpine
+- [ ] `Dockerfile.api` — sdk:10.0 → aspnet:10.0-noble-chiseled, non-root, port 8080
+- [ ] `Dockerfile.web` — node:22-alpine (**pinned ≥ 22.22.3**) → nginx:alpine
 - [ ] `nginx.conf` — SPA fallback, `/api` proxy, **WebSocket upgrade headers on `/hubs/`**
 - [ ] `compose.yaml` — db / api / web, healthcheck-gated startup, named `mssql-data` volume
-- [ ] `.containerignore`
-- [ ] Verified: `podman compose up -d` → all healthy, app loads, SignalR shows status 101
+- [ ] `.dockerignore`
+- [ ] Verified: `docker compose up -d` → all healthy, app loads, SignalR shows status 101
 - [ ] Verified: `down` then `up` preserves data
+
+**What the platform swap does and does not change.** It changes filenames (`Containerfile.*` →
+`Dockerfile.*`, `.containerignore` → `.dockerignore`), the CLI, the host alias
+(`host.containers.internal` → `host.docker.internal`, only relevant to the documented-but-not-built
+"reach host SQLEXPRESS" option), and it removes the `podman machine start` prerequisite along with
+rootless UID-mapping friction on the named volume. It changes **neither** of the two things this
+phase is actually at risk from: Windows Auth still cannot work from a Linux container, and nginx
+still needs the WebSocket upgrade headers on `/hubs/` or live price push degrades to long-polling
+while appearing to work. One new footgun that Podman did not have: `docker compose down -v` deletes
+the named volume, so `-v` must never be used as a casual cleanup flag.
 
 ### ✅ Phase 12 — Asset management + theme toggle
 
@@ -769,6 +785,7 @@ Two limits worth knowing before estimating this:
 | 2026-08-07 | `frontend-angular` | 9 (D14–D19 fixes) | **Five of the six browser findings fixed and confirmed at the rendered-pixel level; three new findings, one of which the fix pass itself introduced.** Agent did the work, orchestrating terminal drove Chrome at 1600×1100 in both themes. **D14 fixed at the cause**, not the symptom: the two missing `--mat-sys-background`/`-on-background` overrides added *and* `body { color-scheme: light }` deleted (rather than left in place with its false comment). Measured `.detail__price` at **17.42:1**, was 1.01:1; sidenav and toolbar icons at **13.49:1**, were 1.87:1; the full-page sweep now finds **0** elements under 3:1, was 4. Notably the agent *predicted* 17.4 and 13.5 from the token values before any browser ran, and both landed — a useful pattern, since it turns a vague "should be better" into a falsifiable number. **D15** confirmed against a deliberately harder case than the original finding (30 cents apart, not nine dollars). **D16** confirmed by the exact measurement that found it — gridlines `#2c2c2a`×6 → `#e1e0d9`×6 on a live flip with no stale stroke; only the `[data-theme]` path was exercised, a real OS flip is still unobserved. **D18** confirmed via the accessibility tree: `arrow_upward+$218.09·+40.95%` → `Up +$218.09+40.95%`. **D17 left alone deliberately** — product decision, backend origin. 🐛 **The D19 fix shipped a worse bug than D19, caught only by looking: D19a.** The agent formatted ticks in UTC on the reasoning that `new Date("YYYY-MM-DD")` parses as UTC midnight — correct in isolation, but the data goes to a `type: 'time'` axis, so **ECharts** does the parsing and reads that shape as *local* midnight. In SGT (UTC+8) the whole axis rendered one day early (Jul 19–23 for a Jul 20–24 series) while the tooltip, reading the raw string, said Jul 20 — axis and tooltip disagreeing by a day on the same point. It unit-tested green because the spec fed the formatter `new Date('2026-07-22T00:00:00Z')`, an input shape no code path produces. Fixed to local formatting, spec rebuilt on local-midnight inputs, and **confirmed to fail when reverted** (`expected 'Jul 19' to be 'Jul 20'`). It is invisible at zero/negative UTC offsets, so a UTC CI container would never have caught it. **Also found: D21** — the detail page's gain/loss tiles break `$4,995.00` across two lines mid-digit (128.9px box, 32px font, `overflow-wrap: break-word`); the overview tiles are wider and fine. **D22** — `transaction-form.dialog.spec.ts` fails roughly one run in two (observed 147/147, fail, 147/147, fail), pre-existing and unrelated to this change set. Final state: `ng test` **147/147 across 25 files** (was 138/138 — +8 from the agent, +1 regression guard from the browser pass), `ng build` clean bar the known chart-library budget warning. Probe rows (2 stepped AAPL buys + 1 ANVL) deleted, `GET /api/transactions` confirmed `[]`, and `TwelveData.symbolsRefreshed: 0` — **0 Twelve Data credits spent.** Also corrected in passing: Podman is installed (5.8.5), so Phase 10 is no longer blocked. |
 | 2026-08-07 | `backend-dotnet` + `frontend-angular` | 12, plus D10–D12, D17, D20–D25 | **Ten open drawbacks closed in one session, one new defect found and fixed, and one of the orchestrating terminal's own findings turned out to be wrong.** Two agents ran in parallel on disjoint directories; the orchestrating terminal owned `tracker.md`, the commit, and all verification. **D12, the project's most consequential item, is closed and proven by watching the table grow** — MSFT 0 → 14 `PriceHistory` rows spanning 2026-07-20 → 08-06, idempotent on re-run, with the background service observed firing unprompted at startup. **D20** landed as the recommended read-time fallback (no `PriceQuote` written from a close, `priceAsOf` carrying the close's own date). **D17 was checked rather than assumed** — the "D20 largely closes it" claim in this file proved *false* for an asset with neither quote nor history, so `UnpricedHoldingsCount` was added and the overview now caveats the total. 🐛 **One real defect found by the orchestrating terminal, by calling the new endpoint instead of reading it (D26):** the backfill reported provider *failures* as `assetsSkippedForBudget` — live payload showed AAPL there with `providerCallsUsed: 1` against a budget of 20. The operator-facing consequence is that the one endpoint you would hit to ask "why isn't history advancing?" answers "budget", whose obvious remedy does nothing — D12's failure mode reproduced at the reporting layer. Fixed by splitting the outcomes, and the same pass removed a guaranteed-wasted credit (`providerCallsUsed` 1 → 0 for a same-day range that can never succeed). ✅ **Corrected in the other direction, and worth recording because it cuts against the orchestrator:** the terminal reported a gap where deactivated assets would remain selectable in the transaction dropdown. The agent checked and pushed back — `transaction-form.dialog.ts:97` already filtered on `isActive`, and the file was unchanged from HEAD. The finding was wrong; it had been inferred from the API returning inactive assets without reading the client. The agent added a pinning test instead, which was the right call. **D22 was root-caused, not retried** — ECharts measures text via `getContext('2d')` even in SVG mode, jsdom returns `null` *and* throws through the virtual console every call, and that starvation pushed an unrelated dialog spec past its timeout; proven by 5 consecutive 157/157 runs against a 1-in-2 failure baseline. **Phase 12 shipped complete** (asset management page, three-state theme toggle) and the frontend agent caught something unpredictable on the way: Angular's production `inlineCritical` extraction drops both the dark `@media` block and the `[data-theme]` override, so the anti-flash script alone would still have flashed light — `inlineCritical` is now off, deliberately. **Verified independently of both agents:** backend build 0 warnings and **157/157** (was 134/134); frontend `ng build` clean and **182/182 across 29 files** (was 147/147 across 25), green on repeated runs; no hex or raw `px` outside the token files; and a Chrome pass at 1568×675 confirming the `Close · Fri 24 Jul` caption, the unpriced-holdings banner, tiles no longer breaking mid-digit, a full chart repaint on theme flip with zero stale strokes, "Follow OS" genuinely removing the attribute, a real server-validated `POST` on the wire, and **0 elements under 3:1** in a full-page contrast sweep. All probe rows deleted — `GET /api/transactions` is `[]` and `Assets` is back to the 6 seeded rows; MSFT's 14 `PriceHistory` rows were kept deliberately as genuine market data. **0 Twelve Data credits** spent on live quotes (NYSE closed all session); ~5 spent on backfill testing, against 800/day. Left knowingly: D27 (a well-formed but wrong symbol is still silent), the allocation DTO's missing unpriced caveat, and the `menuitemradio` fix unverified by real assistive tech. |
 | 2026-07-31 | `frontend-angular` | 7 | **Complete and verified.** Angular 22 workspace scaffolded with the central design system the user asked for: `ui.tokens.scss` + `ui.mixins.scss`, with Material *derived from* the tokens rather than themed alongside them. Agent reported honestly and flagged the proxy and hub as never exercised live — testing that flag found **two real defects**. (1) **Ids were typed `string` across `models.ts`** while the backend sends C# `int` as JSON numbers; since the API sets no `AllowReadingFromString`, the Phase 8 transaction form would have `POST`ed `"assetId": "3"` and got a 400. The specs passed only because their fixtures (`'a1'`, `'t1'`) matched the wrong type. Fixed to `number`, then confirmed against the live API (`"id":1`) and the live hub (`"assetId":3`). (2) **The D5 "why nothing moved" logic was dead code** — it filtered `sources` for `attempted: false`, but `RunCycleAsync` drops a gated provider from that list entirely, so the filter could never match and a click with NYSE closed would have said a cheerful "Refreshed 4 symbols" with no explanation. Rewritten to derive closed markets from `nyseOpen`/`sgxOpen`, and its spec rebuilt around a payload captured verbatim from the live API instead of a fabricated one; recorded as **D10**. Also closed the design-system gaps the agent left: raw `px` layout values inlined in five component stylesheets despite the token file's own rule (now `--ui-layout-*` / `--ui-size-icon-*` tokens, with the toolbar height tracking Material's 64→56px breakpoint so the content `calc()` stays right on mobile), and the dark-mode block duplicated between the media query and `[data-theme]` (now one `ui-dark-tokens` mixin, so a token cannot be added to one and forgotten in the other). Verified independently of the agent: `ng build` clean, `ng test` **68/68**, no hex or raw `px` anywhere outside the token files, and a **live run through the dev proxy** — 6 assets over `/api`, a real SignalR client on `WebSocketTransport` (not long-polling), on-connect snapshot, 4 `QuoteUpdated` frames with sub-cent precision intact, `200` then `429 secondsRemaining: 26`. NYSE closed throughout, so 0 Twelve Data credits spent. Left knowingly: the `@angular/cli` Node-check patch (**D9**), and D8's 10-dp *quantity* round trip still unmeasured. |
+| 2026-08-08 | — | 10 (retarget only) | **Podman → Docker conversion, documentation and agent definition only. No Phase 10 work was started, at the user's explicit instruction.** The user uninstalled Podman and installed Docker Desktop; verified on this machine — `podman` returns *command not found*, Docker reports **29.6.2** with **Compose v5.3.1**. **The swap was cheap for exactly one reason worth recording: Phase 10 had never produced a single artifact.** A glob for `Containerfile*`, `compose*.yaml`, `nginx.conf` and `.containerignore` returned nothing but `.env.example`, so there was no stack to port — only prose describing one that did not exist yet. Had Phase 10 been done first, this would have been a real migration instead of a rename. Changed: `.claude/agents/container-podman.md` → **`container-docker.md`** (rewritten, not renamed — rootless-Podman rules replaced with non-root-container rules, `podman machine` gotchas replaced with Docker Desktop ones, `host.containers.internal` → `host.docker.internal`); `CLAUDE.md` ×4; `README.md` ×2 blocks; `tracker.md` throughout; and two XML doc comments that named "the Podman container" (`MarketCalendar.cs:8`, `DependencyInjection.cs:22`) — grepped for rather than assumed, and they are the reason a swap that looks like a docs edit also touched `src/`. Backend build re-run after the comment edits: **clean, 0 warnings** under `TreatWarningsAsErrors`. **Two new Docker-specific hazards recorded** that Podman did not have: `docker compose down -v` destroys the named volume the persistence check exists to prove, and Docker Desktop can be **manually paused**, in which case every command fails with *"Docker Desktop is manually paused"* — which reads like a misconfiguration and is not one. It was paused during this session, which is how it got found. **Deliberately unverified:** nothing was built or run. Docker's daemon was never exercised, so "Docker works on this machine" rests on `docker --version` and `docker compose version` alone — the paused daemon means even `docker info` did not succeed. The historical handoff-log rows above still say Podman; they are dated records of what was true then and were left intact rather than rewritten. |
 
 ---
 
@@ -1050,11 +1067,14 @@ table, a real trading day, a second serialiser, a multi-year dataset, a provider
 deferred by the user that evening — it is skipped by choice, not blocked. Paste:
 
 ```
-Read tracker.md, then the Phase 10 checklist. Use the container-podman agent.
+Read tracker.md, then the Phase 10 checklist. Use the container-docker agent.
 
-Podman 5.8.5 is installed but `podman-machine-default` is STOPPED — start it first.
+The stack is DOCKER, not Podman — Podman was uninstalled on 2026-08-08 and is not on
+PATH. Docker 29.6.2 / Compose v5.3.1 is installed, but Docker Desktop was PAUSED when
+last checked: `docker info` then fails with "Docker Desktop is manually paused", which
+reads like a config error and is not one. Confirm the daemon responds before building.
 
-Containerfile.web's Node base image must be 22.22.3 or newer. Angular 22's CLI hard-
+Dockerfile.web's Node base image must be 22.22.3 or newer. Angular 22's CLI hard-
 refuses anything older, and a bare `node:22-alpine` tag is only safe if it currently
 resolves above that — pin it explicitly rather than trusting the tag.
 
@@ -1068,9 +1088,10 @@ Two things that will bite if assumed away, both already established:
     proxy that silently downgrades it would look like it works while breaking live
     price push.
 
-Verify `podman compose up -d` brings everything healthy, the app loads, and the hub
+Verify `docker compose up -d` brings everything healthy, the app loads, and the hub
 shows a 101. Then verify `down` followed by `up` preserves data — that is the named
-volume actually working, not just being declared.
+volume actually working, not just being declared. Never use `down -v` to tidy up; on
+Docker that deletes the volume you are trying to prove persists.
 
 Tick a box only for something you have personally seen pass, say plainly what you did
 not verify, then append to the handoff log, write the next session prompt, and commit.
@@ -1302,10 +1323,11 @@ commit.
 
 **Remaining, for later:**
 
-- ~~**Phase 10** (`container-podman`) needs Podman installed.~~ **Unblocked 2026-08-07** — Podman
-  5.8.5 is present, machine stopped (`podman machine start` first). **Deferred by the user the same
-  evening**, so it is skipped by choice rather than blocked. Still true and easy to get wrong:
-  `Containerfile.web`'s Node base image must be **22.22.3 or newer** — Angular 22's CLI hard-refuses
+- ~~**Phase 10** (`container-podman`) needs Podman installed.~~ **Unblocked 2026-08-07, and
+  retargeted to Docker 2026-08-08** — Podman was uninstalled; Docker 29.6.2 / Compose v5.3.1 is
+  present, though Docker Desktop was **paused** when checked. **Deferred by the user on 2026-08-07**,
+  so it is skipped by choice rather than blocked. Still true and easy to get wrong:
+  `Dockerfile.web`'s Node base image must be **22.22.3 or newer** — Angular 22's CLI hard-refuses
   anything older, so a plain `node:22-alpine` tag is only safe if it currently resolves above that.
   Pin it explicitly.
 - **Phase 11** cannot fully close until Phase 10 lands (the container-DB migration check) and until a
