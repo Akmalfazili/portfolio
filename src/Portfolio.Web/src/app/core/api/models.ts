@@ -61,6 +61,22 @@ export interface AssetDto {
    * symbol looks identical.
    */
   hasEverBeenPriced: boolean;
+
+  /**
+   * D34 — true when this asset's `quoteProviderKind` has recorded at least one
+   * genuinely successful refresh cycle ANYWHERE in this database (across every
+   * asset that shares the provider, not only this one) — sourced from
+   * `SourceRefreshStates.LastSuccessAt`.
+   *
+   * This is the gate on `hasEverBeenPriced`'s escalation: a fresh database
+   * (or one whose seeded `createdAt` is a static value — see D34) makes every
+   * never-priced asset look days old on day one, regardless of whether its
+   * identifier is right. If the provider has never once succeeded here, this
+   * asset's silence carries no evidence about its identifier, so there is
+   * nothing yet to escalate on — suppress the amber "check this identifier"
+   * state and keep only the calm "no price yet" one until this flips true.
+   */
+  providerHasEverSucceeded: boolean;
 }
 
 /**

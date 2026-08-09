@@ -22,6 +22,7 @@ const AAPL: AssetDto = {
   isActive: true,
   createdAt: '2026-07-26T00:00:00+00:00',
   hasEverBeenPriced: true,
+  providerHasEverSucceeded: true,
 };
 
 // D24 real gap — GET /api/assets returns inactive assets too (confirmed
@@ -40,6 +41,7 @@ const MSFT_INACTIVE: AssetDto = {
   isActive: false,
   createdAt: '2026-07-26T00:00:00+00:00',
   hasEverBeenPriced: true,
+  providerHasEverSucceeded: true,
 };
 
 describe('AssetManagementPage', () => {
@@ -175,6 +177,48 @@ describe('AssetManagementPage', () => {
     expect(fixture.nativeElement.textContent).toContain('check this identifier');
   });
 
+  // --- D34: the escalation above is only trustworthy when the provider it
+  // blames has actually had a chance to prove itself. A fresh database (or
+  // one whose seeded assets carry a static CreatedAt — exactly what happened
+  // in the live container DB) makes every never-priced asset look days old on
+  // day one, regardless of whether its identifier is right. This is the exact
+  // case that caused it: old by CreatedAt, never priced, and the provider has
+  // never once succeeded for anything in this database.
+
+  it('stays in the gentle state for a long-unpriced asset whose provider has never once succeeded (D34)', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([
+      unpricedAsset({
+        createdAt: daysAgo(14),
+        providerSymbol: 'AAPL',
+        providerHasEverSucceeded: false,
+      }),
+    ]);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('waiting for the next refresh');
+    expect(text).not.toContain('check this identifier');
+  });
+
+  it('escalates again once a sibling on the same provider proves the pipe works (D34)', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([
+      unpricedAsset({
+        createdAt: daysAgo(14),
+        providerSymbol: 'AAPL',
+        providerHasEverSucceeded: true,
+      }),
+    ]);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('No price in 14 days');
+    expect(text).toContain('check this identifier');
+  });
+
   it('says nothing about a deactivated asset, which is excluded from refresh cycles anyway', async () => {
     fixture.detectChanges();
     httpMock
@@ -218,6 +262,7 @@ describe('AssetManagementPage', () => {
       isActive: true,
       createdAt: '2026-08-08T12:00:00+00:00',
       hasEverBeenPriced: false,
+      providerHasEverSucceeded: false,
     };
     vi.spyOn(dialog, 'open').mockReturnValue({
       afterClosed: () => of({ kind: 'saved', asset: created }),

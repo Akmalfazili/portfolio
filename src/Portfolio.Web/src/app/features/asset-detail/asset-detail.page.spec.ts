@@ -23,6 +23,7 @@ const AAPL: AssetDto = {
   isActive: true,
   createdAt: '2026-07-26T00:00:00+00:00',
   hasEverBeenPriced: true,
+  providerHasEverSucceeded: true,
 };
 
 const AAPL_HOLDING: HoldingDto = {

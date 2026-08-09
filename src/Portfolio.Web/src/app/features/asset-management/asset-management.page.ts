@@ -62,7 +62,17 @@ function unpricedState(asset: AssetDto, now: number): UnpricedState | null {
   }
 
   const days = Math.floor((now - new Date(asset.createdAt).getTime()) / MS_PER_DAY);
-  return { days, suspicious: days >= STALE_AFTER_DAYS[asset.quoteProviderKind] };
+
+  // D34 — if this asset's provider has never once succeeded for ANY asset in
+  // this database, the silence is explained just as well by "the provider has
+  // never run" as by "the identifier is wrong", so there is nothing yet to
+  // escalate on. A fresh database (or seeded assets whose CreatedAt is a
+  // static value) would otherwise make every never-priced asset look days
+  // old on day one, regardless of whether its identifier is correct. Stay in
+  // the calm "no price yet" state until a sibling on the same provider
+  // proves the pipe genuinely works.
+  const suspicious = asset.providerHasEverSucceeded && days >= STALE_AFTER_DAYS[asset.quoteProviderKind];
+  return { days, suspicious };
 }
 
 /**

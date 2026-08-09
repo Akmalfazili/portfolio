@@ -21,6 +21,7 @@ const CREATED: AssetDto = {
   isActive: true,
   createdAt: '2026-08-08T12:00:00+00:00',
   hasEverBeenPriced: false,
+  providerHasEverSucceeded: false,
 };
 
 describe('AssetFormDialog', () => {
