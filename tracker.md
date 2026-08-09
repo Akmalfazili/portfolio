@@ -1214,12 +1214,22 @@ Added during Phase 12 and the D10–D25 sweep (2026-08-07):
 ## ▶ Next session
 
 Phases 1–10 and **12** are done and verified. **Only Phase 11 remains, and D34 (both halves) is now
-fully closed** — see its row and the two 2026-08-09 handoff entries. The drawback register is down
-to **one genuinely open row — D6** — plus one small, not-yet-crossed-off verification gap: D34's
-frontend half was fixed and test-pinned but never confirmed at the rendered-pixel level, because the
-session that did it had no browser tools available (see below). D6 needs a real NYSE trading day,
-which no local session can manufacture — Phase 11 is otherwise the only thing left, and four of its
-six checks are already reachable today.
+fully closed, including at the rendered-pixel level** — see its row and the three 2026-08-09 handoff
+entries. The drawback register is down to **one genuinely open row — D6**. D6 needs a real NYSE
+trading day, which no local session can manufacture — Phase 11 is otherwise the only thing left, and
+four of its six checks are already reachable today.
+
+> ✅ **The D34 visual gap is closed (2026-08-09, orchestrating terminal).** The `frontend-angular`
+> session that wrote the fix had no browser tools, so it correctly left the check open rather than
+> claiming it. Done afterwards from the orchestrating terminal against the live Docker stack at
+> `http://localhost:8080/assets`: a scripted scan of the rendered page returned
+> `escalatedTextPresent: false` and `fourteenDaysPresent: false` — the strings `"check this
+> identifier"` and `"No price in N days"` appear **nowhere** on the page — with AAPL, MSFT and Z74
+> each rendering *"No price yet — waiting for the next refresh"* and AMP, ANVL and ETH rendering no
+> hint at all, being genuinely priced now that D32 is fixed. `document.visibilityState` was
+> **`"visible"`**, checked first per D31, so this is not another hidden-tab false positive.
+> **This is also the first time any part of the containerized app has been confirmed visually** —
+> Phase 10's verification was entirely `curl`/`sqlcmd`/protocol-level, by its own admission.
 
 ```
 Read tracker.md, then the Phase 11 checklist and its blocking note. Phase 10 (Docker)
@@ -1241,18 +1251,17 @@ measurement. Only tick this box if you are actually running during real NYSE
 hours on a real trading day — check the market calendar first, and report exactly
 how many credits were spent, against the 800/day budget.
 
-While you have browser tools available, close the one thing the last session
-could not: D34's frontend fix (both DTO field and unpricedState() logic) is
-already IN, committed, and test-pinned — do not redo the code change, only the
-visual check. Confirm the Docker stack is up (`docker compose ps`; rebuild the
-web image first if it predates this session's commit), invoke claude-in-chrome,
-navigate to http://localhost:8080/assets, and look: AAPL/MSFT/Z74 should render
-"No price yet — waiting for the next refresh" (NOT the amber "check this
-identifier" warning), and ETH/AMP/ANVL should show no warning at all (they are
-genuinely priced). Check document.visibilityState before drawing any conclusion
-about anything visibility-sensitive — see D31. If this looks right, say so
-plainly in the D34 row and the handoff log; that closes the one remaining gap
-this defect has.
+D34 needs nothing further — its visual check was completed from the orchestrating
+terminal on 2026-08-09 and the row is fully closed. Do not redo it.
+
+The containerized app has now been LOOKED AT exactly once, on one page
+(/assets). Phase 10's own verification was entirely curl/sqlcmd/protocol-level,
+so if you have browser tools, the highest-value thing beyond the four checks
+above is driving the rest of the app inside the container the way Phase 9 did
+for the dev server — in particular whether prices actually update on screen
+across a refresh cycle, and whether the manual refresh button works when
+genuinely clicked rather than POSTed. Check document.visibilityState before
+drawing any conclusion about anything visibility-sensitive — see D31.
 
 Tick a box only for something you have personally seen pass, say plainly what you
 did not verify, then append to the handoff log, write the next session prompt, and
