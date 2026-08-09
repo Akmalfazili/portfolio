@@ -49,14 +49,35 @@ npm start          # http://localhost:4200
 ```bash
 # Docker Desktop must be running (and not paused) before any of this
 
-cp .env.example .env    # then fill in the API keys and SA password
+cp .env.example .env    # then fill in the API keys and BOTH SQL passwords
 
 docker compose up -d    # http://localhost:8080
 ```
 
-The stack runs its own SQL Server container rather than your local SQLEXPRESS instance —
-Windows Authentication cannot reach into a Linux container. Both use the same EF Core
-migrations, so the schema is identical either way.
+The stack runs its own SQL Server container (`db`) rather than your local SQLEXPRESS instance —
+Windows Authentication cannot reach into a Linux container, so this stack uses SQL authentication
+instead. Bringing the stack up runs four services in order:
+
+1. **`db`** — SQL Server, gated by a healthcheck that actually probes readiness with `sqlcmd`,
+   not just "container started".
+2. **`migrate`** — a one-shot service, built from `Dockerfile.migrate`, that applies the exact
+   same EF Core migrations `dotnet ef database update` runs locally, then provisions a
+   least-privilege `portfolio_app` SQL login (`db_datareader` + `db_datawriter`, no DDL) and
+   exits. This is the only container ever handed `MSSQL_SA_PASSWORD`; see `.env.example` for why
+   there are two SQL passwords, not one.
+3. **`api`** — starts only once `migrate` has exited `0` (`depends_on: condition:
+   service_completed_successfully`), and connects as `portfolio_app`, never `sa`.
+4. **`web`** — nginx, serving the built Angular app and reverse-proxying `/api` and `/hubs` to
+   `api`.
+
+Data lives in the named volume `mssql-data`, not a bind mount — `docker compose down` followed
+by `up` preserves it. **Never run `docker compose down -v`** unless you genuinely want to destroy
+the database; `-v` deletes that volume.
+
+Want the container to reach your host's SQLEXPRESS instead of the bundled `db` service? That
+needs Mixed Mode authentication, TCP/IP enabled, and a host firewall rule on SQLEXPRESS, and the
+container-side address is `host.docker.internal,1433`. Documented here as an option, not built —
+the default is the bundled `db` service above.
 
 ## Price refresh
 

@@ -35,11 +35,27 @@ so each session stays focused and its context stays clean.
 | 7 | Angular scaffold + shell | `frontend-angular` | ✅ Done — verified |
 | 8 | Transactions UI | `frontend-angular` | ✅ Done — verified |
 | 9 | Overview + detail pages | `frontend-angular` | ✅ Done — built and wire-verified; no browser driven |
-| 10 | Docker stack | `container-docker` | ⬜ Not started — **unblocked 2026-08-07**, deliberately deferred. **Retargeted from Podman to Docker 2026-08-08** |
+| 10 | Docker stack | `container-docker` | ✅ Done — verified 2026-08-09, real stack run start to finish |
 | 12 | Asset management + theme toggle | `backend-dotnet` + `frontend-angular` | ✅ Done — browser-verified 2026-08-07 |
-| 11 | End-to-end verification | — | ⬜ Not started — **partly blocked**, see the note under the phase |
+| 11 | End-to-end verification | — | ⬜ Not started — **now unblocked on the container-DB check**; D6 (a real NYSE trading day) is the only remaining blocker |
 
-**Currently active:** none — Phases 1–9 and **12** are closed out.
+**Currently active:** none — Phases 1–10 and **12** are closed out. Only Phase 11 remains, and one
+of its six checks is still blocked on **D6** (a real NYSE trading day, which no local session can
+manufacture).
+
+> ✅ **2026-08-09: Phase 10 (the Docker stack) is done, and the container genuinely applies the
+> same EF Core migrations SQLEXPRESS gets.** `docker compose up -d` against a **freshly-created,
+> genuinely empty** `mssql-data` volume brought up `db` (healthy), a new one-shot `migrate`
+> service (exit `0`), `api` and `web` — all four confirmed running, no crash loop, no restart.
+> Schema creation on a first run, `portfolio_app`-not-`sa` (D29), the volume surviving `down`/`up`
+> (never `-v`), and a genuine WebSocket `101` for `/hubs/prices` through nginx were each measured
+> directly against the live containers, not inferred. One real defect was found and fixed along
+> the way that was not in the drawback register going in: the plain `*-noble-chiseled` runtime
+> images set `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=true`, under which `Microsoft.Data.SqlClient`
+> cannot open a connection to SQL Server at all — both `Dockerfile.api` and `Dockerfile.migrate`
+> now use the `-extra` chiselled variant instead, still non-root. See the Phase 10 section and the
+> handoff log for the full account, including one thing found but **deliberately not fixed** here
+> because it needs a `backend-dotnet` change — see **D32**.
 
 > ✅ **2026-08-08: D4, D7, D13, D27, D31 and the D16/D17/D18 residuals are all closed.** **Every
 > pre-Phase-10 drawback is now resolved except D6**, which needs a real NYSE trading day and which
@@ -127,7 +143,7 @@ Blocking items you need to handle before the relevant phase can start.
 | **Twelve Data API key** | ✅ Set | Phase 4 | In `dotnet user-secrets` under `src/Portfolio.Api` as `TwelveData:ApiKey` |
 | **CoinGecko Demo key** | ✅ Not needed | Phase 4 | Keyless public API works — optional, see Decisions |
 | ~~**Podman**~~ | ❌ **Uninstalled 2026-08-08** | — | Replaced by Docker at the user's choice. `podman` is no longer on PATH. Nothing had been built against it — the swap cost documentation only. |
-| **Docker Desktop** | ✅ Installed (29.6.2, Compose v5.3.1) | Phase 10 | Confirmed 2026-08-08. **Desktop was manually paused** at the time of checking — `docker info` fails with *"Docker Desktop is manually paused"*, which reads like a config error. Unpause from the Whale menu before any compose work. **Phase 10 is not blocked.** |
+| **Docker Desktop** | ✅ Installed and used (29.6.2, Compose v5.3.1) | Phase 10 | Confirmed 2026-08-08, **used successfully 2026-08-09** — `docker compose build && up -d` ran a real four-service stack (db/migrate/api/web) end to end. Desktop was manually paused once, earlier; unpause from the Whale menu if `docker info` ever reports that again. **Phase 10 is done.** |
 
 .NET SDKs install side by side, so adding 10 will not disturb existing .NET 9 projects.
 
@@ -562,42 +578,98 @@ from the browser pass are marked inline.**
 
 ---
 
-### ⬜ Phase 10 — Docker stack · `container-docker`
+### ✅ Phase 10 — Docker stack · `container-docker`
 
-**Unblocked 2026-08-07. Retargeted from Podman to Docker on 2026-08-08** — the user uninstalled
-Podman and installed Docker Desktop 29.6.2 (Compose v5.3.1). Because **no container artifact had
-ever been written**, nothing needed porting: the retarget touched only this file, `CLAUDE.md`,
-`README.md`, two XML doc comments, and the agent definition. Start Docker Desktop and confirm it is
-**not paused** (`docker info`) before any build.
+**Done and verified 2026-08-09.** Built fresh against Docker 29.6.2 / Compose v5.3.1 — Podman was
+never on the machine by the time this phase actually ran, so there was nothing to port, only the
+2026-08-08 doc/agent retarget to build on.
 
-- [ ] `Dockerfile.api` — sdk:10.0 → aspnet:10.0-noble-chiseled, non-root, port 8080
-- [ ] `Dockerfile.web` — node:22-alpine (**pinned ≥ 22.22.3**) → nginx:alpine
-- [ ] `nginx.conf` — SPA fallback, `/api` proxy, **WebSocket upgrade headers on `/hubs/`**
-- [ ] `compose.yaml` — db / api / web, healthcheck-gated startup, named `mssql-data` volume
-- [ ] `.dockerignore`
-- [ ] **Migrations applied in the container (D28)** — decide between startup `MigrateAsync`, a
-      one-shot init service, or a migrations bundle, then implement it. **Nothing applies migrations
-      today**, so without this the stack starts against an empty database. Fix `README.md` and the
-      `container-docker` agent's completion checklist in the same change; both already claim this works.
-      **Decide it alongside D29** — startup `MigrateAsync` forecloses that row
-- [ ] **App connects as a least-privilege login, not `sa` (D29)** — `MSSQL_SA_PASSWORD` for container
-      bootstrap only; a `portfolio_app` login with `db_datareader` + `db_datawriter` for the API, DDL
-      held by the migration identity alone. Both credentials documented in `.env.example` with which
-      is which. Container string needs `Encrypt=True;TrustServerCertificate=True`
-- [ ] Verified: `docker compose up -d` → all healthy, app loads, SignalR shows status 101
-- [ ] Verified: **a first `up` against an empty `mssql-data` volume creates the schema** — not just
-      that a second `up` works against a database some earlier step happened to populate
-- [ ] Verified: `down` then `up` preserves data
+- [x] `Dockerfile.api` — `sdk:10.0.302-noble` → `aspnet:10.0.10-noble-chiseled-**extra**`, non-root
+      (`APP_UID`, confirmed live via `docker top` = uid 1654), `ASPNETCORE_HTTP_PORTS=8080`
+- [x] `Dockerfile.web` — `node:22.23.2-alpine` (pinned patch tag, confirmed **above** the 22.22.3
+      Angular CLI gate) → `nginx:1.31-alpine`, made non-root by hand (chowned cache/log/pid dirs,
+      `USER nginx`, confirmed live via `docker exec … id` = uid 101, `docker top` shows the master
+      process itself owned by that uid, not just the workers)
+- [x] `nginx.conf` — SPA `try_files … /index.html` fallback, `/api/` reverse proxy, `/hubs/` with
+      the full WebSocket upgrade header set
+- [x] `compose.yaml` — `db` / `migrate` / `api` / `web`, healthcheck-gated startup
+      (`service_healthy` → `service_completed_successfully` → default), named `mssql-data` volume
+- [x] `.dockerignore` — `bin/`, `obj/`, `node_modules/`, `.angular/`, `dist/`, `.git/`, `tests/`,
+      `*.md`, secrets
+- [x] **Migrations applied in the container (D28) — option 2, the one-shot init service, as
+      decided.** New `migrate` service built from `Dockerfile.migrate`, running a small console app
+      at `docker/db-init/` (`Portfolio.DbInit`, referencing `Portfolio.Infrastructure` only — **zero
+      changes under `src/`**, not part of `portfolio.slnx`) that calls
+      `PortfolioDbContext.Database.MigrateAsync()` — the *same* migrations `dotnet ef database
+      update` applies to SQLEXPRESS, not a separate schema. `api`'s `depends_on: migrate:
+      condition: service_completed_successfully` means it never starts against an unmigrated
+      database. `README.md` and the `container-docker` agent's completion checklist both corrected
+      in this change — the checklist now points at `docker compose logs migrate`, not `api`, since
+      the chiselled `api` image has no code path that could ever emit that line.
+- [x] **App connects as a least-privilege login, not `sa` (D29)** — `migrate` is the *only*
+      container ever handed `MSSQL_SA_PASSWORD`; it creates the `portfolio_app` SQL login + database
+      user (`db_datareader` + `db_datawriter`, no DDL) and `api` connects as that. **Verified from
+      the app's own live connection, not inferred from the env file**: `sys.dm_exec_sessions`
+      queried directly against `db` while `api` was running showed both of its EF Core sessions
+      (`program_name = 'EFCore/10.0.10 …'`) as `login_name = 'portfolio_app'`, `host_name` matching
+      the `api` container's own hostname — and attempting `CREATE TABLE` as `portfolio_app` via
+      `sqlcmd` was rejected with `Msg 262 … permission denied`, proving the DDL boundary is real,
+      not just granted-and-unused. Both credentials documented in `.env.example` with an explicit
+      "bootstrap only" vs "the app's own login" comment on each. Container connection string carries
+      `Encrypt=True;TrustServerCertificate=True`.
+- [x] Verified: `docker compose up -d` → `db` healthy, `migrate` exits `0`, `api`/`web` running, no
+      restarts (`RestartCount: 0` on all three long-running services). App reachable at
+      `http://localhost:8080` — confirmed via `curl` returning real Angular `index.html`, not an
+      nginx default page, and `GET /api/assets` through the nginx proxy returning the seeded rows.
+      SignalR: `POST /hubs/prices/negotiate` returns a real connection token, and a raw HTTP
+      Upgrade request to `/hubs/prices?id=<token>` through nginx came back **`HTTP/1.1 101
+      Switching Protocols`** with a server-computed `Sec-WebSocket-Accept` — proven at the protocol
+      level, not inferred from devtools.
+- [x] Verified: **a first `up` against a genuinely empty `mssql-data` volume creates the schema.**
+      `docker volume rm portfolio_mssql-data` run deliberately before the first `up` (confirmed no
+      volume existed beforehand), then after `up`: `sys.tables` in `Portfolio` lists all 8
+      application tables plus `__EFMigrationsHistory`, and `__EFMigrationsHistory` lists all **4**
+      real migrations (`InitialCreate` → `AddAssetCreatedAt`) — not a subset, not a stale copy.
+- [x] Verified: `down` then `up` preserves data. A probe transaction (`POST /api/transactions`)
+      was created, read back, the stack brought down with plain `docker compose down` (**no
+      `-v`** — confirmed the named volume still existed via `docker volume ls` after `down`), then
+      `up` again: the probe row was still there via `GET /api/transactions`, and `migrate` re-ran
+      and exited `0` (idempotent no-op past the already-applied migrations, exactly as designed).
+      Probe deleted afterward.
 
-**What the platform swap does and does not change.** It changes filenames (`Containerfile.*` →
-`Dockerfile.*`, `.containerignore` → `.dockerignore`), the CLI, the host alias
-(`host.containers.internal` → `host.docker.internal`, only relevant to the documented-but-not-built
-"reach host SQLEXPRESS" option), and it removes the `podman machine start` prerequisite along with
-rootless UID-mapping friction on the named volume. It changes **neither** of the two things this
-phase is actually at risk from: Windows Auth still cannot work from a Linux container, and nginx
-still needs the WebSocket upgrade headers on `/hubs/` or live price push degrades to long-polling
-while appearing to work. One new footgun that Podman did not have: `docker compose down -v` deletes
-the named volume, so `-v` must never be used as a casual cleanup flag.
+**One real defect found and fixed along the way, not in the register going in.** The plain
+`aspnet:10.0-noble-chiseled` / `runtime:10.0-noble-chiseled` images set
+`DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=true` by default. Under that setting,
+`Microsoft.Data.SqlClient` cannot open a SQL Server connection **at all** — every attempt throws
+`System.NotSupportedException: Globalization Invariant Mode is not supported.` before a single
+query runs. First hit as `migrate` exiting `139` with that exception in its log on the very first
+`up` attempt. Both `Dockerfile.migrate` and `Dockerfile.api` now pull the `-extra` chiselled
+variant instead (ships ICU, still non-root by default), and the original `<InvariantGlobalization>
+true</InvariantGlobalization>` that had been set in `docker/db-init/Portfolio.DbInit.csproj` —
+which would have caused the exact same failure even on a fixed base image — was removed. Recorded
+in `.claude/agents/container-docker.md` so the next Dockerfile in this repo doesn't rediscover it
+the hard way.
+
+**Found, but deliberately NOT fixed here — belongs to `backend-dotnet` — see D32.** CoinGecko
+quote refresh 401'd against `pro-api.coingecko.com` for the whole session. Root cause is a
+pre-existing one-line bug in `Portfolio.Infrastructure/DependencyInjection.cs`
+(`options.ApiKey is null ? Keyless : Pro` — should be `string.IsNullOrWhiteSpace`), invisible in
+every environment tried before now because `dotnet user-secrets` leaves an unset key genuinely
+**absent**, while a compose `.env` with a blank `CoinGecko__ApiKey=` line hands the container a
+**present-but-empty** string — and there turns out to be no way to make Compose omit a mapped
+environment key based on the emptiness of its source value (tested directly: `${VAR:+…}`,
+`${VAR:-}`, and the bare-name passthrough form all still emit `VAR=` into the container once `.env`
+defines the key with `=` at all). Harmless — crypto quotes simply don't refresh, everything else is
+unaffected — but real, and it is not a container-stack defect, so it was left as a drawback row
+rather than patched by editing `src/Portfolio.Infrastructure` myself.
+
+**What the platform swap did and did not change, in the end.** Windows Authentication was
+confirmed to genuinely stay out of the container path — `ASPNETCORE_ENVIRONMENT=Production` is set
+explicitly in `Dockerfile.api` so `appsettings.Development.json`'s `Trusted_Connection=True` string
+is never even loaded, and `ConnectionStrings__Portfolio` under compose carries SQL auth only. nginx
+forwards the WebSocket upgrade on `/hubs/` — confirmed with a real `101`, not assumed from the
+config existing. `docker compose down -v` was never run against the real stack; the one deliberate
+volume deletion for the empty-volume test used `docker volume rm portfolio_mssql-data` by name.
 
 ### ✅ Phase 12 — Asset management + theme toggle
 
@@ -651,10 +723,12 @@ validation rather than reimplementing them client-side — confirmed on the wire
 
 ### ⬜ Phase 11 — End-to-end verification
 
-> ⚠️ **Two of these six cannot be ticked today, and neither is a matter of effort.** The container-DB
-> check needs **Phase 10**, which the user deliberately deferred on 2026-08-07; the credit-budget
-> check needs a **real NYSE trading session**, which no amount of local work manufactures (this is
-> **D6**). The other four are reachable now. Do not let a session quietly tick all six.
+> ⚠️ **One of these six is now closed as a side effect of Phase 10; one is still blocked and
+> cannot be helped by more local work.** Phase 10 landing on 2026-08-09 closes the container-DB
+> migration-parity check below — it was verified as part of that phase, not deferred to this one.
+> The credit-budget check still needs a **real NYSE trading session**, which no amount of local
+> work manufactures (**D6**). The other four are reachable now; do not let a session quietly tick
+> the D6 box without an actual trading day behind it.
 
 - [ ] Enter a fractional crypto buy; confirm it persists and the gain/loss card recalculates
 - [ ] `/stocks` and `/crypto` totals are fully independent
@@ -662,8 +736,14 @@ validation rather than reimplementing them client-side — confirmed on the wire
 - [ ] Z74 quote arrives in SGD and converts at the stored USD/SGD rate
 - [ ] **Blocked (D6)** — Twelve Data credit use over one trading day lands well under 800. Needs a
       real trading day; every session so far has run with NYSE closed and spent 0 credits
-- [ ] **Blocked (Phase 10)** — same migration set applies cleanly to both SQLEXPRESS and the
-      container DB
+- [x] **Closed 2026-08-09, as part of Phase 10.** Same migration set applies cleanly to both
+      SQLEXPRESS and the container DB — not inferred, compared directly: the container's
+      `__EFMigrationsHistory` lists all 4 real migrations
+      (`InitialCreate`/`AddAssetQuoteProviderKind`/`AddSourceRefreshState`/`AddAssetCreatedAt`),
+      an exact match against the `.cs` files under
+      `src/Portfolio.Infrastructure/Persistence/Migrations/`, applied via the same
+      `PortfolioDbContext.Database.MigrateAsync()` codepath EF Core always uses — there is only
+      ever one migration set in this repo, the container now genuinely runs it too.
 
 ---
 
@@ -709,8 +789,9 @@ so the list stays a record and not just a to-do.
 | D27 | ~~**A well-formed but wrong provider symbol is still permanently silent**~~ **Mitigated 2026-08-08 via the cheap path this row itself named — no provider call, no credit.** The symbol is still not verified against the provider (that decision stands unchanged, for the reasons below), but the *symptom* — no way to tell a wrong record from a closed market — is addressed. `Asset` gained `CreatedAt` (migration `20260808150505_AddAssetCreatedAt`, applied and verified against real SQL Server); `AssetDto` gained `CreatedAt` + `HasEverBeenPriced`, the latter true if **either** a `PriceQuote` or any `PriceHistory` row exists. The `/assets` page renders the two states differently: *"No price yet — waiting for the next refresh"* for a new asset, escalating to an amber *"No price in N days — check this identifier"* past a per-provider threshold. **The thresholds are the interesting part and are not arbitrary: 3 days for TwelveData/Yahoo, 1 day for CoinGecko.** A US stock added on a Friday evening cannot be priced until Monday — the refresh service correctly never polls a closed market — so ~65 hours of silence is *right*, and warning at 1 day would fire on every stock added over a weekend, which is exactly how a warning gets trained into being ignored. Crypto has no such excuse (unmetered, ungated, polled every 2 min). Pinned by 6 frontend tests including the weekend case, and 5 backend ones. Two deliberate refinements: a **deactivated** asset says nothing (it is excluded from refresh cycles, so its silence is meaningless), and `UpdateAsync` does not reset `CreatedAt` (a rename must not erase the clock the hint measures). ⚠️ **Still not closed, by design:** the hint points at the record, it does not prove it wrong — a delisted symbol looks identical. Kept in full below. | 3, 12 | **Split out of D23 on 2026-08-07 rather than left implied.** D23 now rejects a *malformed* record (a Twelve Data asset with no `ProviderSymbol`). It does not, and cannot cheaply, reject a **well-formed but wrong** one: `APPL` for `AAPL`, or a CoinGecko id that does not exist. Such an asset is accepted with a `201`, renders *Awaiting price* forever, and gives no hint that the record rather than the market is the cause — the exact user-visible symptom D23 was written to eliminate, just reached by a different route. Deliberately not fixed: a live symbol-resolution check spends a credit per asset creation and needs its own failure-mode design (what should happen when the provider is simply down — reject a legitimate asset, or accept an illegitimate one?). | Medium — a provider `resolve`/`quote` probe at create time, plus a decision about the provider-unavailable path. Cheapest partial mitigation is a "no price seen yet since creation" hint on the asset row, which needs no provider call at all. `backend-dotnet`. |
 | D30 | ~~**The allocation pie had no unpriced caveat**~~ **Closed 2026-08-08.** The D17 residual, split out and fixed. `AllocationItemDto` gained `HasPrice` and `PortfolioAllocationDto` gained `UnpricedHoldingsCount` (carried on the allocation payload itself, not only the summary's, so a caller fetching just this endpoint can still tell the pie is partial). The legend now renders **"No price yet"** in place of the `0.0% / $0.00` pair, because a `0%` that means *ignorance* must not look identical to a `0%` that means a genuinely tiny position. **Scope worth recording: this only ever affected the market-value pie.** Cost basis comes from the transactions and is known for every holding whether or not a quote arrived, so the cost-basis pie had nothing to caveat — the `unpriced` flag is hardcoded false on that path rather than computed. `backend-dotnet` + `frontend-angular`. | 6, 9 | — | — |
 | D31 | ~~**A real OS dark-mode flip still cannot be confirmed**~~ **Closed 2026-08-08 by the user, in the visible window the agent could not obtain — and the confound was the whole story.** With the theme toggle on "Follow OS" and the app in a normal focused window, a real Windows theme change repaints the chart gridlines correctly. **So D16 is genuinely fixed on both paths: the `matchMedia` half works, and every symptom the agent measured was an artefact of the harness.** ⚠️ **Method note worth keeping, because it will bite again:** a tab driven through the Chrome extension is `document.visibilityState === "hidden"` for its whole life — screenshots do not activate it — and Chrome withholds `prefers-color-scheme` `change` events from hidden tabs while *still* re-evaluating `matchMedia(...).matches` and repainting CSS on read. That combination is actively misleading: it looks exactly like a listener that is wired up wrong, and it produced a false positive here that took a registry flip, a `WM_SETTINGCHANGE` broadcast and two listener APIs to *fail* to explain. **Before concluding anything about visibility-gated browser behaviour from an extension-driven tab, check `document.visibilityState` first.** Distinction kept honest for the record: the user confirmed this at the rendered level (the gridlines look right), not with the scripted stroke census the agent used — which is the correct level of evidence for the claim, since the claim is about what a person sees. Kept in full below. | 9 | **Attempted on 2026-08-08 and the result was inconclusive, which is why this was a row rather than a tick.** Method: put the app in genuine "Follow OS" state (`data-theme` absent, `localStorage` key removed — verified, not assumed), census every chart SVG stroke, then flip the **actual Windows theme** via `HKCU:\…\Themes\Personalize` — twice, the second time with a proper `WM_SETTINGCHANGE`/`ImmersiveColorSet` broadcast, since a bare registry write does not notify running apps. **What was measured: the OS change genuinely reaches the page** — `matchMedia('(prefers-color-scheme: dark)').matches` flips, `--ui-color-gridline` flips `#2c2c2a` ↔ `#e1e0d9`, and the body background inverts. **But the chart's SVG strokes did not move in step**, sitting one flip behind at the previous theme's values (e.g. 8 gridline strokes still `#2c2c2a` on a fully light page — the exact D16 symptom, visually confirmed as dark gridlines on a light card). **And the `change` event fired ZERO times** across both flips, measured with a listener registered directly on a fresh `MediaQueryList`, which no application code can suppress. ⚠️ **The confound, stated plainly rather than buried:** the tab was `document.visibilityState === "hidden"` throughout, because the Chrome extension drives tabs without activating them and a screenshot does not activate them either. Chrome defers work in hidden tabs, so the missing events may be an artefact of the harness rather than a defect. **Do not record D16 as verified, and do not record it as broken** — neither is established. | Low, and it needs a human for ~30 seconds, not an agent: open the app in a **focused, visible** window with the theme toggle on "Follow OS", change the Windows app theme, and look at whether the chart gridlines repaint immediately. If they lag, the `matchMedia` listener needs replacing with something that also re-checks on `visibilitychange`/focus. `frontend-angular`. |
-| D28 | **Nothing applies EF Core migrations — the container stack would start against an empty database** | 10 | **Found 2026-08-08 while answering "will the container update when I change code?"** Grepped the whole of `src/` for `Migrate`, `MigrateAsync` and `EnsureCreated`: **zero hits**. `Program.cs` is 46 lines and never touches `Database`. The only `EnsureCreatedAsync` anywhere is `PrecisionRoundTripTests.cs:38`, in the integration tests. Locally this is invisible and harmless — the schema exists because `dotnet ef database update` is run **by hand** against SQLEXPRESS, and it has been. **In a container there is no hand to run it.** The API image is `aspnet:10.0-noble-chiseled`, which ships no SDK and therefore no `dotnet ef`; the `db` service is reachable only from inside the compose network; and the `mssql-data` volume starts empty on a first `up`. So `docker compose up -d` brings up an API talking to a database with no tables, which surfaces as a runtime exception on the first request rather than a clear startup failure. **Two things already written down assume this is solved and it is not:** `README.md` claims "Both use the same EF Core migrations, so the schema is identical either way", and `.claude/agents/container-docker.md`'s completion checklist says to confirm `docker compose logs api` shows migrations applied — no code path can produce that log line. Note this is *not* the same as the rebuild question it was found next to: rebuilding an image never touches the database, because the volume deliberately survives. A schema change therefore needs its own step whatever the image does. | Medium, and it is a **decision before it is code** — the three options differ in blast radius, so Phase 10 must pick one deliberately rather than reach for the first. (1) `await db.Database.MigrateAsync()` in a startup scope: simplest, keeps image and schema in step automatically, but every API instance races to migrate on boot and a bad migration takes the app down with it. (2) A one-shot init service in `compose.yaml` that runs migrations and exits, with `api` gated on its completion: keeps the concern out of the app, costs an extra service and an SDK image. (3) `dotnet ef migrations bundle` — a self-contained executable copied into the image and run before the app: no SDK in the runtime image, but a build step to remember. **Whichever is chosen, fix `README.md` and the agent file's checklist in the same change**, since both currently describe behaviour that does not exist. ⚠️ **Decide this together with D29 — the two are coupled, and picking (1) forecloses D29.** Migrations need DDL rights the running app has no business holding permanently; options (2) and (3) let the migration step hold them while the app does not, so the privilege separation falls out for free. `backend-dotnet` + `container-docker`. |
-| D29 | **The container app would connect to SQL Server as `sa`** | 10 | **Found 2026-08-08, answering "is Windows Auth still the right choice under Docker?"** The answer for *local* dev is yes and nothing should change — `appsettings.Development.json:9` uses `Trusted_Connection=True`, which stores no password anywhere and is the more secure option wherever it works. The container has no such choice: a Linux container has no Windows identity or Kerberos ticket, so it must use SQL auth. That much is the existing, correct dual-connection-string design. **The gap is which SQL login it uses.** `.env.example` defines exactly one credential — `MSSQL_SA_PASSWORD` — so the implied `ConnectionStrings__Portfolio` connects the API as **`sa`**, a sysadmin over the whole instance. For a single-user local tracker that is not an emergency, but it is gratuitous: a compromised or merely buggy API gets `DROP DATABASE` and every other database on the instance along with it, when all it needs is to read and write six tables. Worth fixing *while the stack is being written* rather than retrofitted, because it costs almost nothing at authoring time. ⚠️ **Coupled to D28 and the coupling runs one way**: this is only cheaply achievable if migrations run as a *separate* step (D28 options 2 or 3), since a startup `MigrateAsync` (option 1) forces the app's own login to hold DDL rights permanently and there is then no meaningful privilege to separate. Choose D28 first, with this row in view. | Low **if D28 lands as an init service or a bundle**, otherwise mostly moot. Keep `MSSQL_SA_PASSWORD` for container **bootstrap only**; add a `portfolio_app` login + user created during db init, grant it `db_datareader` + `db_datawriter` (plus DDL to the *migration* identity only), and point `ConnectionStrings__Portfolio` at it. Add the new credential to `.env.example` with a comment saying which of the two is for bootstrap and which is for the app, or the next person will reuse the wrong one. Also note the container string needs `Encrypt=True;TrustServerCertificate=True` — SqlClient 6.x defaults `Encrypt=true` and the `mssql/server` image serves a self-signed certificate, so omitting it fails with a certificate-chain error that reads like a networking fault. `container-docker`. |
+| D28 | ~~**Nothing applies EF Core migrations — the container stack would start against an empty database**~~ **Closed 2026-08-09 via option 2, the one-shot init service, exactly as this row's own D29 coupling note recommended.** New `migrate` compose service (`Dockerfile.migrate`, a tiny console app at `docker/db-init/Portfolio.DbInit` referencing `Portfolio.Infrastructure` only — **zero changes under `src/`**) runs `PortfolioDbContext.Database.MigrateAsync()` and exits; `api`'s `depends_on: migrate: condition: service_completed_successfully` means it never starts against an unmigrated database. **Proven against a genuinely empty `mssql-data` volume, not merely a pre-populated one**: `docker volume rm` run first, confirmed absent, then `docker compose up -d` — `__EFMigrationsHistory` came back with all 4 real migrations, an exact match to the files under `src/Portfolio.Infrastructure/Persistence/Migrations/`. `README.md` and the `container-docker` agent's own completion checklist — both named in this row as currently lying — are fixed in the same change; the checklist now points at `docker compose logs migrate`, since the chiselled `api` image has no code path that could ever emit a migrations-applied line. Kept in full below. | 10 | **Found 2026-08-08 while answering "will the container update when I change code?"** Grepped the whole of `src/` for `Migrate`, `MigrateAsync` and `EnsureCreated`: **zero hits**. `Program.cs` is 46 lines and never touches `Database`. The only `EnsureCreatedAsync` anywhere is `PrecisionRoundTripTests.cs:38`, in the integration tests. Locally this is invisible and harmless — the schema exists because `dotnet ef database update` is run **by hand** against SQLEXPRESS, and it has been. **In a container there is no hand to run it.** The API image is `aspnet:10.0-noble-chiseled`, which ships no SDK and therefore no `dotnet ef`; the `db` service is reachable only from inside the compose network; and the `mssql-data` volume starts empty on a first `up`. So `docker compose up -d` brings up an API talking to a database with no tables, which surfaces as a runtime exception on the first request rather than a clear startup failure. **Two things already written down assume this is solved and it is not:** `README.md` claims "Both use the same EF Core migrations, so the schema is identical either way", and `.claude/agents/container-docker.md`'s completion checklist says to confirm `docker compose logs api` shows migrations applied — no code path can produce that log line. Note this is *not* the same as the rebuild question it was found next to: rebuilding an image never touches the database, because the volume deliberately survives. A schema change therefore needs its own step whatever the image does. | Medium, and it is a **decision before it is code** — the three options differ in blast radius, so Phase 10 must pick one deliberately rather than reach for the first. (1) `await db.Database.MigrateAsync()` in a startup scope: simplest, keeps image and schema in step automatically, but every API instance races to migrate on boot and a bad migration takes the app down with it. (2) A one-shot init service in `compose.yaml` that runs migrations and exits, with `api` gated on its completion: keeps the concern out of the app, costs an extra service and an SDK image. (3) `dotnet ef migrations bundle` — a self-contained executable copied into the image and run before the app: no SDK in the runtime image, but a build step to remember. **Whichever is chosen, fix `README.md` and the agent file's checklist in the same change**, since both currently describe behaviour that does not exist. ⚠️ **Decide this together with D29 — the two are coupled, and picking (1) forecloses D29.** Migrations need DDL rights the running app has no business holding permanently; options (2) and (3) let the migration step hold them while the app does not, so the privilege separation falls out for free. `backend-dotnet` + `container-docker`. |
+| D29 | ~~**The container app would connect to SQL Server as `sa`**~~ **Closed 2026-08-09, in the same change as D28 — cheap exactly because D28 landed as an init service.** `migrate` is the only container ever handed `MSSQL_SA_PASSWORD`; it creates a `portfolio_app` SQL login + database user with `db_datareader`/`db_datawriter` only, and `api` connects as that via `ConnectionStrings__Portfolio` (`Encrypt=True;TrustServerCertificate=True`, as this row specified). **Verified from the app's own live connection, not the env file**: `sys.dm_exec_sessions` queried directly against `db` while `api` was running showed both of its EF Core sessions (`program_name = 'EFCore/10.0.10 …'`, `host_name` matching the `api` container's own hostname) as `login_name = 'portfolio_app'`; a `CREATE TABLE` attempted as `portfolio_app` via `sqlcmd` was rejected with `Msg 262 … permission denied`, proving the DDL boundary holds rather than merely being granted-and-never-tested. Both credentials documented in `.env.example`, each labelled which is bootstrap-only and which the app actually uses. Kept in full below. | 10 | **Found 2026-08-08, answering "is Windows Auth still the right choice under Docker?"** The answer for *local* dev is yes and nothing should change — `appsettings.Development.json:9` uses `Trusted_Connection=True`, which stores no password anywhere and is the more secure option wherever it works. The container has no such choice: a Linux container has no Windows identity or Kerberos ticket, so it must use SQL auth. That much is the existing, correct dual-connection-string design. **The gap is which SQL login it uses.** `.env.example` defines exactly one credential — `MSSQL_SA_PASSWORD` — so the implied `ConnectionStrings__Portfolio` connects the API as **`sa`**, a sysadmin over the whole instance. For a single-user local tracker that is not an emergency, but it is gratuitous: a compromised or merely buggy API gets `DROP DATABASE` and every other database on the instance along with it, when all it needs is to read and write six tables. Worth fixing *while the stack is being written* rather than retrofitted, because it costs almost nothing at authoring time. ⚠️ **Coupled to D28 and the coupling runs one way**: this is only cheaply achievable if migrations run as a *separate* step (D28 options 2 or 3), since a startup `MigrateAsync` (option 1) forces the app's own login to hold DDL rights permanently and there is then no meaningful privilege to separate. Choose D28 first, with this row in view. | Low **if D28 lands as an init service or a bundle**, otherwise mostly moot. Keep `MSSQL_SA_PASSWORD` for container **bootstrap only**; add a `portfolio_app` login + user created during db init, grant it `db_datareader` + `db_datawriter` (plus DDL to the *migration* identity only), and point `ConnectionStrings__Portfolio` at it. Add the new credential to `.env.example` with a comment saying which of the two is for bootstrap and which is for the app, or the next person will reuse the wrong one. Also note the container string needs `Encrypt=True;TrustServerCertificate=True` — SqlClient 6.x defaults `Encrypt=true` and the `mssql/server` image serves a self-signed certificate, so omitting it fails with a certificate-chain error that reads like a networking fault. `container-docker`. |
+| D32 | **CoinGecko routes to the paid Pro API and 401s when `CoinGecko__ApiKey` is present-but-empty, which is exactly the shape a compose `.env` produces for an unset key** | 4, 10 | **Found 2026-08-09 while running the real Docker stack — `docker compose logs api` showed `CoinGecko /simple/price for 3 coins failed with status 401` against `pro-api.coingecko.com` for the whole session, never the free `api.coingecko.com` Phase 4 documented as sufficient without a key.** Root cause is `Portfolio.Infrastructure/DependencyInjection.cs`: `var baseUrl = options.ApiKey is null ? options.KeylessBaseUrl : options.ProBaseUrl;`. That check is correct for `dotnet user-secrets`, which leaves an unset key genuinely **absent** (`ApiKey` binds to `null`). It is wrong for compose: `.env.example`'s `CoinGecko__ApiKey=` line, left blank exactly as instructed for the free tier, hands the container an environment variable that **exists with an empty string value** — `IOptions<CoinGeckoOptions>.ApiKey` binds to `""`, which is not `null`, so the `is null` check routes to the Pro API anyway and it 401s with no key attached. **Confirmed there is no compose-layer fix**: tested `${VAR:+…}`, `${VAR:-}`, and the bare-name `environment: - VAR` passthrough form directly against a throwaway compose file — all three still emit `VAR=` (empty) into the container once `.env` defines the key with `=` at all, because Compose does not distinguish "set to empty" from "unset" once a `.env` line exists. The empty-vs-absent distinction can only be collapsed on the C# side. Deliberately left unfixed by `container-docker`, which does not own that file — see the boundary note in the Phase 10 session that found this. Harmless in isolation (crypto quotes just don't refresh; nothing else is affected, and it happened on a Sunday with NYSE closed anyway so nothing else was polling), but it means **the Docker stack cannot get free CoinGecko pricing today**, which local dev always could. | Low — one line, `options.ApiKey is null` → `string.IsNullOrWhiteSpace(options.ApiKey)` in `AddMarketData`. `backend-dotnet`. |
 
 ### D24 design note — the provider rules a "add your own asset" form has to encode
 
@@ -815,6 +896,7 @@ Two limits worth knowing before estimating this:
 | 2026-07-31 | `frontend-angular` | 7 | **Complete and verified.** Angular 22 workspace scaffolded with the central design system the user asked for: `ui.tokens.scss` + `ui.mixins.scss`, with Material *derived from* the tokens rather than themed alongside them. Agent reported honestly and flagged the proxy and hub as never exercised live — testing that flag found **two real defects**. (1) **Ids were typed `string` across `models.ts`** while the backend sends C# `int` as JSON numbers; since the API sets no `AllowReadingFromString`, the Phase 8 transaction form would have `POST`ed `"assetId": "3"` and got a 400. The specs passed only because their fixtures (`'a1'`, `'t1'`) matched the wrong type. Fixed to `number`, then confirmed against the live API (`"id":1`) and the live hub (`"assetId":3`). (2) **The D5 "why nothing moved" logic was dead code** — it filtered `sources` for `attempted: false`, but `RunCycleAsync` drops a gated provider from that list entirely, so the filter could never match and a click with NYSE closed would have said a cheerful "Refreshed 4 symbols" with no explanation. Rewritten to derive closed markets from `nyseOpen`/`sgxOpen`, and its spec rebuilt around a payload captured verbatim from the live API instead of a fabricated one; recorded as **D10**. Also closed the design-system gaps the agent left: raw `px` layout values inlined in five component stylesheets despite the token file's own rule (now `--ui-layout-*` / `--ui-size-icon-*` tokens, with the toolbar height tracking Material's 64→56px breakpoint so the content `calc()` stays right on mobile), and the dark-mode block duplicated between the media query and `[data-theme]` (now one `ui-dark-tokens` mixin, so a token cannot be added to one and forgotten in the other). Verified independently of the agent: `ng build` clean, `ng test` **68/68**, no hex or raw `px` anywhere outside the token files, and a **live run through the dev proxy** — 6 assets over `/api`, a real SignalR client on `WebSocketTransport` (not long-polling), on-connect snapshot, 4 `QuoteUpdated` frames with sub-cent precision intact, `200` then `429 secondsRemaining: 26`. NYSE closed throughout, so 0 Twelve Data credits spent. Left knowingly: the `@angular/cli` Node-check patch (**D9**), and D8's 10-dp *quantity* round trip still unmeasured. |
 | 2026-08-08 | — | pre-Phase-10 drawbacks (D4, D7, D13, D27, D17/D18 residuals) | **Six items closed, one new defect found while fixing another, and one verification that honestly failed.** Worked directly rather than via the sub-agents, since the changes were small and spanned both stacks. Final state: backend **build clean, 0 warnings, 173/173** (was 157/157); frontend `ng build` clean, **194/194 across 29 files** (was 182/182); tree re-grepped clean of hex and raw `px` outside the token files (one new token, `--ui-size-icon-xs`). **D7** — both serializers now built from one `PortfolioJsonSerialization.Apply`, with naming policy set *explicitly* so agreement is stated rather than coincidental; all 3 new parity tests confirmed to fail when the original Phase 5 bug is reintroduced. **D4** — closed without modelling a single lunar holiday, at the user's direction: the calendar stays wrong, the reported price stops lying. Cheaper than estimated because the providers already stored honest timestamps and only `PortfolioSummaryService` was ignoring them. 🐛 **D4a, found while testing D4 and worse than D4 in isolation:** the fix was half-useless, because `AssetDetailPage` explicitly assumed *"a genuine SignalR push is always live"* — false in exactly the lunar-holiday case — so a push **overrode** the honest label on the most prominent number on the page. Fixed on the backend by putting the verdict on the wire (`QuoteUpdateNotification.Source`), not by reimplementing session arithmetic in the browser; a second, *structural* half turned up on top of it — the `Close ·` caption lived inside the snapshot branch of the template, so the push path had nowhere to render it even with the flag correct. **D13** — the standout: 601 + 560 `PriceHistory` rows over 2024-03-15 → 2026-08-07 from ~2 Twelve Data credits, with 59 NYSE-only and 18 SGX-only dates proving the calendars genuinely diverge. All three years hand-recomputed from the raw series to **0.0000 difference**, and the mid-period $1,001 deposit shown excluded — **+13.7391% TWR against a naive +62.3340%**. **D27** — `CreatedAt` + `HasEverBeenPriced`, with per-provider thresholds (3 days stocks / 1 day crypto) chosen so a stock added on a Friday evening does not trip the warning over a weekend when no poll could legally have happened. **D30 (D17 residual)** — the pie's `0%` now distinguishes ignorance from a tiny position; only ever affected the market-value pie, since cost basis is known regardless. **D18 residual** — inline SVG; the old spec had been *pinning the defect* by asserting `textContent` contained `arrow_upward`. ⚠️ **D31 — the one that did not work.** A real Windows theme flip (registry + `WM_SETTINGCHANGE` broadcast) was measured to reach the page (media query flips, CSS tokens repaint) while the chart strokes lagged one flip behind, and the `change` event fired **zero** times — but the tab was `visibilityState: "hidden"` throughout, because the extension never activates tabs, so the result is confounded and D16 is recorded as **neither verified nor broken**. ✅ **D31 was closed by the user minutes later, and the agent's finding was a false positive**: with a visible, focused window on "Follow OS", a real Windows theme change repaints the gridlines correctly. The hidden-tab confound was the entire explanation, so **D16 is fixed on both paths**. The lesson is now recorded in D31 and is the durable takeaway from this session: an extension-driven tab is permanently `visibilityState: "hidden"`, and Chrome withholds `prefers-color-scheme` events from hidden tabs *while still* updating `matches` and repainting CSS — which mimics a broken listener almost perfectly. Housekeeping: found and removed a **leftover MSFT probe transaction (id 34)** that the 2026-08-07 log claimed had been deleted — `GET /api/transactions` was not `[]` at session start. All probes deleted; transactions confirmed `[]`. Multi-year `PriceHistory`/`FxRate` rows kept deliberately as genuine market data. **0 Twelve Data quote credits** (NYSE closed all session); ~2 spent on the D13 backfill, against 800/day. |
 | 2026-08-08 | — | 10 (retarget only) | **Podman → Docker conversion, documentation and agent definition only. No Phase 10 work was started, at the user's explicit instruction.** The user uninstalled Podman and installed Docker Desktop; verified on this machine — `podman` returns *command not found*, Docker reports **29.6.2** with **Compose v5.3.1**. **The swap was cheap for exactly one reason worth recording: Phase 10 had never produced a single artifact.** A glob for `Containerfile*`, `compose*.yaml`, `nginx.conf` and `.containerignore` returned nothing but `.env.example`, so there was no stack to port — only prose describing one that did not exist yet. Had Phase 10 been done first, this would have been a real migration instead of a rename. Changed: `.claude/agents/container-podman.md` → **`container-docker.md`** (rewritten, not renamed — rootless-Podman rules replaced with non-root-container rules, `podman machine` gotchas replaced with Docker Desktop ones, `host.containers.internal` → `host.docker.internal`); `CLAUDE.md` ×4; `README.md` ×2 blocks; `tracker.md` throughout; and two XML doc comments that named "the Podman container" (`MarketCalendar.cs:8`, `DependencyInjection.cs:22`) — grepped for rather than assumed, and they are the reason a swap that looks like a docs edit also touched `src/`. Backend build re-run after the comment edits: **clean, 0 warnings** under `TreatWarningsAsErrors`. **Two new Docker-specific hazards recorded** that Podman did not have: `docker compose down -v` destroys the named volume the persistence check exists to prove, and Docker Desktop can be **manually paused**, in which case every command fails with *"Docker Desktop is manually paused"* — which reads like a misconfiguration and is not one. It was paused during this session, which is how it got found. **Deliberately unverified:** nothing was built or run. Docker's daemon was never exercised, so "Docker works on this machine" rests on `docker --version` and `docker compose version` alone — the paused daemon means even `docker info` did not succeed. The historical handoff-log rows above still say Podman; they are dated records of what was true then and were left intact rather than rewritten. |
+| 2026-08-09 | `container-docker` | 10 | **Complete and verified — the real stack, built and run, not just written.** Built `Dockerfile.api`, `Dockerfile.web`, `Dockerfile.migrate` (new — the D28 one-shot init service), `docker/db-init/Portfolio.DbInit` (new tiny console app, **zero changes under `src/`**), `nginx.conf`, `compose.yaml`, `.dockerignore`, and rewrote `.env.example` with both SQL credentials clearly labelled bootstrap-vs-app. 🐛 **One real defect found and fixed, not anticipated by the drawback register**: the plain `*-noble-chiseled` runtime images set `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=true`, under which `Microsoft.Data.SqlClient` cannot open a connection to SQL Server at all (`migrate` exited `139` on the very first `up` attempt with that exact exception). Both `Dockerfile.api` and `Dockerfile.migrate` switched to the `-extra` chiselled variant, still non-root by default — recorded in the agent file so it isn't rediscovered. **D28 and D29 closed together, as the register itself insisted they must be**: `migrate` is the only container ever handed `MSSQL_SA_PASSWORD`, applies the exact same 4 EF Core migrations SQLEXPRESS has, provisions `portfolio_app` (`db_datareader`+`db_datawriter`, no DDL), and exits; `api` gates on its success and connects only as `portfolio_app`. **Verified from the app's own live connection, not the env file** — queried `sys.dm_exec_sessions` directly against `db` while `api` was running: both EF Core sessions were `login_name = 'portfolio_app'`, `host_name` matching the `api` container's own hostname, and a `CREATE TABLE` attempted as `portfolio_app` via `sqlcmd` was rejected with `Msg 262 … permission denied` — the DDL boundary is real, not just granted-and-unused. **The empty-volume test was genuine**: `docker volume rm portfolio_mssql-data` run first (confirmed absent via `docker volume ls`), then `docker compose up -d` — `__EFMigrationsHistory` came back with all 4 migrations, an exact match to the `.cs` files under `src/Portfolio.Infrastructure/Persistence/Migrations/`. **SignalR verified at the protocol level**: a raw HTTP `Upgrade` request to `/hubs/prices?id=<real negotiate token>` through nginx returned `HTTP/1.1 101 Switching Protocols` with a server-computed `Sec-WebSocket-Accept`, not inferred from config existing. **Persistence verified with a real probe**: created a transaction via `POST`, ran `docker compose down` (confirmed **no** `-v`, volume still listed afterward), `up` again, confirmed the row survived and `migrate` re-ran idempotently (exit `0`, no-op past already-applied migrations); probe deleted after. All four containers confirmed non-root by direct inspection (`api` uid 1654, `web`/nginx uid 101 including the master process not just workers, `db`'s vendor image uid 10001, `migrate` uid 1654) rather than assumed from the Dockerfile text. 🐛 **Found but deliberately NOT fixed — recorded as D32, not patched**: CoinGecko 401s against the Pro API because `CoinGeckoOptions.ApiKey is null ? Keyless : Pro` treats a compose `.env`'s blank-but-present `CoinGecko__ApiKey=` as "has a key" — confirmed there is no compose-side fix (`${VAR:+…}`, `${VAR:-}`, and bare passthrough all still emit an empty string once `.env` defines the key at all), so the one-line fix belongs in `Portfolio.Infrastructure/DependencyInjection.cs`, out of `container-docker`'s boundary. `README.md` and the agent's own completion checklist corrected in the same change — the checklist no longer claims `docker compose logs api` can show migrations applied, since the chiselled `api` image structurally cannot emit that line; it now points at `docker compose logs migrate`. Real API keys used for the live run (the already-configured Twelve Data key, CoinGecko left keyless per its own now-documented caveat) — **0 Twelve Data credits spent**, confirmed via the app's own `/api/prices/status` showing NYSE/SGX gated all session (Sunday). Left knowingly: no browser was driven — every check above is `curl`/`sqlcmd`/protocol-level, so nothing about the *rendered* app (does the UI actually show live-updating prices on screen, does the manual refresh button work when clicked) was confirmed visually inside the container the way Phase 9's browser pass did for the dev server. Also left knowingly: D6 (real trading-day credit budget) is untouched by this phase and remains Phase 11's only real blocker. |
 
 ---
 
@@ -1087,93 +1169,60 @@ Added during Phase 12 and the D10–D25 sweep (2026-08-07):
 
 ## ▶ Next session
 
-Phases 1–9 and **12** are done and browser-verified. As of the 2026-08-07 evening session the
-drawback register has **four open rows left — D4, D6, D7 and D13** — plus **D27**, newly split out.
-Every one of those needs something a local session cannot manufacture (a maintained lunar-holiday
-table, a real trading day, a second serialiser, a multi-year dataset, a provider round-trip design).
-
-**Added 2026-08-08: D28**, which is different from all of them — it needs no external anything, it is
-a hard prerequisite for Phase 10 working at all, and it is now on that phase's checklist. Nothing in
-`src/` applies EF Core migrations, so a container stack would start against an empty database.
-
-**Phase 10 is the only substantial work left.** It was unblocked on 2026-08-07 and then explicitly
-deferred by the user that evening — it is skipped by choice, not blocked. Paste:
+Phases 1–10 and **12** are done and verified. **Only Phase 11 remains.** The drawback register is
+down to **two genuinely open rows — D6 and D32** — everything else that was open as of the
+2026-08-07/08 sessions (D4, D7, D13, D27's core, D17's residual, and now D28/D29) has been closed.
+Neither open row is Phase-11 work exactly: D6 needs a real NYSE trading day, which no local session
+can manufacture, and D32 is a one-line `backend-dotnet` fix outside this phase's scope. Do not let a
+session invent work to fill the gap where D28/D29 used to be — Phase 11 is genuinely the only thing
+left, and four of its six checks are already reachable today.
 
 ```
-Read tracker.md, then the Phase 10 checklist. Use the container-docker agent.
+Read tracker.md, then the Phase 11 checklist and its blocking note. Phase 10 (Docker)
+closed on 2026-08-09, so the container-DB migration-parity check is ALREADY ticked —
+do not re-verify it, it was done as part of Phase 10, not deferred to this session.
 
-The stack is DOCKER, not Podman — Podman was uninstalled on 2026-08-08 and is not on
-PATH. Docker 29.6.2 / Compose v5.3.1 is installed, but Docker Desktop was PAUSED when
-last checked: `docker info` then fails with "Docker Desktop is manually paused", which
-reads like a config error and is not one. Confirm the daemon responds before building.
+Four checks are reachable now with a running dotnet API + ng serve (or the Docker
+stack — either proves the same application behaviour):
+  - Enter a fractional crypto buy; confirm it persists and the gain/loss card
+    recalculates.
+  - /stocks and /crypto totals are fully independent.
+  - Timestamp updates across a scheduled refresh with no page reload.
+  - Z74 quote arrives in SGD and converts at the stored USD/SGD rate.
 
-Dockerfile.web's Node base image must be 22.22.3 or newer. Angular 22's CLI hard-
-refuses anything older, and a bare `node:22-alpine` tag is only safe if it currently
-resolves above that — pin it explicitly rather than trusting the tag.
+One check is BLOCKED and cannot be helped by more local work — D6, Twelve Data
+credit use over a real NYSE trading day. Every session so far has run with NYSE
+closed and spent 0 credits, so "well under 800/day" is still arithmetic, not
+measurement. Only tick this box if you are actually running during real NYSE
+hours on a real trading day — check the market calendar first, and report exactly
+how many credits were spent, against the 800/day budget.
 
-Two things that will bite if assumed away, both already established:
-  - Windows Authentication cannot work from a Linux container. The API talks to
-    SQLEXPRESS over Windows Auth locally and must use SQL auth against the `db`
-    service via ConnectionStrings__Portfolio under compose. One migration set,
-    two connection strings.
-  - nginx needs WebSocket upgrade headers on /hubs/. SignalR was verified running
-    over a real WebSocket transport (not long-polling fallback) in Phase 7, and a
-    proxy that silently downgrades it would look like it works while breaking live
-    price push.
+Do NOT touch D32 in this session unless the user asks for it explicitly — it is a
+one-line backend-dotnet fix (Portfolio.Infrastructure/DependencyInjection.cs:
+`options.ApiKey is null` should be `string.IsNullOrWhiteSpace(options.ApiKey)`),
+found during the Phase 10 session but deliberately left for backend-dotnet's own
+territory rather than fixed by the container-docker agent that found it.
 
-Read D28 and D29 together before writing compose.yaml — they are one decision.
-
-D28: nothing in src/ applies EF Core migrations. Program.cs never touches
-Database, and the API image is chiseled so it has no `dotnet ef`. A first `up`
-therefore starts the API against an empty database. Pick one of the three designs
-in that row deliberately, and fix README.md and this agent's own completion
-checklist in the same change — both already claim migrations are applied and
-neither is true today.
-
-D29: the app should not connect as `sa`. Keep MSSQL_SA_PASSWORD for bootstrap
-only and give the API its own db_datareader/db_datawriter login. This is only
-cheap if you chose D28 option 2 or 3 — a startup MigrateAsync forces the app's
-own login to hold DDL rights forever and there is nothing left to separate. That
-is the whole reason to read both rows before choosing either.
-
-Do NOT change the local Windows Auth connection string. Trusted_Connection is
-the more secure option where it works and stores no password; the dual-string
-design is deliberate, not an inconsistency to tidy up.
-
-Verify `docker compose up -d` brings everything healthy, the app loads, and the hub
-shows a 101. Verify the schema is created on a FIRST up against an empty volume —
-not merely that things work against a database an earlier step happened to fill.
-Then verify `down` followed by `up` preserves data — that is the named volume
-actually working, not just being declared. Never use `down -v` to tidy up; on
-Docker that deletes the volume you are trying to prove persists.
-
-Tick a box only for something you have personally seen pass, say plainly what you did
-not verify, then append to the handoff log, write the next session prompt, and commit.
+Tick a box only for something you have personally seen pass, say plainly what you
+did not verify, then append to the handoff log, write the next session prompt, and
+commit.
 ```
 
-**After Phase 10 — Phase 11, but read its blocking note first.** Four of its six checks are reachable
-today; the container-DB one needs Phase 10, and the credit-budget one needs a real NYSE session
-(**D6**). A session that ticks all six has not done the work.
+**If Phase 11 closes cleanly, the project has no phases left except D6 sitting in the register
+until a real NYSE trading day happens to be running.** Worth deciding explicitly at that point
+whether the project is "done" with D6 as a permanent asterisk, or whether someone deliberately
+runs a session during market hours to close it.
 
-**Also open, and each needs a decision rather than just code:**
-
-- **D28** — nothing applies EF Core migrations. Not a "later" item: it blocks Phase 10 from producing
-  a working stack, and it is already on that checklist. Three viable designs, listed in the D28 row.
-- **D29** — the container app would connect as `sa`. **Decide it with D28, not after**: a startup
-  `MigrateAsync` forces the app's login to hold DDL rights permanently and forecloses the fix.
-  Local Windows Auth is *not* affected and should not change — it is the more secure option already.
-- **D27** — a well-formed but *wrong* provider symbol (`APPL` for `AAPL`) is still accepted and then
-  permanently silent. D23 closed the malformed-record case only. The cheap partial mitigation is a
-  "no price seen since creation" hint on the asset row, which costs no provider call.
-- **D17's residual** — `AllocationItemDto` has no unpriced caveat, so a genuinely unpriced holding
-  shows as 0% in the pie with no explanation. The close fallback itself already applies there.
-- **D4** (SGX lunar holidays), **D6** (cadence over a real trading day), **D7** (two serialiser
-  configurations), **D13** (annual returns over genuinely wide real data). D6 and D13 both resolve
-  themselves with time now that D12 is fixed and history actually accumulates.
-
-**One thing to watch on the next session that touches the theme:** the toggle's menu items were
+**One thing to watch on a session that touches the theme:** the toggle's menu items were
 changed to `role="menuitemradio"` + `aria-checked`, but that was verified only by DOM assertion —
 no real screen reader has been near it.
+
+**One thing to watch on a session that touches the Docker stack again:** if you ever need to
+rebuild `Dockerfile.api` or `Dockerfile.migrate` from a base-image change, keep them on the
+`*-noble-chiseled-extra` tags, not the plain `*-noble-chiseled` ones — the plain tags set
+`DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=true`, under which `Microsoft.Data.SqlClient` cannot open a
+connection to SQL Server at all. Found live during the Phase 10 session; see D28's closure note and
+`.claude/agents/container-docker.md`.
 
 ### Q&A note — four questions asked 2026-08-07, and what investigating them turned up
 

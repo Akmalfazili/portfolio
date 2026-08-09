@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Not part of the app. This is the D28-option-2 "one-shot init service": a tiny console app,
+    built and run only inside the migrator stage of Dockerfile.migrate, that applies EF Core
+    migrations and provisions the least-privilege portfolio_app login (D29) before the api
+    service is allowed to start. It exists entirely under docker/ so the backend-dotnet-owned
+    tree in src/ needs no change for the container stack to work. It is not referenced by, and
+    does not reference, anything under src/Portfolio.Api — only the Infrastructure project, to
+    reuse the compiled PortfolioDbContext and its migrations.
+
+    Deliberately outside portfolio.slnx: `dotnet publish` is pointed at this .csproj directly
+    from Dockerfile.migrate, so it never needs to be part of the solution the other agents build.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>Portfolio.DbInit</AssemblyName>
+    <RootNamespace>Portfolio.DbInit</RootNamespace>
+    <!--
+      Deliberately NOT InvariantGlobalization=true. Microsoft.Data.SqlClient needs real ICU
+      collation support to open a connection at all — with it set (or inherited from a runtime
+      base image that forces it, as the plain *-chiseled images do), every SqlConnection.Open
+      throws "Globalization Invariant Mode is not supported." before a single query runs.
+      Found live: this is why Dockerfile.migrate and Dockerfile.api both use the
+      *-noble-chiseled-extra runtime image (ships ICU), not the smaller plain *-chiseled one.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Portfolio.Infrastructure\Portfolio.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Pinned to the same major line the mssql/server image's TLS defaults were verified
+         against (SqlClient 6.x defaults Encrypt=true) — see the Encrypt/TrustServerCertificate
+         note in Program.cs. -->
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.1" />
+  </ItemGroup>
+
+</Project>

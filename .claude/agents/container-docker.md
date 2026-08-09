@@ -13,16 +13,27 @@ The host is **Windows 11** running Docker Desktop on the WSL2 backend, so the da
 
 ```
 compose.yaml
-  db    mcr.microsoft.com/mssql/server:2022-latest
-  api   built from Dockerfile.api
-  web   built from Dockerfile.web  (nginx, published on :8080)
+  db        mcr.microsoft.com/mssql/server:2022-latest
+  migrate   built from Dockerfile.migrate  (one-shot: EF Core migrations + portfolio_app provisioning, then exits — D28/D29)
+  api       built from Dockerfile.api      (depends_on migrate: service_completed_successfully)
+  web       built from Dockerfile.web  (nginx, published on :8080)
 
-Dockerfile.api      mcr.microsoft.com/dotnet/sdk:10.0 → mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled
-Dockerfile.web      node:22-alpine → nginx:alpine
-nginx.conf          SPA fallback + /api and /hubs reverse proxy
-.env.example        committed template; .env is gitignored
-.dockerignore       bin/, obj/, node_modules/, .git/, .angular/
+Dockerfile.api       mcr.microsoft.com/dotnet/sdk:10.0.302-noble → mcr.microsoft.com/dotnet/aspnet:10.0.10-noble-chiseled-extra
+Dockerfile.migrate   mcr.microsoft.com/dotnet/sdk:10.0.302-noble → mcr.microsoft.com/dotnet/runtime:10.0.10-noble-chiseled-extra
+Dockerfile.web       node:22.23.2-alpine → nginx:1.31-alpine
+docker/db-init/      Portfolio.DbInit — the tiny console app Dockerfile.migrate builds; references Portfolio.Infrastructure only, not part of portfolio.slnx
+nginx.conf           SPA fallback + /api and /hubs reverse proxy
+.env.example         committed template; .env is gitignored
+.dockerignore         bin/, obj/, node_modules/, .git/, .angular/
 ```
+
+**Use the `-noble-chiseled-extra` runtime tags, not plain `-noble-chiseled`, for anything that
+touches SQL Server.** Found live, not assumed: the plain chiselled images set
+`DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=true`, under which `Microsoft.Data.SqlClient` cannot open
+a connection at all — every attempt throws `System.NotSupportedException: Globalization
+Invariant Mode is not supported.` before a single query runs. The `-extra` variant ships ICU and
+is still non-root by default (`APP_UID=1654`); the only cost is a slightly larger image. `web`'s
+nginx doesn't touch SQL Server, so it is unaffected and stays on the plain `nginx:1.31-alpine`.
 
 ## Non-negotiable rules
 
@@ -53,7 +64,7 @@ Containers must not run as root internally, whatever the daemon runs as. The chi
 
 ### 4. Secrets
 
-`MSSQL_SA_PASSWORD`, `TwelveData__ApiKey`, and `CoinGecko__ApiKey` come from a gitignored `.env` consumed by compose. Commit `.env.example` with placeholder values and a comment on where to obtain each key. Never bake a secret into an image layer, an `ARG`, or a committed file. The SA password must satisfy SQL Server complexity rules or the `db` container exits on startup with a confusing error.
+`MSSQL_SA_PASSWORD`, `MSSQL_APP_PASSWORD`, `TwelveData__ApiKey`, and `CoinGecko__ApiKey` come from a gitignored `.env` consumed by compose. Commit `.env.example` with placeholder values and a comment on where to obtain each key **and, for the two SQL passwords, which is bootstrap-only and which the app actually connects with** — `MSSQL_SA_PASSWORD` is handed only to the `migrate` service; `api` never sees it and connects as `portfolio_app` (`MSSQL_APP_PASSWORD`) instead. Never bake a secret into an image layer, an `ARG`, or a committed file. Both SQL passwords must satisfy SQL Server complexity rules or their respective step fails with a confusing error (the `db` container exits outright for a bad `MSSQL_SA_PASSWORD`; a bad `MSSQL_APP_PASSWORD` fails inside `migrate`'s `CREATE LOGIN` instead).
 
 ### 5. Startup ordering
 
@@ -91,4 +102,29 @@ Database files go in a **named volume** (`mssql-data:/var/opt/mssql`), never a b
 
 ## Before reporting complete
 
-Actually run it: `docker compose build && docker compose up -d`, then confirm all three services report healthy, the app loads at `http://localhost:8080`, prices render, and `docker compose logs api` shows migrations applied. Tear down and bring back up to prove the volume persists. Report real output — never claim a stack is working if you haven't seen it run.
+Actually run it: `docker compose build && docker compose up -d`, then confirm `db` is healthy, `migrate` exited `0`, and `api`/`web` are running, the app loads at `http://localhost:8080`, prices render, and `docker compose logs migrate` — not `api` — shows migrations applied. The `api` image is chiselled specifically so it has no `dotnet ef` and never touches `Database`; migrations are a `migrate`-service concern only (D28), so its log is the only place that line can come from. Tear down (`docker compose down`, never `-v`) and bring back up to prove the volume persists — and prove it against a genuinely empty `mssql-data` volume at least once (`docker volume rm mssql-data` deliberately, never `down -v`), not just against a database an earlier run already populated. Report real output — never claim a stack is working if you haven't seen it run.
+
+## D28/D29 — how this stack actually applies migrations and avoids running the app as `sa`
+
+Nothing under `src/` ever calls `Database.MigrateAsync()` — the chiselled `api` runtime image
+ships no SDK and no `dotnet ef`, deliberately. Instead there is a fourth compose service,
+`migrate` (built from `Dockerfile.migrate`), that:
+
+1. connects to `db` as `sa` (the only container that ever holds `MSSQL_SA_PASSWORD`);
+2. creates the `portfolio_app` SQL login if it doesn't exist yet;
+3. runs `PortfolioDbContext.Database.MigrateAsync()` — this is what actually creates the
+   `Portfolio` database on a first run against an empty volume, then applies every pending
+   migration;
+4. creates the `portfolio_app` database user and grants `db_datareader` + `db_datawriter` only
+   (no DDL);
+5. exits `0`.
+
+`api`'s `depends_on: migrate: condition: service_completed_successfully` means the app container
+never even starts against an unmigrated database. `api` itself connects only as `portfolio_app`,
+supplied via `ConnectionStrings__Portfolio` — it is never handed the sa credential.
+
+The migrator is its own tiny console app under `docker/db-init/` (`Portfolio.DbInit.csproj`),
+referencing `Portfolio.Infrastructure` only — not part of `portfolio.slnx`, not built by any
+other agent, and it required zero changes under `src/`. If a schema change ever needs something
+this program can't do generically (a data migration with app-specific logic, say), that's a
+`backend-dotnet` conversation, not a reason to grow this program ad hoc.

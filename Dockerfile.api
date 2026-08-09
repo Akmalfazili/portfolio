@@ -1,0 +1,50 @@
+# Multi-stage: SDK to build/publish, chiselled ASP.NET runtime to actually run.
+# See D28/D29 in tracker.md — this image never applies migrations and never holds
+# MSSQL_SA_PASSWORD; that is Dockerfile.migrate's job, run once before this container starts.
+
+FROM mcr.microsoft.com/dotnet/sdk:10.0.302-noble AS build
+WORKDIR /src
+
+# Restore before copying source, so this layer only invalidates when a .csproj changes, not on
+# every code edit.
+COPY Directory.Build.props global.json ./
+COPY src/Portfolio.Domain/Portfolio.Domain.csproj src/Portfolio.Domain/
+COPY src/Portfolio.Application/Portfolio.Application.csproj src/Portfolio.Application/
+COPY src/Portfolio.Infrastructure/Portfolio.Infrastructure.csproj src/Portfolio.Infrastructure/
+COPY src/Portfolio.Api/Portfolio.Api.csproj src/Portfolio.Api/
+RUN dotnet restore src/Portfolio.Api/Portfolio.Api.csproj
+
+COPY src/Portfolio.Domain/ src/Portfolio.Domain/
+COPY src/Portfolio.Application/ src/Portfolio.Application/
+COPY src/Portfolio.Infrastructure/ src/Portfolio.Infrastructure/
+COPY src/Portfolio.Api/ src/Portfolio.Api/
+
+RUN dotnet publish src/Portfolio.Api/Portfolio.Api.csproj -c Release -o /app --no-restore
+
+# Chiselled: no shell, no package manager, no SDK — smallest attack surface for the runtime
+# image, and it already defaults to a non-root user (APP_UID) and no dotnet-ef, which is exactly
+# why migrations cannot run from here (D28) and why this image never needs sysadmin rights (D29).
+#
+# `-extra`, not the plain chiselled tag: the plain *-noble-chiseled images ship no ICU and set
+# DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=true, under which Microsoft.Data.SqlClient (used by EF
+# Core's SQL Server provider) cannot open a connection at all — confirmed live via
+# Dockerfile.migrate, which hit exactly that exception before this was caught here too. Still
+# non-root by default (APP_UID=1654); the extra ICU/tzdata payload is the only difference.
+FROM mcr.microsoft.com/dotnet/aspnet:10.0.10-noble-chiseled-extra AS final
+WORKDIR /app
+COPY --from=build /app .
+
+# The chiselled image already sets ASPNETCORE_HTTP_PORTS=8080 by default; restated explicitly so
+# the port this Dockerfile binds is never left to an assumption about the base image. A non-root
+# process cannot bind <1024 regardless of what compose publishes on the host side.
+ENV ASPNETCORE_HTTP_PORTS=8080
+# Never load appsettings.Development.json's Trusted_Connection string inside the container —
+# ConnectionStrings__Portfolio (SQL auth, portfolio_app) is supplied entirely via compose env.
+ENV ASPNETCORE_ENVIRONMENT=Production
+
+EXPOSE 8080
+
+# Non-root already by default in this base image; kept explicit rather than assumed.
+USER $APP_UID
+
+ENTRYPOINT ["dotnet", "Portfolio.Api.dll"]

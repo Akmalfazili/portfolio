@@ -1,0 +1,50 @@
+# D28 (option 2: one-shot init service) + D29 (portfolio_app provisioning).
+#
+# Builds docker/db-init, a tiny console app that is NOT part of the application — it applies EF
+# Core migrations and provisions the least-privilege portfolio_app login, then exits. compose.yaml
+# runs this as the `migrate` service: gated on the db healthcheck, and gating `api` in turn via
+# `depends_on: condition: service_completed_successfully`. This is the only container in the
+# stack that ever holds MSSQL_SA_PASSWORD.
+#
+# Kept as its own Dockerfile (not a second target in Dockerfile.api) because it publishes a
+# different project with a different dependency set — Portfolio.Infrastructure only, no
+# Portfolio.Api — so its own restore layer doesn't get invalidated by API-only source changes.
+
+FROM mcr.microsoft.com/dotnet/sdk:10.0.302-noble AS build
+WORKDIR /src
+
+# Restore first, copying only the project files docker/db-init actually depends on (Domain,
+# Application, Infrastructure — never Portfolio.Api), so this layer caches across unrelated
+# source edits.
+COPY Directory.Build.props global.json ./
+COPY docker/db-init/Portfolio.DbInit.csproj docker/db-init/
+COPY src/Portfolio.Domain/Portfolio.Domain.csproj src/Portfolio.Domain/
+COPY src/Portfolio.Application/Portfolio.Application.csproj src/Portfolio.Application/
+COPY src/Portfolio.Infrastructure/Portfolio.Infrastructure.csproj src/Portfolio.Infrastructure/
+RUN dotnet restore docker/db-init/Portfolio.DbInit.csproj
+
+COPY src/Portfolio.Domain/ src/Portfolio.Domain/
+COPY src/Portfolio.Application/ src/Portfolio.Application/
+COPY src/Portfolio.Infrastructure/ src/Portfolio.Infrastructure/
+COPY docker/db-init/ docker/db-init/
+
+RUN dotnet publish docker/db-init/Portfolio.DbInit.csproj -c Release -o /app --no-restore
+
+# Plain `runtime`, not `aspnet` — this console app touches SQL Server via EF Core/SqlClient
+# only, never ASP.NET Core, so the smaller image is the correct minimal runtime, not a
+# leftover copy-paste from Dockerfile.api.
+#
+# `-extra`, not the plain chiselled tag: the plain *-noble-chiseled images ship no ICU and set
+# DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=true, under which Microsoft.Data.SqlClient cannot open a
+# connection at all — every attempt throws "Globalization Invariant Mode is not supported."
+# before a single query runs. Found live, not assumed: the plain chiseled tag was tried first
+# and this is the exact exception it produced. Still non-root by default (APP_UID=1654).
+FROM mcr.microsoft.com/dotnet/runtime:10.0.10-noble-chiseled-extra AS final
+WORKDIR /app
+COPY --from=build /app .
+
+# Chiseled images default to a non-root user (APP_UID) already; this is belt-and-braces so the
+# image is explicit about it rather than relying on the base image's default not changing.
+USER $APP_UID
+
+ENTRYPOINT ["dotnet", "Portfolio.DbInit.dll"]

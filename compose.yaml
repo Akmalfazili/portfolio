@@ -1,0 +1,87 @@
+# Compose v2 syntax. Run with `docker compose`, never the legacy `docker-compose` binary.
+#
+# Startup order: db (healthy) -> migrate (exits 0) -> api (starts) -> web.
+# `depends_on: condition: service_healthy` / `service_completed_successfully` are what make this
+# real — a bare `depends_on:` only waits for the dependency's container to start, not for SQL
+# Server to actually be accepting connections or for migrations to have actually applied.
+#
+# NEVER run `docker compose down -v` — it deletes the named `mssql-data` volume this stack exists
+# to keep durable. Plain `docker compose down` (no -v) followed by `up` preserves data.
+
+services:
+  db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      # Must satisfy SQL Server's complexity rules (8+ chars, 3 of: upper/lower/digit/symbol) or
+      # this container exits on startup with an unhelpful error — see .env.example.
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?Set MSSQL_SA_PASSWORD in .env — copy .env.example first}
+    volumes:
+      # Named volume, never a bind mount onto the Windows filesystem — NTFS-through-WSL2 breaks
+      # SQL Server's file I/O requirements. Lives inside the WSL2 VM; `docker volume inspect
+      # mssql-data` showing a Linux path is correct, not a misconfiguration.
+      - mssql-data:/var/opt/mssql
+    ports:
+      # Optional convenience for connecting a desktop SQL tool directly; nothing in this stack
+      # depends on the host port being published.
+      - "1433:1433"
+    healthcheck:
+      # Path verified inside THIS image (mcr.microsoft.com/mssql/server:2022-latest) rather than
+      # trusted from memory — it differs between mssql/server versions.
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # D28 (one-shot init service) + D29 (least-privilege app login). Runs once and exits; `api` is
+  # gated on its successful completion, never on the container merely starting. This is the only
+  # service in the stack that is ever handed MSSQL_SA_PASSWORD.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.migrate
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SQL_HOST: db
+      SQL_PORT: "1433"
+      SQL_DATABASE: Portfolio
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?Set MSSQL_SA_PASSWORD in .env — copy .env.example first}
+      MSSQL_APP_USER: portfolio_app
+      MSSQL_APP_PASSWORD: ${MSSQL_APP_PASSWORD:?Set MSSQL_APP_PASSWORD in .env — copy .env.example first}
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      # SQL auth as portfolio_app (db_datareader + db_datawriter only — provisioned by the
+      # migrate service). Never sa: D29. Encrypt=True;TrustServerCertificate=True because
+      # SqlClient 6.x defaults Encrypt=true and the mssql/server image serves a self-signed
+      # certificate; omitting TrustServerCertificate fails with a certificate-chain error that
+      # reads like a networking fault, not a TLS one.
+      ConnectionStrings__Portfolio: "Server=db,1433;Database=Portfolio;User Id=portfolio_app;Password=${MSSQL_APP_PASSWORD:?Set MSSQL_APP_PASSWORD in .env};Encrypt=True;TrustServerCertificate=True"
+      TwelveData__ApiKey: ${TwelveData__ApiKey:-}
+      CoinGecko__ApiKey: ${CoinGecko__ApiKey:-}
+    # No host port published deliberately — the api is reached only through nginx's /api and
+    # /hubs reverse proxy on :8080, matching how the real app is served.
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    depends_on:
+      - api
+    ports:
+      # 8080, not 80 — matches the non-root nginx container (a non-root process cannot bind a
+      # privileged port) and avoids colliding with anything already on the host.
+      - "8080:8080"
+
+volumes:
+  mssql-data:

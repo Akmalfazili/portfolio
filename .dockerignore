@@ -1,0 +1,37 @@
+# Build artifacts — omitting these makes builds slow and can leak local, host-specific
+# artifacts (Windows bin/obj output, a locally-run npm install) into the image.
+bin/
+obj/
+**/bin/
+**/obj/
+
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.angular/
+**/.angular/
+
+.git/
+.gitignore
+
+# Secrets — never let a build context copy these into a layer, even transiently.
+.env
+*.env
+!.env.example
+
+# Editors / OS cruft
+.vs/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Test projects and docs — no test/source-doc content belongs in any image
+tests/
+*.md
+
+# SQL Server local files, in case one ever lands in the repo root
+*.mdf
+*.ldf
+*.ndf
