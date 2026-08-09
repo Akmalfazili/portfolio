@@ -203,7 +203,7 @@ public sealed class CoinGeckoQuoteProvider(
     /// </summary>
     private DateOnly ClampToProviderWindow(DateOnly from, DateOnly to)
     {
-        if (options.Value.ApiKey is not null)
+        if (options.Value.HasApiKey)
         {
             return from;
         }

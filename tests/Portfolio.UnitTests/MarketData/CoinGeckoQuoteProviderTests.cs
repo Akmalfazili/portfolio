@@ -149,6 +149,27 @@ public sealed class CoinGeckoQuoteProviderTests
     }
 
     [Fact]
+    public async Task GetHistoryAsync_EmptyApiKey_IsTreatedAsKeyless_AndStaysClamped()
+    {
+        // D32: an empty-but-present ApiKey (the shape a compose .env with a blank
+        // CoinGecko__ApiKey= line produces) must be treated exactly like a null one — still
+        // clamped to the keyless window, not treated as "a key is configured".
+        const string json = """{"prices":[[1784995200000,0.00042282]]}""";
+
+        var sut = CreateSut(
+            new StubHttpMessageHandler(HttpStatusCode.OK, json),
+            new CoinGeckoOptions { ApiKey = "", KeylessMaxHistoryDays = 365 });
+
+        var to = new DateOnly(2026, 7, 26);
+        var requestedFrom = to.AddYears(-2);
+
+        var result = await sut.GetHistoryAsync(Anvil, requestedFrom, to, CancellationToken.None);
+
+        result.Truncated.Should().BeTrue();
+        result.EffectiveFrom.Should().Be(to.AddDays(-364));
+    }
+
+    [Fact]
     public async Task GetHistoryAsync_ConfiguredApiKey_LiftsTheClamp()
     {
         const string json = """{"prices":[[1784995200000,0.00042282]]}""";

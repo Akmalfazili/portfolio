@@ -96,12 +96,16 @@ public static class DependencyInjection
         services.AddHttpClient<CoinGeckoQuoteProvider>((sp, client) =>
             {
                 var options = sp.GetRequiredService<IOptions<CoinGeckoOptions>>().Value;
-                var baseUrl = options.ApiKey is null ? options.KeylessBaseUrl : options.ProBaseUrl;
+                // D32: route on HasApiKey, never a bare "ApiKey is null" check — a compose .env
+                // that names CoinGecko__ApiKey with a blank value binds it to "", which is
+                // present-but-empty, not absent, and `is null` would wrongly route to the paid
+                // Pro API with no key attached, which 401s.
+                var baseUrl = options.HasApiKey ? options.ProBaseUrl : options.KeylessBaseUrl;
                 client.BaseAddress = new Uri(EnsureTrailingSlash(baseUrl));
                 client.DefaultRequestHeaders.UserAgent.ParseAdd("PortfolioTracker/1.0 (+https://github.com/)");
-                if (options.ApiKey is { } key)
+                if (options.HasApiKey)
                 {
-                    client.DefaultRequestHeaders.Add("x-cg-pro-api-key", key);
+                    client.DefaultRequestHeaders.Add("x-cg-pro-api-key", options.ApiKey);
                 }
             })
             .RemoveAllLoggers()

@@ -36,7 +36,31 @@ public sealed record AssetDto(
     /// <i>prove</i> a typo — a delisted symbol looks the same — so it is a hint pointing at the
     /// record, never an assertion that the record is invalid.</para>
     /// </summary>
-    bool HasEverBeenPriced);
+    bool HasEverBeenPriced,
+
+    /// <summary>
+    /// True when this asset's <see cref="QuoteProviderKind"/> has recorded at least one genuinely
+    /// successful refresh cycle anywhere in this database — i.e. <c>SourceRefreshStates.LastSuccessAt</c>
+    /// is non-null for that provider, across every asset that shares it, not only this one.
+    ///
+    /// <para>Found live on a freshly created container database (2026-08-09): every seeded asset's
+    /// <see cref="CreatedAt"/> is a static <c>HasData</c> seed value, so on a database created
+    /// after that date every asset reads as having sat unpriced for however many days have passed
+    /// since the constant — <see cref="HasEverBeenPriced"/> alone escalated the D27 warning on
+    /// assets whose identifiers were entirely correct, purely because nothing in this database had
+    /// ever priced anything yet.</para>
+    ///
+    /// <para>This is the gate that gives the D27 escalation actual evidentiary weight: if this
+    /// provider has never once worked in this database, this asset's silence carries no
+    /// information about its identifier — it is exactly as explained by "the provider has never
+    /// run" as by "the identifier is wrong", so there is nothing to escalate on. A caller should
+    /// suppress the escalated ("check this identifier") warning entirely when this is false, and
+    /// keep only the calm "no price yet" state, regardless of how many days
+    /// <see cref="HasEverBeenPriced"/> has been false. Once this flips true, the existing
+    /// per-provider day threshold becomes meaningful again, because a sibling asset on the same
+    /// provider proves the pipe genuinely works.</para>
+    /// </summary>
+    bool ProviderHasEverSucceeded);
 
 public sealed record CreateAssetRequest(
     string Symbol,

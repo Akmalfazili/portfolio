@@ -209,6 +209,187 @@ public sealed class AssetServiceTests : IDisposable
         updated.Value.HasEverBeenPriced.Should().BeFalse();
     }
 
+    // --- D27 fresh-database fix: ProviderHasEverSucceeded gates the escalated warning on the
+    // *provider*, not the individual asset — found live on a freshly created Docker database
+    // where every seeded asset's CreatedAt is a static seed constant, so HasEverBeenPriced alone
+    // made every asset look like a 14-day-old identifier problem on day one.
+
+    [Fact]
+    public async Task ListAsync_NoSourceHasEverSucceededInThisDatabase_ReportsProviderHasEverSucceededFalse()
+    {
+        await _sut.CreateAsync(
+            new CreateAssetRequest("AAPL", "Apple Inc.", AssetClass.Stock, "NASDAQ", "USD", QuoteProviderKind.TwelveData, "AAPL", null),
+            CancellationToken.None);
+
+        var assets = await _sut.ListAsync(null, CancellationToken.None);
+
+        assets.Should().ContainSingle().Which.ProviderHasEverSucceeded.Should().BeFalse(
+            "SourceRefreshStates is empty on a genuinely fresh database — nothing has ever "
+            + "proven this provider even works here, so there is no evidence the record is wrong");
+    }
+
+    /// <summary>
+    /// The exact scenario the fix targets: a brand-new asset that itself has no quote or history
+    /// yet must still report <c>ProviderHasEverSucceeded: true</c> once ANY asset sharing its
+    /// provider has succeeded — the gate is per-provider, not per-asset. Without this, a second
+    /// AAPL-like stock added the day after the first one started working would still read as
+    /// unproven.
+    /// </summary>
+    [Fact]
+    public async Task ListAsync_ASiblingAssetOnTheSameProviderHasSucceeded_ReportsProviderHasEverSucceededTrue()
+    {
+        await _sut.CreateAsync(
+            new CreateAssetRequest("AAPL", "Apple Inc.", AssetClass.Stock, "NASDAQ", "USD", QuoteProviderKind.TwelveData, "AAPL", null),
+            CancellationToken.None);
+        // A brand-new, never-priced sibling on the SAME provider.
+        await _sut.CreateAsync(
+            new CreateAssetRequest("MSFT", "Microsoft", AssetClass.Stock, "NASDAQ", "USD", QuoteProviderKind.TwelveData, "MSFT", null),
+            CancellationToken.None);
+
+        _db.AddSourceRefreshState(new SourceRefreshState
+        {
+            Source = QuoteProviderKind.TwelveData,
+            LastAttemptedAt = Now,
+            LastSuccessAt = Now,
+            LastRunSuccess = true,
+            SymbolsRefreshed = 1,
+        });
+        await _db.SaveChangesAsync();
+
+        var assets = await _sut.ListAsync(null, CancellationToken.None);
+
+        assets.Should().OnlyContain(a => a.ProviderHasEverSucceeded);
+    }
+
+    [Fact]
+    public async Task ListAsync_ProviderHasEverSucceeded_IsIsolatedPerProvider()
+    {
+        // CoinGecko has succeeded; TwelveData has not. A TwelveData asset must not borrow
+        // CoinGecko's success — the two providers' reliability say nothing about each other.
+        await _sut.CreateAsync(
+            new CreateAssetRequest("AAPL", "Apple Inc.", AssetClass.Stock, "NASDAQ", "USD", QuoteProviderKind.TwelveData, "AAPL", null),
+            CancellationToken.None);
+        await _sut.CreateAsync(
+            new CreateAssetRequest("ETH", "Ethereum", AssetClass.Crypto, null, "USD", QuoteProviderKind.CoinGecko, null, "ethereum"),
+            CancellationToken.None);
+
+        _db.AddSourceRefreshState(new SourceRefreshState
+        {
+            Source = QuoteProviderKind.CoinGecko,
+            LastAttemptedAt = Now,
+            LastSuccessAt = Now,
+            LastRunSuccess = true,
+            SymbolsRefreshed = 1,
+        });
+        await _db.SaveChangesAsync();
+
+        var assets = await _sut.ListAsync(null, CancellationToken.None);
+
+        assets.Should().ContainSingle(a => a.Symbol == "AAPL").Which.ProviderHasEverSucceeded.Should().BeFalse();
+        assets.Should().ContainSingle(a => a.Symbol == "ETH").Which.ProviderHasEverSucceeded.Should().BeTrue();
+    }
+
+    /// <summary>
+    /// A provider whose most recent attempt failed (D2's false-success bug fixed) but which DID
+    /// succeed at some earlier point must still count — <c>LastSuccessAt</c> is "ever", not
+    /// "most recently". Recording an old success as evidence the provider genuinely works, even
+    /// through a currently-failing streak, is deliberate: a transient outage should not un-prove
+    /// what a real prior success already established.
+    /// </summary>
+    [Fact]
+    public async Task ListAsync_ProviderCurrentlyFailing_ButSucceededBefore_StillReportsProviderHasEverSucceededTrue()
+    {
+        await _sut.CreateAsync(
+            new CreateAssetRequest("ETH", "Ethereum", AssetClass.Crypto, null, "USD", QuoteProviderKind.CoinGecko, null, "ethereum"),
+            CancellationToken.None);
+
+        _db.AddSourceRefreshState(new SourceRefreshState
+        {
+            Source = QuoteProviderKind.CoinGecko,
+            LastAttemptedAt = Now,
+            LastSuccessAt = Now.AddDays(-1), // succeeded yesterday
+            LastRunSuccess = false, // but the most recent attempt (today) failed — D2's fix
+            LastError = "CoinGecko returned HTTP 401.",
+            SymbolsRefreshed = 0,
+        });
+        await _db.SaveChangesAsync();
+
+        var assets = await _sut.ListAsync(null, CancellationToken.None);
+
+        assets.Should().ContainSingle().Which.ProviderHasEverSucceeded.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetByIdAsync_ReportsProviderHasEverSucceeded_SameAsListAsync()
+    {
+        var created = await _sut.CreateAsync(
+            new CreateAssetRequest("ETH", "Ethereum", AssetClass.Crypto, null, "USD", QuoteProviderKind.CoinGecko, null, "ethereum"),
+            CancellationToken.None);
+
+        _db.AddSourceRefreshState(new SourceRefreshState
+        {
+            Source = QuoteProviderKind.CoinGecko,
+            LastAttemptedAt = Now,
+            LastSuccessAt = Now,
+            LastRunSuccess = true,
+            SymbolsRefreshed = 1,
+        });
+        await _db.SaveChangesAsync();
+
+        var reread = await _sut.GetByIdAsync(created.Value!.Id, CancellationToken.None);
+
+        reread!.ProviderHasEverSucceeded.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task CreateAsync_ReportsProviderHasEverSucceeded_ReflectingExistingProviderState()
+    {
+        // The provider already works — proven by an unrelated, earlier asset — before this
+        // brand-new one is created. Its own HasEverBeenPriced is still false (nothing has priced
+        // IT yet), but ProviderHasEverSucceeded must already be true.
+        _db.AddSourceRefreshState(new SourceRefreshState
+        {
+            Source = QuoteProviderKind.TwelveData,
+            LastAttemptedAt = Now,
+            LastSuccessAt = Now,
+            LastRunSuccess = true,
+            SymbolsRefreshed = 1,
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await _sut.CreateAsync(
+            new CreateAssetRequest("MSFT", "Microsoft", AssetClass.Stock, "NASDAQ", "USD", QuoteProviderKind.TwelveData, "MSFT", null),
+            CancellationToken.None);
+
+        result.Value!.HasEverBeenPriced.Should().BeFalse();
+        result.Value.ProviderHasEverSucceeded.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task UpdateAsync_ReportsProviderHasEverSucceeded_ReflectingCurrentProviderState()
+    {
+        var created = await _sut.CreateAsync(
+            new CreateAssetRequest("MSFT", "Microsoft", AssetClass.Stock, "NASDAQ", "USD", QuoteProviderKind.TwelveData, "MSFT", null),
+            CancellationToken.None);
+
+        _db.AddSourceRefreshState(new SourceRefreshState
+        {
+            Source = QuoteProviderKind.TwelveData,
+            LastAttemptedAt = Now,
+            LastSuccessAt = Now,
+            LastRunSuccess = true,
+            SymbolsRefreshed = 1,
+        });
+        await _db.SaveChangesAsync();
+
+        var updated = await _sut.UpdateAsync(
+            created.Value!.Id,
+            new UpdateAssetRequest("MSFT", "Microsoft Corp.", AssetClass.Stock, "NASDAQ", "USD", QuoteProviderKind.TwelveData, "MSFT", null, true),
+            CancellationToken.None);
+
+        updated.Value!.ProviderHasEverSucceeded.Should().BeTrue();
+    }
+
     // --- UpdateAsync / deactivate (Phase 12)
 
     [Fact]

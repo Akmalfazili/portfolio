@@ -399,6 +399,92 @@ public sealed class PriceRefreshServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RefreshDueAsync_EverySymbolInABatchFails_ReportsTheSourceAsUnsuccessful_AndDoesNotAdvanceLastSuccessAt()
+    {
+        // Reproduces the live D-defect: CoinGecko 401ing for every coin in the batch never throws
+        // (it returns per-asset QuoteFetchResult failures, same as Twelve Data's nested-error
+        // shape), so before the fix `Success` stayed hardcoded true and the status snapshot said
+        // "lastRunSuccess: true" / advanced "lastSuccessAt" on a cycle that fetched ZERO symbols.
+        var coinGecko = FakeProvider(QuoteProviderKind.CoinGecko);
+        coinGecko.GetQuotesAsync(Arg.Any<IReadOnlyCollection<Asset>>(), Arg.Any<CancellationToken>())
+            .Returns([new QuoteFetchResult(_eth.Id, false, null, null, null, "CoinGecko returned HTTP 401.")]);
+
+        var router = RouterFor((_eth, coinGecko));
+        _db.Assets.RemoveRange(_aapl, _z74);
+        await _db.SaveChangesAsync();
+
+        var sut = CreateSut(router);
+        var result = await sut.RefreshDueAsync(CancellationToken.None);
+
+        result.Outcome.Should().Be(PriceRefreshOutcome.Completed);
+        result.Sources.Should().ContainSingle(s =>
+            s.Source == QuoteProviderKind.CoinGecko &&
+            !s.Success &&
+            s.SymbolsRefreshed == 0 &&
+            s.Error == "CoinGecko returned HTTP 401.");
+
+        var run = await _db.RefreshRuns.SingleAsync();
+        run.Success.Should().BeFalse();
+
+        var status = await _statusStore.GetSnapshotAsync(nyseOpen: false, sgxOpen: false, CancellationToken.None);
+        var coinGeckoStatus = status.Sources.Single(s => s.Source == QuoteProviderKind.CoinGecko);
+        coinGeckoStatus.LastRunSuccess.Should().BeFalse();
+        coinGeckoStatus.LastSuccessAt.Should().BeNull(); // must NOT advance on a cycle that fetched nothing
+        coinGeckoStatus.LastAttemptedAt.Should().Be(_timeProvider.Now); // the attempt itself IS recorded
+        status.LastRefreshedAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task RefreshDueAsync_SomeSymbolsSucceedAndSomeFailInABatch_StillReportsTheSourceAsSuccessful()
+    {
+        // The deliberate partial-success rule: Twelve Data/Yahoo nest a per-symbol error inside an
+        // otherwise-successful batch, and one bad symbol must not flip the whole provider to
+        // "failed" when the rest of the batch genuinely refreshed. This is NOT the same bug as
+        // the all-fail case above — both are pinned so neither regresses into the other.
+        _calendar.IsOpen(Market.Sgx, Arg.Any<DateTimeOffset>()).Returns(true);
+
+        var yahoo = FakeProvider(QuoteProviderKind.Yahoo);
+        var d05 = new Asset
+        {
+            Id = 5,
+            Symbol = "D05",
+            Name = "DBS",
+            AssetClass = AssetClass.Stock,
+            Currency = "SGD",
+            QuoteProviderKind = QuoteProviderKind.Yahoo,
+            ProviderSymbol = "D05.SI",
+        };
+        _db.Assets.Add(d05);
+        await _db.SaveChangesAsync();
+
+        // A two-symbol Yahoo batch where one asset succeeds and a sibling in the same call fails.
+        yahoo.GetQuotesAsync(Arg.Any<IReadOnlyCollection<Asset>>(), Arg.Any<CancellationToken>())
+            .Returns(
+            [
+                new QuoteFetchResult(_z74.Id, true, 4.39m, "SGD", _timeProvider.Now, null),
+                new QuoteFetchResult(d05.Id, false, null, null, null, "D05.SI not found"),
+            ]);
+
+        var router = RouterFor((_z74, yahoo), (d05, yahoo));
+        _db.Assets.RemoveRange(_aapl, _eth);
+        await _db.SaveChangesAsync();
+
+        var sut = CreateSut(router);
+        var result = await sut.RefreshDueAsync(CancellationToken.None);
+
+        result.Sources.Should().ContainSingle(s =>
+            s.Source == QuoteProviderKind.Yahoo &&
+            s.Success &&
+            s.SymbolsRefreshed == 1 &&
+            s.Error == "D05.SI not found");
+
+        var status = await _statusStore.GetSnapshotAsync(nyseOpen: false, sgxOpen: true, CancellationToken.None);
+        var yahooStatus = status.Sources.Single(s => s.Source == QuoteProviderKind.Yahoo);
+        yahooStatus.LastRunSuccess.Should().BeTrue();
+        yahooStatus.LastSuccessAt.Should().Be(_timeProvider.Now);
+    }
+
+    [Fact]
     public async Task RefreshDueAsync_GatedByClosedMarkets_StillRecordsNoRefreshRun()
     {
         // The counterpart to the test above: the same all-gated situation on the *scheduled* path

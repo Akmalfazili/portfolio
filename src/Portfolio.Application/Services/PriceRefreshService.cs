@@ -191,10 +191,22 @@ public sealed class PriceRefreshService(
 
         await db.SaveChangesAsync(cancellationToken);
 
-        // The group call itself succeeded (no exception) even if some individual symbols inside
-        // the batch failed — Twelve Data nests a per-symbol error inside an otherwise-successful
-        // batch response, and that must not be indistinguishable from the whole call failing.
-        return new SourceRefreshOutcome(source, Attempted: true, Success: true, SymbolsRefreshed: succeeded, Error: firstError);
+        // Deliberate success rule (this is the fix for the false-success bug found live against
+        // the Docker stack — CoinGecko 401ing for every coin in the batch was still reporting
+        // LastRunSuccess: true because no .NET exception was thrown):
+        //   - Zero successes out of a non-empty batch is a FAILURE. This is what a whole-batch
+        //     provider error looks like from here — the HTTP call itself didn't throw (Twelve
+        //     Data and CoinGecko both return 200/401 with a per-symbol or whole-batch error body,
+        //     not a thrown exception), but every symbol in the group individually failed, so the
+        //     cycle accomplished nothing and must say so.
+        //   - One or more successes, even with `firstError` populated, is NOT a failure. Twelve
+        //     Data nests a per-symbol error inside an otherwise-successful batch response, and a
+        //     single bad symbol must not flip the whole provider to "failed" when the rest of the
+        //     batch genuinely refreshed — that distinction is preserved from the original code.
+        // `Error` still carries `firstError` either way, so a partial failure remains visible in
+        // the status payload even though `Success` is true for it.
+        var success = succeeded > 0;
+        return new SourceRefreshOutcome(source, Attempted: true, Success: success, SymbolsRefreshed: succeeded, Error: firstError);
     }
 
     private async Task UpsertQuoteAsync(

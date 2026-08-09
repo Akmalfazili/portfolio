@@ -36,7 +36,11 @@ public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvid
                 // the asset list. PriceHistory is included as well as PriceQuote because a stock
                 // that was backfilled but has no live quote HAS been priced — only an asset that
                 // no source has ever produced a number for is worth pointing at.
-                a.PriceQuote != null || a.PriceHistories.Any()))
+                a.PriceQuote != null || a.PriceHistories.Any(),
+                // D27 fresh-database fix: gate the escalation on the *provider* ever having
+                // succeeded, not on this one asset's own history — see ProviderHasEverSucceeded's
+                // own doc comment for why. Also translated to SQL, still one query.
+                db.SourceRefreshStates.Any(s => s.Source == a.QuoteProviderKind && s.LastSuccessAt != null)))
             .ToListAsync(cancellationToken);
     }
 
@@ -59,7 +63,8 @@ public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvid
                 // the asset list. PriceHistory is included as well as PriceQuote because a stock
                 // that was backfilled but has no live quote HAS been priced — only an asset that
                 // no source has ever produced a number for is worth pointing at.
-                a.PriceQuote != null || a.PriceHistories.Any()))
+                a.PriceQuote != null || a.PriceHistories.Any(),
+                db.SourceRefreshStates.Any(s => s.Source == a.QuoteProviderKind && s.LastSuccessAt != null)))
             .SingleOrDefaultAsync(cancellationToken);
 
     public async Task<ServiceResult<AssetDto>> CreateAsync(CreateAssetRequest request, CancellationToken cancellationToken)
@@ -97,7 +102,12 @@ public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvid
         // Freshly created: no source has had a chance to price it yet, so HasEverBeenPriced is
         // false by construction rather than by query. That is the normal, benign case D27's UI
         // has to distinguish from a wrong symbol — hence CreatedAt travelling alongside it.
-        return ServiceResult<AssetDto>.Success(ToDto(asset, hasEverBeenPriced: false));
+        // ProviderHasEverSucceeded is still a real query, though — it asks about the *provider*,
+        // shared with every other asset already routed through it, not about this brand-new row.
+        var providerHasEverSucceeded = await db.SourceRefreshStates
+            .AnyAsync(s => s.Source == asset.QuoteProviderKind && s.LastSuccessAt != null, cancellationToken);
+
+        return ServiceResult<AssetDto>.Success(ToDto(asset, hasEverBeenPriced: false, providerHasEverSucceeded));
     }
 
     public async Task<ServiceResult<AssetDto>> UpdateAsync(int id, UpdateAssetRequest request, CancellationToken cancellationToken)
@@ -137,8 +147,10 @@ public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvid
 
         var hasEverBeenPriced = await db.PriceQuotes.AnyAsync(q => q.AssetId == id, cancellationToken)
             || await db.PriceHistories.AnyAsync(p => p.AssetId == id, cancellationToken);
+        var providerHasEverSucceeded = await db.SourceRefreshStates
+            .AnyAsync(s => s.Source == asset.QuoteProviderKind && s.LastSuccessAt != null, cancellationToken);
 
-        return ServiceResult<AssetDto>.Success(ToDto(asset, hasEverBeenPriced));
+        return ServiceResult<AssetDto>.Success(ToDto(asset, hasEverBeenPriced, providerHasEverSucceeded));
     }
 
     /// <summary>
@@ -192,7 +204,7 @@ public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvid
         return errors;
     }
 
-    private static AssetDto ToDto(Asset a, bool hasEverBeenPriced) => new(
+    private static AssetDto ToDto(Asset a, bool hasEverBeenPriced, bool providerHasEverSucceeded) => new(
         a.Id,
         a.Symbol,
         a.Name,
@@ -204,5 +216,6 @@ public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvid
         a.ProviderCoinId,
         a.IsActive,
         a.CreatedAt,
-        hasEverBeenPriced);
+        hasEverBeenPriced,
+        providerHasEverSucceeded);
 }
