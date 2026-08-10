@@ -57,7 +57,7 @@ public sealed class TwelveDataFxProvider(
         return new FxSpotResult(payload.Rate, asOf);
     }
 
-    public async Task<IReadOnlyList<FxRatePoint>> GetHistoryAsync(
+    public async Task<FxHistoryFetchResult> GetHistoryAsync(
         string baseCurrency, string quoteCurrency, DateOnly from, DateOnly to, CancellationToken cancellationToken)
     {
         var pair = $"{baseCurrency}/{quoteCurrency}";
@@ -74,7 +74,10 @@ public sealed class TwelveDataFxProvider(
                 "Twelve Data /time_series (FX) for {Pair} failed with status {StatusCode}",
                 pair,
                 (int)response.StatusCode);
-            return [];
+            // Must not return an empty-but-successful result here: FX is a hard prerequisite for
+            // every non-USD conversion, so a rate-limited 429 masquerading as "no rates in range"
+            // is exactly what let a starved backfill report 200 OK with nothing inserted.
+            return FxHistoryFetchResult.Failed($"Twelve Data returned HTTP {(int)response.StatusCode}.");
         }
 
         var payload = JsonSerializer.Deserialize<TwelveDataTimeSeriesResponse>(json, JsonOptions);
@@ -85,15 +88,17 @@ public sealed class TwelveDataFxProvider(
                 "Twelve Data /time_series (FX) for {Pair} returned an error: {Message}",
                 pair,
                 payload?.Message);
-            return [];
+            return FxHistoryFetchResult.Failed(payload?.Message ?? "Twelve Data returned an error.");
         }
 
-        return (payload.Values ?? [])
+        var points = (payload.Values ?? [])
             .Where(v => v.Datetime is not null)
             .Select(v => new FxRatePoint(
                 DateOnly.ParseExact(v.Datetime!, "yyyy-MM-dd", CultureInfo.InvariantCulture),
                 v.Close))
             .OrderBy(p => p.Date)
             .ToList();
+
+        return FxHistoryFetchResult.Ok(points);
     }
 }

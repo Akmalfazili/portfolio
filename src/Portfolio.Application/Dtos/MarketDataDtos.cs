@@ -48,3 +48,21 @@ public sealed record FxSpotResult(decimal Rate, DateTimeOffset AsOf);
 
 /// <summary>One daily FX rate.</summary>
 public sealed record FxRatePoint(DateOnly Date, decimal Rate);
+
+/// <summary>
+/// Outcome of one <c>IFxRateProvider.GetHistoryAsync</c> call. Mirrors
+/// <see cref="HistoryFetchResult"/>'s <see cref="Success"/>/<see cref="Error"/> split for the same
+/// reason: a transient provider failure (e.g. a 429) must not collapse into the same empty list as
+/// "no rates in this range". FX has no per-provider window-truncation quirk to track today, so
+/// unlike <see cref="HistoryFetchResult"/> this does not carry a <c>Truncated</c> flag - add one if
+/// that ever changes.
+/// </summary>
+public sealed record FxHistoryFetchResult(
+    IReadOnlyList<FxRatePoint> Points,
+    bool Success,
+    string? Error)
+{
+    public static FxHistoryFetchResult Ok(IReadOnlyList<FxRatePoint> points) => new(points, true, null);
+
+    public static FxHistoryFetchResult Failed(string error) => new([], false, error);
+}

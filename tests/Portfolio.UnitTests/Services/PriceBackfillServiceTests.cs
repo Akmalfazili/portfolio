@@ -134,11 +134,11 @@ public sealed class PriceBackfillServiceTests : IDisposable
 
         var fxProvider = Substitute.For<IFxRateProvider>();
         fxProvider.GetHistoryAsync("USD", "SGD", Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
-            .Returns((IReadOnlyList<FxRatePoint>)
+            .Returns(FxHistoryFetchResult.Ok(
             [
                 new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m),
                 new FxRatePoint(new DateOnly(2026, 7, 21), 1.291m),
-            ]);
+            ]));
 
         var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider);
 
@@ -164,10 +164,10 @@ public sealed class PriceBackfillServiceTests : IDisposable
 
         var fxProvider = Substitute.For<IFxRateProvider>();
         fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
-            .Returns((IReadOnlyList<FxRatePoint>)
+            .Returns(FxHistoryFetchResult.Ok(
             [
                 new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m),
-            ]);
+            ]));
 
         var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider);
 
@@ -193,7 +193,7 @@ public sealed class PriceBackfillServiceTests : IDisposable
 
         var fxProvider = Substitute.For<IFxRateProvider>();
         fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
-            .Returns((IReadOnlyList<FxRatePoint>)[new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]);
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]));
 
         // Budget of zero: nothing should be fetched, both assets skipped, no exception.
         var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider, maxCallsPerRun: 0);
@@ -202,7 +202,9 @@ public sealed class PriceBackfillServiceTests : IDisposable
 
         summary.ProviderCallsUsed.Should().Be(0);
         summary.AssetsProcessed.Should().BeEmpty();
-        summary.AssetsSkippedForBudget.Should().Contain("AAPL", "Z74");
+        // FX now claims the budget first (see PriceBackfillService.RunAsync), so with a budget of
+        // zero it is skipped alongside both assets, not just them.
+        summary.AssetsSkippedForBudget.Should().Contain(["AAPL", "Z74", "FX:USD/SGD"]);
         // A budget skip is not a failure - the coordinator-reported defect this test set guards
         // against is exactly these two lists being conflated.
         summary.AssetsFailed.Should().BeEmpty();
@@ -224,7 +226,7 @@ public sealed class PriceBackfillServiceTests : IDisposable
 
         var fxProvider = Substitute.For<IFxRateProvider>();
         fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
-            .Returns((IReadOnlyList<FxRatePoint>)[new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]);
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]));
 
         var router = Substitute.For<IQuoteProviderRouter>();
         router.GetProvider(_aapl).Returns(stockProvider);
@@ -236,7 +238,7 @@ public sealed class PriceBackfillServiceTests : IDisposable
 
         summary.AssetsFailed.Should().ContainSingle(f => f.Symbol == "AAPL" && f.Error == "Twelve Data returned HTTP 400.");
         summary.AssetsSkippedForBudget.Should().BeEmpty();
-        summary.ProviderCallsUsed.Should().Be(3); // AAPL's failed attempt still cost a real call, plus Z74's own call and its SGD FX call
+        summary.ProviderCallsUsed.Should().Be(3); // the SGD FX call (now first), AAPL's failed attempt, and Z74's own call
         summary.AssetsProcessed.Should().Contain("Z74");
     }
 
@@ -251,7 +253,7 @@ public sealed class PriceBackfillServiceTests : IDisposable
         // give that a benign result so this test isolates the stock-side failure.
         var fxProvider = Substitute.For<IFxRateProvider>();
         fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
-            .Returns((IReadOnlyList<FxRatePoint>)[new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]);
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]));
 
         var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider);
 
@@ -300,7 +302,7 @@ public sealed class PriceBackfillServiceTests : IDisposable
 
         var fxProvider = Substitute.For<IFxRateProvider>();
         fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
-            .Returns((IReadOnlyList<FxRatePoint>)[new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]);
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]));
 
         var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider);
 
@@ -338,7 +340,7 @@ public sealed class PriceBackfillServiceTests : IDisposable
 
         var fxProvider = Substitute.For<IFxRateProvider>();
         fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
-            .Returns((IReadOnlyList<FxRatePoint>)[new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]);
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]));
 
         var router = Substitute.For<IQuoteProviderRouter>();
         router.GetProvider(_aapl).Returns(stockProvider);
@@ -393,7 +395,7 @@ public sealed class PriceBackfillServiceTests : IDisposable
 
         var fxProvider = Substitute.For<IFxRateProvider>();
         fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
-            .Returns((IReadOnlyList<FxRatePoint>)[new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]);
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]));
 
         var router = Substitute.For<IQuoteProviderRouter>();
         router.GetProvider(Arg.Any<Asset>()).Returns(stockProvider);
@@ -406,6 +408,66 @@ public sealed class PriceBackfillServiceTests : IDisposable
         summary.AssetsSkippedForBudget.Should().NotContain("ETH");
         router.DidNotReceive().GetProvider(eth);
         (await _db.PriceHistories.Where(p => p.AssetId == eth.Id).CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task RunAsync_FxClaimsTheBudgetBeforeAssets_NotAfter()
+    {
+        // The bug this guards against: with the asset loop running first (as it used to), a
+        // budget of exactly one call would be consumed by AAPL, and the sole FX call at the end
+        // would starve - which is exactly what 500s every USD-reporting endpoint for a portfolio
+        // with more assets than spare budget. FX must win the single call here, not the assets.
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(new DateOnly(2026, 7, 20), 200m, "USD")],
+                callInfo.ArgAt<DateOnly>(1))));
+
+        var fxProvider = Substitute.For<IFxRateProvider>();
+        fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]));
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider, maxCallsPerRun: 1);
+
+        var summary = await sut.RunAsync(RefreshTrigger.BackfillManual, CancellationToken.None);
+
+        summary.ProviderCallsUsed.Should().Be(1);
+        summary.FxRatePointsInserted.Should().Be(1);
+        summary.AssetsProcessed.Should().BeEmpty();
+        summary.AssetsSkippedForBudget.Should().Contain(["AAPL", "Z74"]);
+        await fxProvider.Received(1).GetHistoryAsync(
+            "USD", "SGD", Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunAsync_FxProviderFails_IsReportedAsAssetsFailed_NotSilentZeroInserted()
+    {
+        // The other half of the false-success bug: TwelveDataFxProvider used to swallow a 429
+        // into an empty list, which is indistinguishable from "no rates in range" - the run would
+        // report 200 OK with fxRatePointsInserted: 0 and nobody would notice the page was still
+        // going to 500 on the missing rate. FX failures must show up in AssetsFailed like any
+        // other provider failure.
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(new DateOnly(2026, 7, 20), 200m, "USD")],
+                callInfo.ArgAt<DateOnly>(1))));
+
+        var fxProvider = Substitute.For<IFxRateProvider>();
+        fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(FxHistoryFetchResult.Failed("Twelve Data returned HTTP 429."));
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider);
+
+        var summary = await sut.RunAsync(RefreshTrigger.BackfillManual, CancellationToken.None);
+
+        summary.AssetsFailed.Should().ContainSingle(f => f.Symbol == "FX:USD/SGD" && f.Error == "Twelve Data returned HTTP 429.");
+        summary.FxRatePointsInserted.Should().Be(0);
+        (await _db.FxRates.CountAsync()).Should().Be(0);
+        // A failed FX fetch must not block assets that don't need this pair (or, as here, even
+        // the SGD asset itself - its own price history is independent of whether the FX rate to
+        // convert it to USD landed).
+        summary.AssetsProcessed.Should().Contain(["AAPL", "Z74"]);
     }
 
     // --- RunIfDueAsync: the market-calendar gate and once-per-day throttle behind the scheduled
@@ -443,7 +505,7 @@ public sealed class PriceBackfillServiceTests : IDisposable
 
         var fxProvider = Substitute.For<IFxRateProvider>();
         fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
-            .Returns((IReadOnlyList<FxRatePoint>)[new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]);
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]));
 
         var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider); // AlwaysClosedCalendar
 
@@ -502,7 +564,7 @@ public sealed class PriceBackfillServiceTests : IDisposable
 
         var fxProvider = Substitute.For<IFxRateProvider>();
         fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
-            .Returns((IReadOnlyList<FxRatePoint>)[new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]);
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]));
 
         _db.RefreshRuns.Add(new RefreshRun
         {

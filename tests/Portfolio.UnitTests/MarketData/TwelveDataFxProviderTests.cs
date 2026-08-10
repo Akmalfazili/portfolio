@@ -64,13 +64,45 @@ public sealed class TwelveDataFxProviderTests
 
         var sut = CreateSut(new StubHttpMessageHandler(HttpStatusCode.OK, json));
 
-        var points = await sut.GetHistoryAsync(
+        var result = await sut.GetHistoryAsync(
             "USD", "SGD", new DateOnly(2026, 7, 19), new DateOnly(2026, 7, 20), CancellationToken.None);
 
-        points.Should().HaveCount(2);
-        points[0].Date.Should().Be(new DateOnly(2026, 7, 19));
-        points[0].Rate.Should().Be(1.289500m);
-        points[1].Date.Should().Be(new DateOnly(2026, 7, 20));
-        points[1].Rate.Should().Be(1.290100m);
+        result.Success.Should().BeTrue();
+        result.Points.Should().HaveCount(2);
+        result.Points[0].Date.Should().Be(new DateOnly(2026, 7, 19));
+        result.Points[0].Rate.Should().Be(1.289500m);
+        result.Points[1].Date.Should().Be(new DateOnly(2026, 7, 20));
+        result.Points[1].Rate.Should().Be(1.290100m);
+    }
+
+    [Fact]
+    public async Task GetHistoryAsync_NonSuccessStatus_ReturnsFailed_WithTheStatusCode()
+    {
+        // The false-success bug this guards against: a bare empty list here is indistinguishable
+        // from a genuinely empty range, and let a 429-starved FX backfill report itself as a clean
+        // success with fxRatePointsInserted: 0.
+        var sut = CreateSut(new StubHttpMessageHandler(HttpStatusCode.TooManyRequests, "{}"));
+
+        var result = await sut.GetHistoryAsync(
+            "USD", "SGD", new DateOnly(2026, 7, 19), new DateOnly(2026, 7, 20), CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.Points.Should().BeEmpty();
+        result.Error.Should().Be("Twelve Data returned HTTP 429.");
+    }
+
+    [Fact]
+    public async Task GetHistoryAsync_ErrorPayload_ReturnsFailed_WithTheProviderMessage()
+    {
+        const string json = """{"code":400,"message":"symbol not found","status":"error"}""";
+
+        var sut = CreateSut(new StubHttpMessageHandler(HttpStatusCode.OK, json));
+
+        var result = await sut.GetHistoryAsync(
+            "USD", "XYZ", new DateOnly(2026, 7, 19), new DateOnly(2026, 7, 20), CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.Points.Should().BeEmpty();
+        result.Error.Should().Be("symbol not found");
     }
 }

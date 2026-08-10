@@ -80,7 +80,100 @@ public sealed class PriceBackfillService(
             .Select(g => new { AssetId = g.Key, Earliest = g.Min(t => t.TradeDate) })
             .ToDictionaryAsync(x => x.AssetId, x => x.Earliest, cancellationToken);
 
-        var currenciesNeedingFx = new HashSet<string>();
+        // Derived up front, before either loop spends a call, so the FX loop below can run first
+        // without waiting on the asset loop to discover which currencies are in play.
+        var currenciesNeedingFx = assets
+            .Where(a => earliestTradeDateByAsset.ContainsKey(a.Id) && a.Currency != ReportingCurrency)
+            .Select(a => a.Currency)
+            .ToHashSet();
+
+        // FX runs before the per-asset price-history loop, and gets first claim on the shared
+        // call budget, even though it appears second in PriceBackfillSummary's field order. This
+        // is deliberate, not an oversight: a missing FX rate throws inside FxRateResolver and 500s
+        // every USD-reporting endpoint for every holding, USD-denominated or not, while a missing
+        // price-history point just leaves a gap in one asset's chart. FX is a hard prerequisite;
+        // price history is degradable. Running the asset loop first (as this used to) let it burn
+        // the entire budget on Twelve Data's 8-req/min limit before FX ever got a turn, so the one
+        // FX call at the end was reliably 429'd once more than ~8 stocks were held.
+        foreach (var currency in currenciesNeedingFx)
+        {
+            // The earliest date any asset in this currency needs a converted value.
+            var from = assets
+                .Where(a => a.Currency == currency && earliestTradeDateByAsset.ContainsKey(a.Id))
+                .Select(a => earliestTradeDateByAsset[a.Id])
+                .DefaultIfEmpty(today)
+                .Min();
+
+            if (from == today)
+            {
+                // Same reasoning as the per-asset guard below: a same-day range cannot succeed, so
+                // do not spend a call finding that out.
+                assetsSkippedTodayNotClosed.Add($"FX:{ReportingCurrency}/{currency}");
+                continue;
+            }
+
+            if (callsUsed >= budget)
+            {
+                assetsSkippedForBudget.Add($"FX:{ReportingCurrency}/{currency}");
+                continue;
+            }
+
+            FxHistoryFetchResult fxResult;
+            try
+            {
+                fxResult = await fxRateProvider.GetHistoryAsync(ReportingCurrency, currency, from, today, cancellationToken);
+                callsUsed++;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(
+                    ex,
+                    "Historical FX backfill failed for {Base}/{Quote}",
+                    ReportingCurrency,
+                    currency);
+                assetsFailed.Add(new AssetBackfillFailure($"FX:{ReportingCurrency}/{currency}", ex.Message));
+                continue;
+            }
+
+            if (!fxResult.Success)
+            {
+                // Must land in assetsFailed, not silently pass through as zero rates inserted —
+                // this is the false-success bug: a 429 that returns an empty list here is
+                // indistinguishable from "the provider genuinely has no rates for this range"
+                // unless the failure is surfaced explicitly.
+                logger.LogWarning(
+                    "Historical FX backfill for {Base}/{Quote} failed: {Error}",
+                    ReportingCurrency,
+                    currency,
+                    fxResult.Error);
+                assetsFailed.Add(new AssetBackfillFailure(
+                    $"FX:{ReportingCurrency}/{currency}", fxResult.Error ?? "Provider reported failure without a message."));
+                continue;
+            }
+
+            var existingFxDates = await db.FxRates
+                .Where(f => f.Base == ReportingCurrency && f.Quote == currency && f.Date >= from && f.Date <= today)
+                .Select(f => f.Date)
+                .ToListAsync(cancellationToken);
+            var existingFxDateSet = existingFxDates.ToHashSet();
+
+            foreach (var point in fxResult.Points)
+            {
+                if (!existingFxDateSet.Add(point.Date))
+                {
+                    continue;
+                }
+
+                db.AddFxRate(new FxRate
+                {
+                    Date = point.Date,
+                    Base = ReportingCurrency,
+                    Quote = currency,
+                    Rate = point.Rate,
+                });
+                fxRateInserted++;
+            }
+        }
 
         foreach (var asset in assets)
         {
@@ -88,11 +181,6 @@ public sealed class PriceBackfillService(
             {
                 // No transactions yet for this asset — nothing to backfill against.
                 continue;
-            }
-
-            if (asset.Currency != ReportingCurrency)
-            {
-                currenciesNeedingFx.Add(asset.Currency);
             }
 
             if (from == today)
@@ -186,70 +274,6 @@ public sealed class PriceBackfillService(
             }
 
             assetsProcessed.Add(asset.Symbol);
-        }
-
-        foreach (var currency in currenciesNeedingFx)
-        {
-            // The earliest date any asset in this currency needs a converted value.
-            var from = assets
-                .Where(a => a.Currency == currency && earliestTradeDateByAsset.ContainsKey(a.Id))
-                .Select(a => earliestTradeDateByAsset[a.Id])
-                .DefaultIfEmpty(today)
-                .Min();
-
-            if (from == today)
-            {
-                // Same reasoning as the per-asset guard above: a same-day range cannot succeed, so
-                // do not spend a call finding that out.
-                assetsSkippedTodayNotClosed.Add($"FX:{ReportingCurrency}/{currency}");
-                continue;
-            }
-
-            if (callsUsed >= budget)
-            {
-                assetsSkippedForBudget.Add($"FX:{ReportingCurrency}/{currency}");
-                continue;
-            }
-
-            IReadOnlyList<FxRatePoint> fxPoints;
-            try
-            {
-                fxPoints = await fxRateProvider.GetHistoryAsync(ReportingCurrency, currency, from, today, cancellationToken);
-                callsUsed++;
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(
-                    ex,
-                    "Historical FX backfill failed for {Base}/{Quote}",
-                    ReportingCurrency,
-                    currency);
-                assetsFailed.Add(new AssetBackfillFailure($"FX:{ReportingCurrency}/{currency}", ex.Message));
-                continue;
-            }
-
-            var existingFxDates = await db.FxRates
-                .Where(f => f.Base == ReportingCurrency && f.Quote == currency && f.Date >= from && f.Date <= today)
-                .Select(f => f.Date)
-                .ToListAsync(cancellationToken);
-            var existingFxDateSet = existingFxDates.ToHashSet();
-
-            foreach (var point in fxPoints)
-            {
-                if (!existingFxDateSet.Add(point.Date))
-                {
-                    continue;
-                }
-
-                db.AddFxRate(new FxRate
-                {
-                    Date = point.Date,
-                    Base = ReportingCurrency,
-                    Quote = currency,
-                    Rate = point.Rate,
-                });
-                fxRateInserted++;
-            }
         }
 
         // Audit row alongside the quote-refresh RefreshRuns (see RefreshTrigger), so the manual

@@ -14,7 +14,12 @@ public interface IFxRateProvider
         string baseCurrency, string quoteCurrency, CancellationToken cancellationToken);
 
     /// <summary>Daily rates over <c>[from, to]</c> inclusive, ascending by date, for historical
-    /// backfill. Empty (not throwing) when the provider has no data for the range.</summary>
-    Task<IReadOnlyList<FxRatePoint>> GetHistoryAsync(
+    /// backfill. Distinguishes "provider call failed" (<see cref="FxHistoryFetchResult.Success"/>
+    /// false, <see cref="FxHistoryFetchResult.Error"/> set) from "provider succeeded but has no
+    /// rates in the range" (<see cref="FxHistoryFetchResult.Success"/> true, empty
+    /// <see cref="FxHistoryFetchResult.Points"/>) — a bare empty list for both, as this used to
+    /// return, made a 429 indistinguishable from a genuinely empty range and let the FX backfill
+    /// report a false success.</summary>
+    Task<FxHistoryFetchResult> GetHistoryAsync(
         string baseCurrency, string quoteCurrency, DateOnly from, DateOnly to, CancellationToken cancellationToken);
 }
