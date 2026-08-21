@@ -1,7 +1,10 @@
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using NSubstitute;
 using Portfolio.Application.Abstractions;
 using Portfolio.Application.Dtos;
@@ -81,15 +84,29 @@ public sealed class PriceRefreshServiceTests : IDisposable
 
     public void Dispose() => _db.Dispose();
 
-    private PriceRefreshService CreateSut(IQuoteProviderRouter router) => new(
+    private PriceRefreshService CreateSut(IQuoteProviderRouter router, ITwelveDataCreditThrottle? creditThrottle = null) => new(
         _db,
         router,
         _calendar,
         _broadcaster,
         _statusStore,
+        creditThrottle ?? AlwaysFullBudgetThrottle(),
+        Substitute.For<IServiceScopeFactory>(), // unused unless NeedsDetachedTwelveDataSweepAsync is true - see the dedicated detach test below, which builds a real container instead
+        new ManualRefreshInFlightGate(),
         _timeProvider,
         Options.Create(_options),
         NullLogger<PriceRefreshService>.Instance);
+
+    /// <summary>A credit-throttle fake reporting a full, untouched daily budget — the default for
+    /// tests that are not themselves about credit pacing or the derived cadence.</summary>
+    private static ITwelveDataCreditThrottle AlwaysFullBudgetThrottle()
+    {
+        var throttle = Substitute.For<ITwelveDataCreditThrottle>();
+        throttle.GetStatusAsync(Arg.Any<CancellationToken>())
+            .Returns(new TwelveDataCreditStatus(0, 800, 800));
+        throttle.TryAcquireAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(true);
+        return throttle;
+    }
 
     private static IQuoteProvider FakeProvider(QuoteProviderKind kind) =>
         Substitute.For<IQuoteProvider>().Also(p => p.Kind.Returns(kind));
@@ -504,6 +521,140 @@ public sealed class PriceRefreshServiceTests : IDisposable
 
         result.Outcome.Should().Be(PriceRefreshOutcome.NothingDue);
         (await _db.RefreshRuns.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task RefreshDueAsync_TwelveDataGroup_UsesTheDerivedCadence_NotTheFixedFiveMinuteFloor()
+    {
+        // D38/D37: 21 Twelve Data symbols (the live measured count) — NextIntervalAsync must
+        // consult TwelveDataCadenceCalculator for this source instead of unconditionally returning
+        // the fixed 5-minute PriceRefreshOptions.StockOpenInterval, or the cadence silently
+        // under-paces the moment the portfolio grows past today's symbol count.
+        _calendar.IsOpen(Market.Nyse, Arg.Any<DateTimeOffset>()).Returns(true);
+
+        var extraAssets = Enumerable.Range(0, 20)
+            .Select(i => new Asset
+            {
+                Id = 1000 + i,
+                Symbol = $"SYM{i}",
+                Name = $"Symbol {i}",
+                AssetClass = AssetClass.Stock,
+                Currency = "USD",
+                QuoteProviderKind = QuoteProviderKind.TwelveData,
+                ProviderSymbol = $"SYM{i}",
+            })
+            .ToList();
+        _db.Assets.AddRange(extraAssets);
+        _db.Assets.RemoveRange(_z74, _eth);
+        await _db.SaveChangesAsync();
+
+        var twelveData = FakeProvider(QuoteProviderKind.TwelveData);
+        twelveData.GetQuotesAsync(Arg.Any<IReadOnlyCollection<Asset>>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult<IReadOnlyList<QuoteFetchResult>>(
+                callInfo.Arg<IReadOnlyCollection<Asset>>()!
+                    .Select(a => new QuoteFetchResult(a.Id, true, 100m, "USD", _timeProvider.Now, null))
+                    .ToList()));
+
+        var router = Substitute.For<IQuoteProviderRouter>();
+        router.GetProvider(Arg.Any<Asset>()).Returns(twelveData);
+
+        var throttle = AlwaysFullBudgetThrottle(); // 800/800 remaining — a fresh day
+        var sut = CreateSut(router, throttle);
+
+        var result = await sut.RefreshDueAsync(CancellationToken.None);
+        result.Outcome.Should().Be(PriceRefreshOutcome.Completed);
+
+        var expectedInterval = TwelveDataCadenceCalculator.DeriveStockOpenInterval(
+            21, 800, TimeSpan.FromMinutes(TwelveDataCreditPolicy.NyseSessionMinutes), _options.StockOpenInterval);
+        expectedInterval.Should().BeGreaterThan(_options.StockOpenInterval, "this scenario (N=21) must really derive something wider than the floor");
+
+        var status = await _statusStore.GetSnapshotAsync(nyseOpen: true, sgxOpen: false, CancellationToken.None);
+        var twelveDataStatus = status.Sources.Single(s => s.Source == QuoteProviderKind.TwelveData);
+        twelveDataStatus.NextDueAt.Should().Be(_timeProvider.Now + expectedInterval);
+    }
+
+    /// <summary>
+    /// D38: proves <c>RefreshNowAsync</c> decides between the synchronous path (unaffected, every
+    /// other test in this class) and a detached background sweep purely from the live Twelve Data
+    /// symbol count — using a REAL DI container (not NSubstitute) because the detach path resolves
+    /// a second <see cref="PriceRefreshService"/> instance from its own scope via
+    /// <see cref="IServiceScopeFactory"/>, which a fake scope factory cannot stand in for.
+    /// </summary>
+    [Fact]
+    public async Task RefreshNowAsync_MoreThanEightTwelveDataSymbols_ReturnsQueuedImmediately_AndCompletesTheSweepInTheBackground()
+    {
+        var dbName = Guid.NewGuid().ToString();
+        await using var seedDb = new PortfolioDbContext(
+            new DbContextOptionsBuilder<PortfolioDbContext>().UseInMemoryDatabase(dbName).Options);
+
+        var assets = Enumerable.Range(0, 9) // > PerMinuteCreditLimit (8)
+            .Select(i => new Asset
+            {
+                Id = i + 1,
+                Symbol = $"SYM{i}",
+                Name = $"Symbol {i}",
+                AssetClass = AssetClass.Stock,
+                Currency = "USD",
+                QuoteProviderKind = QuoteProviderKind.TwelveData,
+                ProviderSymbol = $"SYM{i}",
+            })
+            .ToList();
+        seedDb.Assets.AddRange(assets);
+        await seedDb.SaveChangesAsync();
+
+        var calendar = Substitute.For<IMarketCalendar>();
+        calendar.IsOpen(Market.Nyse, Arg.Any<DateTimeOffset>()).Returns(true);
+
+        var twelveData = FakeProvider(QuoteProviderKind.TwelveData);
+        twelveData.GetQuotesAsync(Arg.Any<IReadOnlyCollection<Asset>>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult<IReadOnlyList<QuoteFetchResult>>(
+                callInfo.Arg<IReadOnlyCollection<Asset>>()!
+                    .Select(a => new QuoteFetchResult(a.Id, true, 100m, "USD", _timeProvider.Now, null))
+                    .ToList()));
+        var router = Substitute.For<IQuoteProviderRouter>();
+        router.GetProvider(Arg.Any<Asset>()).Returns(twelveData);
+
+        var services = new ServiceCollection();
+        services.AddDbContext<PortfolioDbContext>(o => o.UseInMemoryDatabase(dbName));
+        services.AddScoped<IPortfolioDbContext>(sp => sp.GetRequiredService<PortfolioDbContext>());
+        services.AddScoped(sp => new PriceRefreshStatusStore(sp.GetRequiredService<IPortfolioDbContext>()));
+        services.AddSingleton(calendar);
+        services.AddSingleton(router);
+        services.AddSingleton(Substitute.For<IPriceUpdateBroadcaster>());
+        services.AddSingleton(AlwaysFullBudgetThrottle());
+        services.AddSingleton<TimeProvider>(_timeProvider);
+        services.AddSingleton(Options.Create(_options));
+        services.AddSingleton(new ManualRefreshInFlightGate());
+        services.AddSingleton<ILogger<PriceRefreshService>>(NullLogger<PriceRefreshService>.Instance);
+        services.AddScoped<PriceRefreshService>();
+        services.AddScoped<IPriceRefreshService>(sp => sp.GetRequiredService<PriceRefreshService>());
+        var provider = services.BuildServiceProvider();
+
+        var sut = provider.GetRequiredService<IPriceRefreshService>();
+
+        var result = await sut.RefreshNowAsync(CancellationToken.None);
+
+        // The distinguishing assertion: the code path taken is the detach, not the synchronous
+        // one — against the pre-fix shape (always synchronous), this would have been Completed.
+        result.Outcome.Should().Be(PriceRefreshOutcome.Queued);
+        result.Sources.Should().BeEmpty();
+
+        // "Queued" must not mean "silently doing nothing" - poll briefly for the detached sweep
+        // to actually land its RefreshRun and PriceQuote rows.
+        var completed = false;
+        for (var attempt = 0; attempt < 100 && !completed; attempt++)
+        {
+            await Task.Delay(20);
+            await using var pollDb = new PortfolioDbContext(
+                new DbContextOptionsBuilder<PortfolioDbContext>().UseInMemoryDatabase(dbName).Options);
+            completed = await pollDb.RefreshRuns.AnyAsync(r => r.Trigger == RefreshTrigger.Manual);
+        }
+
+        completed.Should().BeTrue("the detached sweep must actually complete and record its RefreshRun, not silently do nothing");
+
+        await using var finalDb = new PortfolioDbContext(
+            new DbContextOptionsBuilder<PortfolioDbContext>().UseInMemoryDatabase(dbName).Options);
+        (await finalDb.PriceQuotes.CountAsync()).Should().Be(9, "every symbol's quote must have been written by the background sweep");
     }
 }
 

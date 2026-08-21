@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Portfolio.Application.Abstractions;
@@ -22,6 +23,9 @@ public sealed class PriceRefreshService(
     IMarketCalendar calendar,
     IPriceUpdateBroadcaster broadcaster,
     PriceRefreshStatusStore statusStore,
+    ITwelveDataCreditThrottle creditThrottle,
+    IServiceScopeFactory scopeFactory,
+    ManualRefreshInFlightGate manualRefreshGate,
     TimeProvider timeProvider,
     IOptions<PriceRefreshOptions> options,
     ILogger<PriceRefreshService> logger) : IPriceRefreshService
@@ -50,7 +54,62 @@ public sealed class PriceRefreshService(
             }
         }
 
+        // D38: Twelve Data's credit-aware throttle can legitimately pace a large symbol batch
+        // across several minutes (see the remarks on ITwelveDataCreditThrottle). This endpoint
+        // must never block that long, so a manual trigger that would hit that path is detached
+        // onto its own scope instead, and this call returns Queued promptly — "returning promptly
+        // having queued the work" rather than either blocking for minutes or silently doing
+        // nothing. Every other case (crypto/Yahoo only, or a Twelve Data batch that fits in one
+        // throttle chunk) is unaffected and still runs synchronously exactly as before.
+        if (await NeedsDetachedTwelveDataSweepAsync(now, cancellationToken))
+        {
+            if (!manualRefreshGate.TryEnter())
+            {
+                // A previous manual click's detached sweep is still running and has not yet
+                // written the RefreshRun row the cooldown check above reads from — reuse the same
+                // "try again shortly" outcome rather than starting a second, overlapping sweep.
+                return new PriceRefreshCycleResult(PriceRefreshOutcome.CooldownActive, null, [], 0);
+            }
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await using var scope = scopeFactory.CreateAsyncScope();
+                    var detached = scope.ServiceProvider.GetRequiredService<PriceRefreshService>();
+                    await detached.RunCycleAsync(force: true, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Detached manual price refresh sweep failed");
+                }
+                finally
+                {
+                    manualRefreshGate.Exit();
+                }
+            }, CancellationToken.None);
+
+            return new PriceRefreshCycleResult(PriceRefreshOutcome.Queued, null, [], 0);
+        }
+
         return await RunCycleAsync(force: true, cancellationToken);
+    }
+
+    /// <summary>True only when the Twelve Data group would actually be fetched this cycle (NYSE
+    /// open) and has more active symbols than fit in the credit throttle's single per-minute
+    /// chunk — i.e. exactly the case where <c>TwelveDataQuoteProvider.GetQuotesAsync</c> would
+    /// need more than one paced request and could take minutes.</summary>
+    private async Task<bool> NeedsDetachedTwelveDataSweepAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (!calendar.IsOpen(Market.Nyse, now))
+        {
+            return false;
+        }
+
+        var twelveDataCount = await db.Assets.CountAsync(
+            a => a.IsActive && a.QuoteProviderKind == QuoteProviderKind.TwelveData, cancellationToken);
+
+        return twelveDataCount > TwelveDataCreditPolicy.PerMinuteCreditLimit;
     }
 
     private async Task<PriceRefreshCycleResult> RunCycleAsync(bool force, CancellationToken cancellationToken)
@@ -90,7 +149,7 @@ public sealed class PriceRefreshService(
             var groupAssets = group.ToList();
             var outcome = await RefreshGroupAsync(source, groupAssets, now, cancellationToken);
 
-            var interval = market is not null ? options.Value.StockOpenInterval : options.Value.CryptoInterval;
+            var interval = await NextIntervalAsync(source, market, groupAssets.Count, cancellationToken);
             await statusStore.RecordOutcomeAsync(outcome, now, now + interval, cancellationToken);
 
             outcomes.Add(outcome);
@@ -124,6 +183,34 @@ public sealed class PriceRefreshService(
         await broadcaster.BroadcastRefreshStatusAsync(status, cancellationToken);
 
         return new PriceRefreshCycleResult(PriceRefreshOutcome.Completed, null, outcomes, totalSymbolsRefreshed);
+    }
+
+    /// <summary>The interval until this source is next due. Crypto keeps its fixed
+    /// <see cref="PriceRefreshOptions.CryptoInterval"/>; Yahoo (SGX) keeps the fixed
+    /// <see cref="PriceRefreshOptions.StockOpenInterval"/> floor since it is free and unmetered
+    /// (see the D37/tracker note). Twelve Data alone gets a derived cadence — see D38 and
+    /// <see cref="TwelveDataCadenceCalculator"/> — because it alone is credit-limited: a hardcoded
+    /// interval is correct for exactly one portfolio size, and this is what stops the cadence
+    /// silently under-pacing again as the portfolio grows past today's symbol count.</summary>
+    private async Task<TimeSpan> NextIntervalAsync(
+        QuoteProviderKind source, Market? market, int groupAssetCount, CancellationToken cancellationToken)
+    {
+        if (market is null)
+        {
+            return options.Value.CryptoInterval;
+        }
+
+        if (source != QuoteProviderKind.TwelveData)
+        {
+            return options.Value.StockOpenInterval;
+        }
+
+        var creditStatus = await creditThrottle.GetStatusAsync(cancellationToken);
+        return TwelveDataCadenceCalculator.DeriveStockOpenInterval(
+            groupAssetCount,
+            creditStatus.RemainingToday,
+            TimeSpan.FromMinutes(TwelveDataCreditPolicy.NyseSessionMinutes),
+            options.Value.StockOpenInterval);
     }
 
     /// <summary>Fetches and upserts one provider's batch. Never throws: a provider exception is

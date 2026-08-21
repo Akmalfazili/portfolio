@@ -2,6 +2,8 @@ using System.Net;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using NSubstitute;
+using Portfolio.Application.Abstractions;
 using Portfolio.Infrastructure.MarketData.TwelveData;
 using Portfolio.UnitTests.TestSupport;
 
@@ -15,11 +17,19 @@ namespace Portfolio.UnitTests.MarketData;
 /// </summary>
 public sealed class TwelveDataFxProviderTests
 {
-    private static TwelveDataFxProvider CreateSut(HttpMessageHandler handler)
+    private static TwelveDataFxProvider CreateSut(HttpMessageHandler handler, ITwelveDataCreditThrottle? creditThrottle = null)
     {
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://api.twelvedata.com/") };
         var options = Options.Create(new TwelveDataOptions { ApiKey = "test-key-not-real" });
-        return new TwelveDataFxProvider(httpClient, options, TimeProvider.System, NullLogger<TwelveDataFxProvider>.Instance);
+        return new TwelveDataFxProvider(
+            httpClient, options, creditThrottle ?? AlwaysGrantingThrottle(), TimeProvider.System, NullLogger<TwelveDataFxProvider>.Instance);
+    }
+
+    private static ITwelveDataCreditThrottle AlwaysGrantingThrottle()
+    {
+        var throttle = Substitute.For<ITwelveDataCreditThrottle>();
+        throttle.TryAcquireAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(true);
+        return throttle;
     }
 
     [Fact]
@@ -104,5 +114,38 @@ public sealed class TwelveDataFxProviderTests
         result.Success.Should().BeFalse();
         result.Points.Should().BeEmpty();
         result.Error.Should().Be("symbol not found");
+    }
+
+    [Fact]
+    public async Task GetHistoryAsync_ThrottleDenies_ReturnsFailed_WithoutCallingTheProvider()
+    {
+        var throttle = Substitute.For<ITwelveDataCreditThrottle>();
+        throttle.TryAcquireAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(false);
+
+        var handler = new RecordingStubHttpMessageHandler(HttpStatusCode.OK, "{}");
+        var sut = CreateSut(handler, throttle);
+
+        var result = await sut.GetHistoryAsync(
+            "USD", "SGD", new DateOnly(2026, 7, 19), new DateOnly(2026, 7, 20), CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.Error.Should().Be("Twelve Data daily credit budget exhausted.");
+        handler.Requests.Should().BeEmpty();
+        await throttle.Received(1).TryAcquireAsync(1, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetSpotRateAsync_ThrottleDenies_ReturnsNull_WithoutCallingTheProvider()
+    {
+        var throttle = Substitute.For<ITwelveDataCreditThrottle>();
+        throttle.TryAcquireAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(false);
+
+        var handler = new RecordingStubHttpMessageHandler(HttpStatusCode.OK, "{}");
+        var sut = CreateSut(handler, throttle);
+
+        var result = await sut.GetSpotRateAsync("USD", "SGD", CancellationToken.None);
+
+        result.Should().BeNull();
+        handler.Requests.Should().BeEmpty();
     }
 }

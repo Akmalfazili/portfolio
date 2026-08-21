@@ -25,6 +25,8 @@ public interface IPortfolioDbContext
 
     IQueryable<SourceRefreshState> SourceRefreshStates { get; }
 
+    IQueryable<TwelveDataCreditLedgerEntry> TwelveDataCreditLedgerEntries { get; }
+
     void AddAsset(Asset asset);
 
     void AddTransaction(Transaction transaction);
@@ -40,6 +42,8 @@ public interface IPortfolioDbContext
     void AddRefreshRun(RefreshRun refreshRun);
 
     void AddSourceRefreshState(SourceRefreshState state);
+
+    void AddTwelveDataCreditLedgerEntry(TwelveDataCreditLedgerEntry entry);
 
     ValueTask<Asset?> FindAssetAsync(int id, CancellationToken cancellationToken);
 

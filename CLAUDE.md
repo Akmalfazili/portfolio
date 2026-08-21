@@ -83,9 +83,14 @@ today's rate. The frontend does no FX math — the backend has already converted
 
 ### Rate limits
 
-Twelve Data free tier is 800 credits/day and 8 req/min, and each symbol in a batch costs a
-credit. CoinGecko Demo is 30/min. Always batch symbols into one request, always check the
-market calendar before spending credits, and cache aggressively.
+Twelve Data free tier is 800 credits/day, and the per-minute ceiling is **8 credits/min — not
+8 requests/min**. Each symbol in a batch costs one credit, so a single `/quote` (or `/time_series`)
+request that carries more than 8 symbols spends more than 8 credits in one shot and 429s
+immediately, even though it is the only request in its minute (D38). Never batch every symbol into
+one request — chunk to at most 8 symbols per request and pace successive chunks through the shared
+credit throttle (`ITwelveDataCreditThrottle`), which both the quote path and the historical
+backfill path go through. CoinGecko Demo is 30/min (request-denominated, unaffected by this).
+Always check the market calendar before spending credits, and cache aggressively.
 
 ## Market data
 
@@ -94,9 +99,13 @@ market calendar before spending credits, and cache aggressively.
 | Twelve Data | US equities, SGX `Z74:XSES`, USD/SGD FX |
 | CoinGecko | `ethereum`, `amp-token`, `anvil` — all three in one call |
 
-Prices refresh automatically via a market-hours-aware background service (5 min while the
-relevant exchange is open, 60 min when closed, 2 min for crypto) and broadcast over SignalR.
-`POST /api/prices/refresh` triggers a manual refresh behind a 30-second cooldown.
+Prices refresh automatically via a market-hours-aware background service (5 min floor while the
+relevant exchange is open — Twelve Data's actual interval is derived at runtime from the live
+active-symbol count and the remaining daily credit budget, and widens automatically as the
+portfolio grows past ~21 symbols, see `TwelveDataCadenceCalculator` — 60 min when closed, 2 min for
+crypto) and broadcast over SignalR. `POST /api/prices/refresh` triggers a manual refresh behind a
+30-second cooldown; if that refresh would need to pace a large Twelve Data batch across several
+minutes, it is queued onto a background task and the endpoint returns promptly instead of blocking.
 
 ## Commands
 

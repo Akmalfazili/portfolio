@@ -53,6 +53,10 @@ public static class DependencyInjection
     private static IServiceCollection AddMarketData(this IServiceCollection services, IConfiguration configuration)
     {
         services.Configure<TwelveDataOptions>(configuration.GetSection(TwelveDataOptions.SectionName));
+        // Same "TwelveData" config node as above — TwelveDataOptions binds ApiKey/BaseUrl,
+        // TwelveDataCreditOptions binds the credit-limit numbers. Both bind independently; adding
+        // this never disturbs the existing secret-handling for ApiKey.
+        services.Configure<TwelveDataCreditOptions>(configuration.GetSection(TwelveDataCreditOptions.SectionName));
         services.Configure<CoinGeckoOptions>(configuration.GetSection(CoinGeckoOptions.SectionName));
         services.Configure<YahooOptions>(configuration.GetSection(YahooOptions.SectionName));
         // IPriceBackfillService/PriceBackfillService are Application-layer types registered by

@@ -64,3 +64,15 @@ public enum PriceBackfillOutcome
 /// <summary>Result of one <c>IPriceBackfillService.RunIfDueAsync</c> check, called by
 /// <c>PriceBackfillBackgroundService</c> on every poll tick.</summary>
 public sealed record PriceBackfillRunResult(PriceBackfillOutcome Outcome, PriceBackfillSummary? Summary);
+
+/// <summary>
+/// Response for <c>POST /api/prices/backfill</c>. Found live while verifying D37/D38: once every
+/// Twelve Data call is paced through the shared credit throttle, a full backfill pass (22 calls at
+/// 8 credits/minute) takes over two minutes — long enough that nginx's default proxy read timeout
+/// 504s the request while the API keeps running it, and the aborted connection's own
+/// <c>CancellationToken</c> then cancels every remaining provider call mid-run, each one
+/// misreported as a genuine provider failure. The endpoint now detaches the run instead of
+/// returning <see cref="PriceBackfillSummary"/> synchronously — poll <c>GET /api/prices/status</c>
+/// or the <see cref="Domain.Entities.RefreshRun"/> audit trail for the outcome once it completes.
+/// </summary>
+public sealed record BackfillQueuedResult(bool Queued);

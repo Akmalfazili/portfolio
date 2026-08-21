@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -185,13 +186,22 @@ public sealed class PriceRefreshStatusStoreTests : IDisposable
         source.NextDueAt.Should().Be(_time.Now + _options.StockClosedInterval);
     }
 
-    private PriceRefreshService CreateService(PortfolioDbContext db, IQuoteProviderRouter router) => new(
-        db,
-        router,
-        _calendar,
-        _broadcaster,
-        new PriceRefreshStatusStore(db),
-        _time,
-        Options.Create(_options),
-        NullLogger<PriceRefreshService>.Instance);
+    private PriceRefreshService CreateService(PortfolioDbContext db, IQuoteProviderRouter router)
+    {
+        var creditThrottle = Substitute.For<ITwelveDataCreditThrottle>();
+        creditThrottle.GetStatusAsync(Arg.Any<CancellationToken>()).Returns(new TwelveDataCreditStatus(0, 800, 800));
+
+        return new PriceRefreshService(
+            db,
+            router,
+            _calendar,
+            _broadcaster,
+            new PriceRefreshStatusStore(db),
+            creditThrottle,
+            Substitute.For<IServiceScopeFactory>(), // unused — no test here exercises RefreshNowAsync's detach path
+            new ManualRefreshInFlightGate(),
+            _time,
+            Options.Create(_options),
+            NullLogger<PriceRefreshService>.Instance);
+    }
 }

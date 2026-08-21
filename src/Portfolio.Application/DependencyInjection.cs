@@ -25,11 +25,24 @@ public static class DependencyInjection
 
         services.AddSingleton<IMarketCalendar, MarketCalendar>();
 
+        // Singleton: the whole point of the throttle is a rolling window and a manual-refresh
+        // in-flight flag shared across every caller for the process lifetime — a scoped instance
+        // would remember nothing between requests. It reaches the scoped IPortfolioDbContext for
+        // the persisted daily ledger via IServiceScopeFactory instead.
+        services.AddSingleton<ITwelveDataCreditThrottle, TwelveDataCreditThrottle>();
+        services.AddSingleton<ManualRefreshInFlightGate>();
+        services.AddSingleton<ManualBackfillInFlightGate>();
+
         // Scoped, not singleton: the status store now reads and writes SourceRefreshState through
         // the scoped IPortfolioDbContext, so it must share the ambient scope's DbContext rather
         // than capturing one for the process lifetime.
         services.AddScoped<PriceRefreshStatusStore>();
-        services.AddScoped<IPriceRefreshService, PriceRefreshService>();
+        // Registered under its own concrete type too, not just the interface: a manual refresh
+        // that needs to detach a large Twelve Data sweep (D38) resolves a second instance of this
+        // same type from a fresh scope via IServiceScopeFactory, so it needs its own db/router/etc
+        // rather than the disposed-by-then request scope's.
+        services.AddScoped<PriceRefreshService>();
+        services.AddScoped<IPriceRefreshService>(sp => sp.GetRequiredService<PriceRefreshService>());
         services.AddHostedService<PriceRefreshBackgroundService>();
 
         return services;

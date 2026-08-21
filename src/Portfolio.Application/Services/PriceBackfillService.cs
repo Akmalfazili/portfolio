@@ -23,6 +23,7 @@ public sealed class PriceBackfillService(
     IMarketCalendar calendar,
     TimeProvider timeProvider,
     IOptions<PriceBackfillOptions> options,
+    ITwelveDataCreditThrottle creditThrottle,
     ILogger<PriceBackfillService> logger) : IPriceBackfillService
 {
     private const string ReportingCurrency = "USD";
@@ -58,7 +59,15 @@ public sealed class PriceBackfillService(
     {
         var now = timeProvider.GetUtcNow();
         var today = DateOnly.FromDateTime(now.UtcDateTime);
-        var budget = options.Value.MaxProviderCallsPerRun;
+
+        // D37: the budget is derived from what Twelve Data's persisted daily ledger says is
+        // actually left today, not a hardcoded constant — a fixed budget smaller than one full
+        // pass (20, against the 22 calls 21 assets + 1 FX pair needed) is exactly what left a
+        // contiguous block of assets permanently unbackfilled. MaxProviderCallsPerRun still acts
+        // as an explicit safety ceiling for a single run (its default no longer artificially
+        // constrains below the derived figure — see PriceBackfillOptions).
+        var creditStatus = await creditThrottle.GetStatusAsync(cancellationToken);
+        var budget = Math.Min(options.Value.MaxProviderCallsPerRun, creditStatus.RemainingToday);
         var callsUsed = 0;
 
         var assetsProcessed = new List<string>();
@@ -74,6 +83,23 @@ public sealed class PriceBackfillService(
         var assets = await db.Assets
             .Where(a => a.IsActive && a.AssetClass == AssetClass.Stock)
             .ToListAsync(cancellationToken);
+
+        // D37: least-recently-backfilled first (nulls — never backfilled at all — first of all),
+        // not the implicit clustered-index (Id) order EF/SQL Server return with no ORDER BY. That
+        // stable ordering is exactly what made a budget-truncated run starve the SAME contiguous
+        // block of assets on every single run, forever: with no ORDER BY, the query always came
+        // back in Id order, so a budget of N always served the same first N assets and never
+        // reached the rest. Sorting by "how stale is this asset's history" instead means whichever
+        // assets fell short of the budget last time are first in line next time.
+        var lastBackfilledByAsset = await db.PriceHistories
+            .GroupBy(p => p.AssetId)
+            .Select(g => new { AssetId = g.Key, LastDate = g.Max(p => p.Date) })
+            .ToDictionaryAsync(x => x.AssetId, x => x.LastDate, cancellationToken);
+
+        assets = assets
+            .OrderBy(a => lastBackfilledByAsset.TryGetValue(a.Id, out var lastDate) ? lastDate : DateOnly.MinValue)
+            .ThenBy(a => a.Id) // stable, deterministic tie-break for assets backfilled on the same date
+            .ToList();
 
         var earliestTradeDateByAsset = await db.Transactions
             .GroupBy(t => t.AssetId)

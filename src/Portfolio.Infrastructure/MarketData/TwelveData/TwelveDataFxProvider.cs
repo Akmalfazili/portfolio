@@ -12,10 +12,15 @@ namespace Portfolio.Infrastructure.MarketData.TwelveData;
 /// as a bare JSON number (unlike <c>/quote</c>'s JSON-string numerics) — both still decode
 /// through <see cref="Json.FlexibleDecimalJsonConverter"/> so a future provider quirk in either
 /// direction is tolerated without another code change.
+///
+/// Both calls cost exactly 1 credit and go through the same <see cref="ITwelveDataCreditThrottle"/>
+/// the quote and history providers share (D38) — FX is a hard prerequisite for every non-USD
+/// conversion, so it must never silently overspend the shared per-minute/daily budget either.
 /// </summary>
 public sealed class TwelveDataFxProvider(
     HttpClient httpClient,
     IOptions<TwelveDataOptions> options,
+    ITwelveDataCreditThrottle creditThrottle,
     TimeProvider timeProvider,
     ILogger<TwelveDataFxProvider> logger) : IFxRateProvider
 {
@@ -25,6 +30,13 @@ public sealed class TwelveDataFxProvider(
         string baseCurrency, string quoteCurrency, CancellationToken cancellationToken)
     {
         var pair = $"{baseCurrency}/{quoteCurrency}";
+
+        if (!await creditThrottle.TryAcquireAsync(1, cancellationToken))
+        {
+            logger.LogWarning("Twelve Data /exchange_rate for {Pair} skipped: daily credit budget exhausted", pair);
+            return null;
+        }
+
         var requestUri = $"exchange_rate?symbol={Uri.EscapeDataString(pair)}&apikey={options.Value.ApiKey}";
 
         using var response = await httpClient.GetAsync(requestUri, cancellationToken);
@@ -61,6 +73,13 @@ public sealed class TwelveDataFxProvider(
         string baseCurrency, string quoteCurrency, DateOnly from, DateOnly to, CancellationToken cancellationToken)
     {
         var pair = $"{baseCurrency}/{quoteCurrency}";
+
+        if (!await creditThrottle.TryAcquireAsync(1, cancellationToken))
+        {
+            logger.LogWarning("Twelve Data /time_series (FX) for {Pair} skipped: daily credit budget exhausted", pair);
+            return FxHistoryFetchResult.Failed("Twelve Data daily credit budget exhausted.");
+        }
+
         var requestUri =
             $"time_series?symbol={Uri.EscapeDataString(pair)}&interval=1day" +
             $"&start_date={from:yyyy-MM-dd}&end_date={to:yyyy-MM-dd}&apikey={options.Value.ApiKey}";

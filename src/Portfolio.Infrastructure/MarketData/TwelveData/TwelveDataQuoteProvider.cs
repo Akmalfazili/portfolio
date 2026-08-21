@@ -4,21 +4,32 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Portfolio.Application.Abstractions;
 using Portfolio.Application.Dtos;
+using Portfolio.Application.Services;
 using Portfolio.Domain.Entities;
 using Portfolio.Domain.Enums;
 
 namespace Portfolio.Infrastructure.MarketData.TwelveData;
 
 /// <summary>
-/// US-equity quotes from Twelve Data. Batches every asset into one <c>/quote</c> call — each
-/// symbol in the batch costs one credit against the 800/day free-tier budget, so this must never
-/// be called once per symbol. Twelve Data flattens a single-symbol response (no wrapper object)
-/// but nests each symbol's object under its own key for two-or-more, so both shapes are handled.
-/// A per-symbol <c>status: "error"</c> object never fails the sibling symbols in the same batch.
+/// US-equity quotes from Twelve Data. Each symbol in a <c>/quote</c> request costs one credit
+/// against the 800/day free-tier budget, and — this is D38 — Twelve Data's per-minute limit is
+/// itself credit-denominated, not request-denominated: a single request carrying more than
+/// <see cref="TwelveDataCreditPolicy.PerMinuteCreditLimit"/> symbols 429s immediately even though
+/// it is the only request in its minute. <see cref="GetQuotesAsync"/> therefore chunks the batch
+/// into groups no larger than that limit and pushes every chunk through the shared
+/// <see cref="ITwelveDataCreditThrottle"/>, which paces successive chunks to respect the rolling
+/// 60-second window — this can take tens of seconds per extra chunk, and the caller must never be
+/// something that has to respond quickly (see the remarks on
+/// <c>Portfolio.Application.Services.PriceRefreshService.RefreshNowAsync</c>).
+///
+/// Twelve Data flattens a single-symbol response (no wrapper object) but nests each symbol's
+/// object under its own key for two-or-more, so both shapes are handled per chunk. A per-symbol
+/// <c>status: "error"</c> object never fails the sibling symbols in the same chunk.
 /// </summary>
 public sealed class TwelveDataQuoteProvider(
     HttpClient httpClient,
     IOptions<TwelveDataOptions> options,
+    ITwelveDataCreditThrottle creditThrottle,
     TimeProvider timeProvider,
     ILogger<TwelveDataQuoteProvider> logger) : IQuoteProvider
 {
@@ -46,7 +57,31 @@ public sealed class TwelveDataQuoteProvider(
             bySymbol[asset.ProviderSymbol] = asset;
         }
 
-        var symbolList = string.Join(',', bySymbol.Keys);
+        var results = new List<QuoteFetchResult>(bySymbol.Count);
+
+        foreach (var chunk in bySymbol.Chunk(TwelveDataCreditPolicy.PerMinuteCreditLimit))
+        {
+            var granted = await creditThrottle.TryAcquireAsync(chunk.Length, cancellationToken);
+            if (!granted)
+            {
+                logger.LogWarning(
+                    "Twelve Data /quote chunk of {SymbolCount} symbols skipped: daily credit budget exhausted",
+                    chunk.Length);
+                results.AddRange(chunk.Select(kv =>
+                    new QuoteFetchResult(kv.Value.Id, false, null, null, null, "Twelve Data daily credit budget exhausted.")));
+                continue;
+            }
+
+            results.AddRange(await FetchChunkAsync(chunk, cancellationToken));
+        }
+
+        return results;
+    }
+
+    private async Task<IReadOnlyList<QuoteFetchResult>> FetchChunkAsync(
+        KeyValuePair<string, Asset>[] chunk, CancellationToken cancellationToken)
+    {
+        var symbolList = string.Join(',', chunk.Select(kv => kv.Key));
         var requestUri = $"quote?symbol={Uri.EscapeDataString(symbolList)}&apikey={options.Value.ApiKey}";
 
         string json;
@@ -59,33 +94,33 @@ public sealed class TwelveDataQuoteProvider(
             {
                 logger.LogWarning(
                     "Twelve Data /quote batch of {SymbolCount} symbols failed with status {StatusCode}",
-                    bySymbol.Count,
+                    chunk.Length,
                     (int)response.StatusCode);
-                return bySymbol.Values
-                    .Select(a => new QuoteFetchResult(a.Id, false, null, null, null, $"Twelve Data returned HTTP {(int)response.StatusCode}."))
+                return chunk
+                    .Select(kv => new QuoteFetchResult(kv.Value.Id, false, null, null, null, $"Twelve Data returned HTTP {(int)response.StatusCode}."))
                     .ToList();
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogWarning(ex, "Twelve Data /quote batch of {SymbolCount} symbols threw", bySymbol.Count);
-            return bySymbol.Values
-                .Select(a => new QuoteFetchResult(a.Id, false, null, null, null, "Twelve Data request failed."))
+            logger.LogWarning(ex, "Twelve Data /quote batch of {SymbolCount} symbols threw", chunk.Length);
+            return chunk
+                .Select(kv => new QuoteFetchResult(kv.Value.Id, false, null, null, null, "Twelve Data request failed."))
                 .ToList();
         }
 
-        var results = new List<QuoteFetchResult>(bySymbol.Count);
+        var results = new List<QuoteFetchResult>(chunk.Length);
 
-        if (bySymbol.Count == 1)
+        if (chunk.Length == 1)
         {
-            var (_, asset) = bySymbol.First();
+            var asset = chunk[0].Value;
             var quote = JsonSerializer.Deserialize<TwelveDataQuote>(json, JsonOptions);
             results.Add(ToResult(asset, quote));
             return results;
         }
 
         using var doc = JsonDocument.Parse(json);
-        foreach (var (symbol, asset) in bySymbol)
+        foreach (var (symbol, asset) in chunk)
         {
             if (!doc.RootElement.TryGetProperty(symbol, out var element))
             {
@@ -107,6 +142,18 @@ public sealed class TwelveDataQuoteProvider(
         {
             throw new InvalidOperationException(
                 $"Asset {asset.Id} ({asset.Symbol}) is routed to Twelve Data but has no ProviderSymbol.");
+        }
+
+        // A /time_series call costs exactly 1 credit regardless of the date range — same shared
+        // throttle the quote path uses (D38), so a backfill run and a quote sweep can never
+        // jointly overspend the per-minute window or the daily budget.
+        var granted = await creditThrottle.TryAcquireAsync(1, cancellationToken);
+        if (!granted)
+        {
+            logger.LogWarning(
+                "Twelve Data /time_series for {Symbol} skipped: daily credit budget exhausted",
+                asset.ProviderSymbol);
+            return HistoryFetchResult.Failed(from, "Twelve Data daily credit budget exhausted.");
         }
 
         var requestUri =

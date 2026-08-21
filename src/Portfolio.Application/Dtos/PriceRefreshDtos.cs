@@ -20,6 +20,15 @@ public enum PriceRefreshOutcome
     /// <summary>A manual refresh was requested within <see cref="Services.PriceRefreshOptions.ManualCooldown"/>
     /// of the previous manual refresh. Nothing was fetched.</summary>
     CooldownActive,
+
+    /// <summary>D38: the manual trigger's Twelve Data group would need more than one of the
+    /// shared credit throttle's per-minute chunks (see <c>Abstractions.ITwelveDataCreditThrottle</c>),
+    /// so the actual fetch was detached onto a background task instead of running inline — this
+    /// call returned immediately without waiting for it. Poll <c>GET /api/prices/status</c> for
+    /// progress; the detached sweep writes its own <see cref="Domain.Entities.RefreshRun"/> and
+    /// broadcasts <c>RefreshStatus</c> over SignalR exactly as a normal <see cref="Completed"/>
+    /// cycle would, once it finishes.</summary>
+    Queued,
 }
 
 /// <summary>
@@ -94,4 +103,16 @@ public sealed record PriceRefreshStatus(
     bool NyseOpen,
     bool SgxOpen,
     DateTimeOffset? NextScheduledRunAt,
-    IReadOnlyList<SourceRefreshStatus> Sources);
+    IReadOnlyList<SourceRefreshStatus> Sources,
+    /// <summary>D38/D37: the Twelve Data quote-sweep interval currently in effect, derived from
+    /// the live active-symbol count and today's remaining credit budget (see
+    /// <see cref="Services.TwelveDataCadenceCalculator"/>) rather than a cadence hardcoded for one
+    /// portfolio size. Null only if this field has not been populated by the endpoint (never the
+    /// case for <c>GET /api/prices/status</c> itself — additive field, defaults to null so older
+    /// serialized snapshots still deserialize).</summary>
+    int? EffectiveTwelveDataIntervalSeconds = null,
+    /// <summary>Twelve Data credits spent today (UTC), from the persisted daily ledger — see
+    /// <see cref="Abstractions.ITwelveDataCreditThrottle"/>.</summary>
+    int? CreditsUsedToday = null,
+    /// <summary>Twelve Data's daily credit budget (800 on the free tier).</summary>
+    int? CreditBudget = null);

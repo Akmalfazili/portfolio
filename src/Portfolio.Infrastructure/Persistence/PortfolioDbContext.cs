@@ -30,6 +30,8 @@ public class PortfolioDbContext(DbContextOptions<PortfolioDbContext> options) : 
 
     public DbSet<SourceRefreshState> SourceRefreshStates => Set<SourceRefreshState>();
 
+    public DbSet<TwelveDataCreditLedgerEntry> TwelveDataCreditLedgerEntries => Set<TwelveDataCreditLedgerEntry>();
+
     IQueryable<Asset> IPortfolioDbContext.Assets => Assets;
 
     IQueryable<Transaction> IPortfolioDbContext.Transactions => Transactions;
@@ -43,6 +45,8 @@ public class PortfolioDbContext(DbContextOptions<PortfolioDbContext> options) : 
     IQueryable<RefreshRun> IPortfolioDbContext.RefreshRuns => RefreshRuns;
 
     IQueryable<SourceRefreshState> IPortfolioDbContext.SourceRefreshStates => SourceRefreshStates;
+
+    IQueryable<TwelveDataCreditLedgerEntry> IPortfolioDbContext.TwelveDataCreditLedgerEntries => TwelveDataCreditLedgerEntries;
 
     public void AddAsset(Asset asset) => Assets.Add(asset);
 
@@ -59,6 +63,8 @@ public class PortfolioDbContext(DbContextOptions<PortfolioDbContext> options) : 
     public void AddRefreshRun(RefreshRun refreshRun) => RefreshRuns.Add(refreshRun);
 
     public void AddSourceRefreshState(SourceRefreshState state) => SourceRefreshStates.Add(state);
+
+    public void AddTwelveDataCreditLedgerEntry(TwelveDataCreditLedgerEntry entry) => TwelveDataCreditLedgerEntries.Add(entry);
 
     public ValueTask<Asset?> FindAssetAsync(int id, CancellationToken cancellationToken) =>
         Assets.FindAsync([id], cancellationToken);

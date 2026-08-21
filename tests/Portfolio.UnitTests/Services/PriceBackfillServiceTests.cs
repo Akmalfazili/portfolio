@@ -86,8 +86,9 @@ public sealed class PriceBackfillServiceTests : IDisposable
     private PriceBackfillService CreateSut(
         IQuoteProviderRouter router,
         IFxRateProvider fxProvider,
-        int maxCallsPerRun = 20,
-        IMarketCalendar? calendar = null) =>
+        int maxCallsPerRun = 800,
+        IMarketCalendar? calendar = null,
+        ITwelveDataCreditThrottle? creditThrottle = null) =>
         new(
             _db,
             router,
@@ -95,7 +96,20 @@ public sealed class PriceBackfillServiceTests : IDisposable
             calendar ?? AlwaysClosedCalendar(),
             _timeProvider,
             Options.Create(new PriceBackfillOptions { MaxProviderCallsPerRun = maxCallsPerRun }),
+            creditThrottle ?? ThrottleWithRemainingBudget(800),
             NullLogger<PriceBackfillService>.Instance);
+
+    /// <summary>Default credit-throttle fake reporting a full, untouched daily budget — the
+    /// hardcoded 20 this project used to bound a run has moved to <paramref name="maxCallsPerRun"/>
+    /// in <see cref="CreateSut"/> above for tests that are about that specific ceiling; this fake
+    /// is for tests that are instead about the derived-from-remaining-credits path (D37).</summary>
+    private static ITwelveDataCreditThrottle ThrottleWithRemainingBudget(int remaining)
+    {
+        var throttle = Substitute.For<ITwelveDataCreditThrottle>();
+        throttle.GetStatusAsync(Arg.Any<CancellationToken>())
+            .Returns(new TwelveDataCreditStatus(800 - remaining, 800, remaining));
+        return throttle;
+    }
 
     /// <summary>Most tests here exercise <c>RunAsync</c> directly, which never consults the
     /// calendar - only <c>RunIfDueAsync</c> does. Default to "always closed" so a test that forgot
@@ -468,6 +482,96 @@ public sealed class PriceBackfillServiceTests : IDisposable
         // the SGD asset itself - its own price history is independent of whether the FX rate to
         // convert it to USD landed).
         summary.AssetsProcessed.Should().Contain(["AAPL", "Z74"]);
+    }
+
+    [Fact]
+    public async Task RunAsync_OrdersByLeastRecentlyBackfilled_SoNoAssetIsPermanentlyStarvedAcrossRuns()
+    {
+        // D37, reproduced and fixed. With no ORDER BY, SQL Server returns assets in Id (clustered
+        // index) order every run, so a budget smaller than the full asset count always serves the
+        // same head and starves the same tail — forever, not just once. Three USD assets (no FX
+        // pair in play, so the FX loop can never interfere with this test) and a budget of exactly
+        // two prove it: against the pre-fix ordering (implicit Id order, unchanged run to run),
+        // CCC (highest Id) would be skipped on EVERY run and the second run's assertions below
+        // would fail — CCC would be skipped again and BBB would be processed again.
+        var toRemove = _db.Transactions.Where(t => t.AssetId == _aapl.Id || t.AssetId == _z74.Id).ToList();
+        _db.Transactions.RemoveRange(toRemove);
+        _db.Assets.RemoveRange(_aapl, _z74);
+
+        var assetA = new Asset { Id = 101, Symbol = "AAA", Name = "A Co", AssetClass = AssetClass.Stock, Currency = "USD", QuoteProviderKind = QuoteProviderKind.TwelveData, ProviderSymbol = "AAA" };
+        var assetB = new Asset { Id = 102, Symbol = "BBB", Name = "B Co", AssetClass = AssetClass.Stock, Currency = "USD", QuoteProviderKind = QuoteProviderKind.TwelveData, ProviderSymbol = "BBB" };
+        var assetC = new Asset { Id = 103, Symbol = "CCC", Name = "C Co", AssetClass = AssetClass.Stock, Currency = "USD", QuoteProviderKind = QuoteProviderKind.TwelveData, ProviderSymbol = "CCC" };
+        _db.Assets.AddRange(assetA, assetB, assetC);
+
+        foreach (var asset in new[] { assetA, assetB, assetC })
+        {
+            _db.Transactions.Add(new Transaction
+            {
+                AssetId = asset.Id,
+                Type = TransactionType.Buy,
+                TradeDate = new DateOnly(2026, 7, 20),
+                Quantity = 1,
+                PricePerUnit = 10m,
+                Fees = 0m,
+                Currency = "USD",
+            });
+        }
+
+        await _db.SaveChangesAsync();
+
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(new DateOnly(2026, 7, 20), 10m, "USD")],
+                callInfo.ArgAt<DateOnly>(1))));
+
+        var fxProvider = Substitute.For<IFxRateProvider>(); // never called — no non-USD currency in play
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider, maxCallsPerRun: 2);
+
+        var firstRun = await sut.RunAsync(RefreshTrigger.BackfillManual, CancellationToken.None);
+
+        firstRun.AssetsProcessed.Should().Contain(["AAA", "BBB"]);
+        firstRun.AssetsSkippedForBudget.Should().Contain(["CCC"]);
+
+        var secondRun = await sut.RunAsync(RefreshTrigger.BackfillManual, CancellationToken.None);
+
+        // The asset skipped last time must be served first this time — not skipped again.
+        secondRun.AssetsProcessed.Should().Contain("CCC", "CCC was left behind last run and must not be starved forever");
+        secondRun.AssetsSkippedForBudget.Should().Contain("BBB", "the ordering rotates — BBB (most recently backfilled) now waits, not CCC again");
+        await fxProvider.DidNotReceive().GetHistoryAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunAsync_BudgetIsDerivedFromRemainingDailyCredits_NotJustTheConfiguredCeiling()
+    {
+        // D37's third compounding cause: the budget used to be a flat hardcoded 20 (now defaults
+        // to the full 800 daily ceiling — see PriceBackfillOptions) with no regard for how much of
+        // TODAY's credit budget Twelve Data has already spent elsewhere (e.g. a quote-refresh
+        // sweep earlier the same day). MaxProviderCallsPerRun is left at its generous default here
+        // — the only thing constraining this run is the throttle reporting just 1 credit left.
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(new DateOnly(2026, 7, 20), 200m, "USD")],
+                callInfo.ArgAt<DateOnly>(1))));
+
+        var fxProvider = Substitute.For<IFxRateProvider>();
+        fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]));
+
+        var sut = CreateSut(
+            RouterAlwaysReturning(stockProvider),
+            fxProvider,
+            creditThrottle: ThrottleWithRemainingBudget(1)); // only 1 credit left today, regardless of the 800 default ceiling
+
+        var summary = await sut.RunAsync(RefreshTrigger.BackfillManual, CancellationToken.None);
+
+        summary.ProviderCallsUsed.Should().Be(1);
+        summary.FxRatePointsInserted.Should().Be(1); // FX still claims the single available call first
+        summary.AssetsProcessed.Should().BeEmpty();
+        summary.AssetsSkippedForBudget.Should().Contain(["AAPL", "Z74"]);
     }
 
     // --- RunIfDueAsync: the market-calendar gate and once-per-day throttle behind the scheduled
