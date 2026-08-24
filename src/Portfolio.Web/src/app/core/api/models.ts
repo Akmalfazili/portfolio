@@ -27,7 +27,17 @@ export type QuoteProviderKind = 'TwelveData' | 'Yahoo' | 'CoinGecko';
  */
 export type PriceSource = 'Live' | 'Close' | null;
 
-export type RefreshOutcome = 'Completed' | 'NothingDue' | 'CooldownActive';
+/**
+ * D38 residual — `Queued` (new) is returned when a manual refresh's Twelve
+ * Data group needs more than one per-minute credit chunk: the fetch is
+ * detached onto a background task and the endpoint returns immediately with
+ * `totalSymbolsRefreshed: 0` and an empty `sources` array. That shape is
+ * otherwise indistinguishable from "nothing was due", so any consumer that
+ * derives its message from `totalSymbolsRefreshed`/`sources` alone (as
+ * `describeRefreshOutcome` once did) must switch on `outcome` first — see
+ * that file's header comment.
+ */
+export type RefreshOutcome = 'Completed' | 'NothingDue' | 'CooldownActive' | 'Queued';
 
 export interface AssetDto {
   id: number;

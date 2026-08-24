@@ -68,6 +68,31 @@ public sealed class TransactionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CreateAsync_AllowsZeroPricePerUnit_ForFreeShareAcquisitions()
+    {
+        // D36: a bonus issue / scrip dividend / free-share grant legitimately has a zero price.
+        var request = new CreateTransactionRequest(
+            _ethAsset.Id, TransactionType.Buy, new DateOnly(2026, 1, 1), 10m, 0m, 0m, "USD", "bonus issue");
+
+        var result = await _sut.CreateAsync(request, CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.PricePerUnit.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task CreateAsync_RejectsNegativePricePerUnit()
+    {
+        var request = new CreateTransactionRequest(
+            _ethAsset.Id, TransactionType.Buy, new DateOnly(2026, 1, 1), 1m, -0.01m, 0m, "USD", null);
+
+        var result = await _sut.CreateAsync(request, CancellationToken.None);
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error!.ValidationErrors.Should().ContainKey("pricePerUnit");
+    }
+
+    [Fact]
     public async Task CreateAsync_RejectsFutureTradeDate()
     {
         var future = DateOnly.FromDateTime(_timeProvider.GetUtcNow().UtcDateTime).AddDays(1);
@@ -216,6 +241,24 @@ public sealed class TransactionServiceTests : IDisposable
 
         update.IsSuccess.Should().BeFalse();
         update.Error!.ValidationErrors.Should().ContainKey("quantity");
+    }
+
+    [Fact]
+    public async Task UpdateAsync_AllowsZeroPricePerUnit_ForFreeShareAcquisitions()
+    {
+        var created = await _sut.CreateAsync(
+            new CreateTransactionRequest(_ethAsset.Id, TransactionType.Buy, new DateOnly(2026, 1, 1), 1m, 2000m, 0m, "USD", null),
+            CancellationToken.None);
+
+        // D36: editing a transaction to record a zero price (e.g. correcting a paid buy to the
+        // free-share it actually was) must be allowed, not just accepted on create.
+        var update = await _sut.UpdateAsync(
+            created.Value!.Id,
+            new UpdateTransactionRequest(_ethAsset.Id, TransactionType.Buy, new DateOnly(2026, 1, 1), 1m, 0m, 0m, "USD", "corrected to bonus issue"),
+            CancellationToken.None);
+
+        update.IsSuccess.Should().BeTrue();
+        update.Value!.PricePerUnit.Should().Be(0m);
     }
 
     [Fact]

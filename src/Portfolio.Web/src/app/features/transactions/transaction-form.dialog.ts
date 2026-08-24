@@ -12,7 +12,11 @@ import { MatSelectModule } from '@angular/material/select';
 
 import { API_ROUTES } from '../../core/api/api-routes';
 import { AssetDto, CreateTransactionRequest, TransactionDto, TransactionType, ValidationProblemDetails } from '../../core/api/models';
-import { decimalPrecisionValidator, positiveNumberValidator } from '../../shared/validators/decimal-precision.validator';
+import {
+  decimalPrecisionValidator,
+  nonNegativeNumberValidator,
+  positiveNumberValidator,
+} from '../../shared/validators/decimal-precision.validator';
 import { fromDateOnlyString, toDateOnlyString, todayDateOnly } from '../../shared/util/local-date';
 
 export interface TransactionFormDialogData {
@@ -113,7 +117,11 @@ export class TransactionFormDialog {
       validators: [Validators.required, positiveNumberValidator(), decimalPrecisionValidator(10)],
     }),
     pricePerUnit: new FormControl<number | null>(this.data.transaction?.pricePerUnit ?? null, {
-      validators: [Validators.required, positiveNumberValidator(), decimalPrecisionValidator(10)],
+      // D36 — zero is a legitimate price (free share / bonus issue / scrip
+      // dividend), so this is the one quantity-ish field that does NOT use
+      // positiveNumberValidator(). Still required: Validators.required treats
+      // 0 as present, so a genuinely blank field is still caught.
+      validators: [Validators.required, nonNegativeNumberValidator(), decimalPrecisionValidator(10)],
     }),
     fees: new FormControl<number>(this.data.transaction?.fees ?? 0, {
       nonNullable: true,
@@ -155,7 +163,7 @@ export class TransactionFormDialog {
     if (errors['positive']) {
       return 'Must be greater than zero.';
     }
-    if (errors['min']) {
+    if (errors['negative'] || errors['min']) {
       return 'Cannot be negative.';
     }
     if (errors['maxDecimals']) {

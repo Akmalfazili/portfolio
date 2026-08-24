@@ -23,6 +23,14 @@ import { PriceRefreshCycleResult, PriceRefreshStatus, QuoteProviderKind } from '
  * `sgxOpen` flags, which are authoritative and always present. `attempted` is
  * still used for the one thing it does report reliably: distinguishing a
  * provider that was called and failed from one that was never called.
+ *
+ * D38 residual — `outcome: 'Queued'` (a manual refresh whose Twelve Data
+ * group needed more than one per-minute credit chunk, detached onto a
+ * background task) carries `totalSymbolsRefreshed: 0` and an empty `sources`
+ * array, which is EXACTLY the shape "nothing was due" also produces. It must
+ * be handled before any branch that reads `totalSymbolsRefreshed`/`sources`,
+ * or a genuinely in-flight background sweep reads as "already up to date" —
+ * the opposite of what happened.
  */
 const SOURCE_MARKET_LABEL: Record<QuoteProviderKind, string> = {
   TwelveData: 'US market',
@@ -37,6 +45,28 @@ export function describeRefreshOutcome(
   const closed = closedMarkets(status);
   const closedNote =
     closed.length > 0 ? ` ${joinWithAnd(closed)} ${closed.length === 1 ? 'is' : 'are'} closed, so those holdings were not updated.` : '';
+
+  // Exhaustiveness guard: `case`s that fall through to the shared logic below
+  // are listed explicitly, and `default` routes anything else through
+  // assertUnreachable(). Adding a fifth RefreshOutcome value without a case
+  // here is a compile error, not a silent fall-through like the one that let
+  // `Queued` slip past every branch below and render "up to date" for an
+  // in-flight background sweep.
+  switch (result.outcome) {
+    case 'Queued':
+      // Deliberately DOES append closedNote: a queued sweep and a closed
+      // market are independent facts (e.g. Twelve Data's US batch queued
+      // while SGX is separately shut), and the other branches below all
+      // append it too — dropping it here would be an inconsistent, not a
+      // more correct, message.
+      return `A larger refresh is already running in the background — this page will update automatically when it finishes.${closedNote}`;
+    case 'Completed':
+    case 'NothingDue':
+    case 'CooldownActive':
+      break;
+    default:
+      return assertUnreachableOutcome(result.outcome);
+  }
 
   if (result.totalSymbolsRefreshed > 0) {
     const refreshedFrom = result.sources
@@ -77,4 +107,9 @@ function closedMarkets(status: PriceRefreshStatus | null): string[] {
 
 function joinWithAnd(parts: string[]): string {
   return parts.length <= 1 ? (parts[0] ?? '') : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`;
+}
+
+/** Never actually reached at runtime — its role is purely to make the switch above exhaustive at compile time. */
+function assertUnreachableOutcome(outcome: never): string {
+  throw new Error(`Unhandled RefreshOutcome: ${outcome as string}`);
 }

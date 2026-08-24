@@ -137,6 +137,64 @@ describe('TransactionFormDialog', () => {
     expect(fixture.componentInstance.fieldError('quantity')).toContain('greater than zero');
   });
 
+  it('rejects a negative price per unit', () => {
+    const fixture = setup({ mode: 'create', assets: [ANVL, AAPL] });
+    const pricePerUnit = fixture.componentInstance.form.controls.pricePerUnit;
+    pricePerUnit.setValue(-0.01);
+    pricePerUnit.markAsTouched();
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.fieldError('pricePerUnit')).toBe('Cannot be negative.');
+  });
+
+  it('D36 — permits a zero price (free share / bonus issue / scrip dividend) without an error', () => {
+    const fixture = setup({ mode: 'create', assets: [ANVL, AAPL] });
+    const pricePerUnit = fixture.componentInstance.form.controls.pricePerUnit;
+    pricePerUnit.setValue(0);
+    pricePerUnit.markAsTouched();
+    fixture.detectChanges();
+
+    expect(pricePerUnit.valid).toBe(true);
+    expect(fixture.componentInstance.fieldError('pricePerUnit')).toBeNull();
+  });
+
+  it('D36 — still requires pricePerUnit to be present: Validators.required treats 0 as present, not a blank field masquerading as free', () => {
+    const fixture = setup({ mode: 'create', assets: [ANVL, AAPL] });
+    const pricePerUnit = fixture.componentInstance.form.controls.pricePerUnit;
+
+    // A genuinely blank field (never touched by the user) is still required=true.
+    pricePerUnit.setValue(null);
+    pricePerUnit.markAsTouched();
+    fixture.detectChanges();
+    expect(fixture.componentInstance.fieldError('pricePerUnit')).toBe('Required.');
+
+    // Explicitly typing 0 clears the required error — 0 is a present value.
+    pricePerUnit.setValue(0);
+    fixture.detectChanges();
+    expect(pricePerUnit.errors?.['required']).toBeFalsy();
+    expect(pricePerUnit.valid).toBe(true);
+  });
+
+  it('submits a zero-price transaction (D36 — Z74 id 2002 is the real-world case this retires a DB workaround for)', () => {
+    const fixture = setup({ mode: 'create', assets: [ANVL, AAPL] });
+    const { form } = fixture.componentInstance;
+
+    form.controls.assetId.setValue(1); // AAPL
+    form.controls.tradeDate.setValue(new Date(2026, 6, 30));
+    form.controls.quantity.setValue(10);
+    form.controls.pricePerUnit.setValue(0);
+    fixture.componentInstance.submit();
+
+    const req = httpMock.expectOne(API_ROUTES.transactions);
+    expect(req.request.body.pricePerUnit).toBe(0);
+    req.flush({ ...EXISTING, id: 100, pricePerUnit: 0 });
+
+    expect(dialogRef.close).toHaveBeenCalledWith({
+      kind: 'saved',
+      transaction: { ...EXISTING, id: 100, pricePerUnit: 0 },
+    });
+  });
+
   it('auto-sets currency from the selected asset and sends it, even though the control is disabled', () => {
     const fixture = setup({ mode: 'create', assets: [ANVL, AAPL] });
     const { form } = fixture.componentInstance;

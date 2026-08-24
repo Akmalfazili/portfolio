@@ -105,6 +105,37 @@ describe('describeRefreshOutcome (D5 — why nothing moved)', () => {
     expect(message).toBe('Already up to date — nothing changed since the last refresh.');
   });
 
+  it('D38 residual — a Queued outcome says the refresh is running in the background, NOT "already up to date"', () => {
+    // The real shape a queued manual refresh returns: totalSymbolsRefreshed 0
+    // and an empty sources array — indistinguishable from "nothing was due"
+    // unless `outcome` itself is read.
+    const result: PriceRefreshCycleResult = {
+      outcome: 'Queued',
+      cooldownSecondsRemaining: null,
+      totalSymbolsRefreshed: 0,
+      sources: [],
+    };
+
+    const message = describeRefreshOutcome(result, status({ nyseOpen: true, sgxOpen: true }));
+
+    expect(message).not.toContain('Already up to date');
+    expect(message).toContain('running in the background');
+  });
+
+  it('D38 residual — a Queued outcome still appends the closed-market note when relevant', () => {
+    const result: PriceRefreshCycleResult = {
+      outcome: 'Queued',
+      cooldownSecondsRemaining: null,
+      totalSymbolsRefreshed: 0,
+      sources: [],
+    };
+
+    const message = describeRefreshOutcome(result, status({ nyseOpen: true, sgxOpen: false }));
+
+    expect(message).toContain('running in the background');
+    expect(message).toContain('SGX is closed');
+  });
+
   it('uses singular "symbol" for exactly one refreshed symbol', () => {
     const result: PriceRefreshCycleResult = {
       outcome: 'Completed',

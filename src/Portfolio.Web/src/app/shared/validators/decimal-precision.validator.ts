@@ -66,3 +66,25 @@ export function positiveNumberValidator(): ValidatorFn {
     return typeof value === 'number' && value > 0 ? null : { positive: true };
   };
 }
+
+/**
+ * Zero or greater — for `pricePerUnit` only (D36). A free share, bonus issue
+ * or scrip dividend legitimately prices at exactly 0, which the backend now
+ * accepts (`TransactionService.ValidateCommon` moved from `<= 0` to `< 0`).
+ * `quantity` must keep rejecting 0 and stays on `positiveNumberValidator()`
+ * — do not swap this in there.
+ *
+ * `Validators.required` alone still guards against a genuinely blank field:
+ * `Validators.required`'s `isEmptyInputValue` only checks null/undefined/
+ * length, so a `0` value is "present" and passes it — required and
+ * zero-permitting are not in tension here.
+ */
+export function nonNegativeNumberValidator(): ValidatorFn {
+  return (control: AbstractControl<number | null>): ValidationErrors | null => {
+    const value = control.value;
+    if (value === null || value === undefined || (value as unknown) === '') {
+      return null;
+    }
+    return typeof value === 'number' && value >= 0 ? null : { negative: true };
+  };
+}

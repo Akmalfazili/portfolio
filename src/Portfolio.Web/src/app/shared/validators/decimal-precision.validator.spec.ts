@@ -1,6 +1,6 @@
 import { FormControl } from '@angular/forms';
 
-import { decimalPrecisionValidator, positiveNumberValidator } from './decimal-precision.validator';
+import { decimalPrecisionValidator, nonNegativeNumberValidator, positiveNumberValidator } from './decimal-precision.validator';
 
 describe('decimalPrecisionValidator', () => {
   it('accepts a 10dp crypto-dust quantity like the live D8 probe value (0.0000000001)', () => {
@@ -62,5 +62,23 @@ describe('positiveNumberValidator', () => {
 
   it('accepts a tiny positive value', () => {
     expect(positiveNumberValidator()(new FormControl<number | null>(0.0000000001))).toBeNull();
+  });
+});
+
+describe('nonNegativeNumberValidator (D36 — pricePerUnit only, a free share/scrip dividend prices at exactly 0)', () => {
+  it('accepts zero, unlike positiveNumberValidator', () => {
+    expect(nonNegativeNumberValidator()(new FormControl<number | null>(0))).toBeNull();
+  });
+
+  it('rejects negative values', () => {
+    expect(nonNegativeNumberValidator()(new FormControl<number | null>(-0.01))).toEqual({ negative: true });
+  });
+
+  it('accepts a tiny positive value', () => {
+    expect(nonNegativeNumberValidator()(new FormControl<number | null>(0.0005326))).toBeNull();
+  });
+
+  it('passes null/empty through — required-ness is a separate validator', () => {
+    expect(nonNegativeNumberValidator()(new FormControl<number | null>(null))).toBeNull();
   });
 });

@@ -210,9 +210,9 @@ public sealed class TransactionService(IPortfolioDbContext db, TimeProvider time
             errors["quantity"] = ["Quantity must be positive."];
         }
 
-        if (pricePerUnit <= 0)
+        if (pricePerUnit < 0)
         {
-            errors["pricePerUnit"] = ["Price per unit must be positive."];
+            errors["pricePerUnit"] = ["Price per unit cannot be negative."];
         }
 
         if (fees < 0)
