@@ -14,4 +14,8 @@ public sealed class TwelveDataCreditOptions
     public int PerMinuteCreditLimit { get; set; } = TwelveDataCreditPolicy.PerMinuteCreditLimit;
 
     public int DailyCreditBudget { get; set; } = TwelveDataCreditPolicy.DailyCreditBudget;
+
+    /// <summary>See <see cref="TwelveDataCreditPolicy.ReconciliationIntervalMinutes"/>. Overridable
+    /// so unit tests can shrink it instead of waiting on a real hour.</summary>
+    public int ReconciliationIntervalMinutes { get; set; } = TwelveDataCreditPolicy.ReconciliationIntervalMinutes;
 }

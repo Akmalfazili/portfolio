@@ -12,7 +12,14 @@ namespace Portfolio.Application.Services;
 /// shot — a batch of 21 symbols 429s immediately even though it is the first (and only) request
 /// in its minute, because it alone exceeds <see cref="PerMinuteCreditLimit"/>. A <c>/time_series</c>
 /// call (used by history/backfill) always costs exactly 1 credit, regardless of the date range
-/// requested.</para>
+/// requested — <b>this was the suspected culprit for D39 and was measured, not assumed, on
+/// 2026-08-24</b>: a 5-row call and a 1,668-row call (AAPL, 2020-01-01 to 2026-08-24, more rows
+/// than the 837-row case that raised the suspicion) both moved Twelve Data's own
+/// <c>GET /api_usage</c> <c>daily_usage</c> counter by exactly 1. The output-size theory is
+/// KILLED by this measurement; the per-call cost model here was already correct. D39's real cause
+/// is the ledger trusting its own running total forever instead of periodically checking it
+/// against Twelve Data's counter — see <c>TwelveDataCreditThrottle</c>'s seed-on-day-start and
+/// periodic reconciliation.</para>
 /// </summary>
 public static class TwelveDataCreditPolicy
 {
@@ -27,4 +34,10 @@ public static class TwelveDataCreditPolicy
     /// derive a safe quote-refresh cadence for a given symbol count — see
     /// <see cref="TwelveDataCadenceCalculator"/>.</summary>
     public const int NyseSessionMinutes = 390;
+
+    /// <summary>How often <see cref="TwelveDataCreditThrottle"/> may re-check its persisted ledger
+    /// against Twelve Data's own <c>GET /api_usage</c> counter (D39). Deliberately not "per call":
+    /// that endpoint itself costs 1 credit, so reconciling more often than this would make credit
+    /// monitoring a meaningful drain on the very budget it protects.</summary>
+    public const int ReconciliationIntervalMinutes = 60;
 }

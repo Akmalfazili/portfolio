@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
+using NSubstitute;
 using Portfolio.Application.Abstractions;
 using Portfolio.Application.Services;
 using Portfolio.Infrastructure.Persistence;
@@ -22,19 +23,33 @@ namespace Portfolio.UnitTests.Services;
 public sealed class TwelveDataCreditThrottleTests
 {
     private static (TwelveDataCreditThrottle Throttle, FakeTimeProvider Time) CreateSut(
-        int perMinuteLimit = 8, int dailyBudget = 800, DateTimeOffset? now = null)
+        int perMinuteLimit = 8,
+        int dailyBudget = 800,
+        DateTimeOffset? now = null,
+        ITwelveDataUsageProvider? usageProvider = null,
+        int reconciliationIntervalMinutes = 60)
     {
         var services = new ServiceCollection();
         var dbName = Guid.NewGuid().ToString();
         services.AddDbContext<PortfolioDbContext>(o => o.UseInMemoryDatabase(dbName));
         services.AddScoped<IPortfolioDbContext>(sp => sp.GetRequiredService<PortfolioDbContext>());
+        if (usageProvider is not null)
+        {
+            services.AddScoped(_ => usageProvider);
+        }
+
         var provider = services.BuildServiceProvider();
 
         var time = new FakeTimeProvider(now ?? DateTimeOffset.Parse("2026-08-21T14:00:00Z"));
         var throttle = new TwelveDataCreditThrottle(
             provider.GetRequiredService<IServiceScopeFactory>(),
             time,
-            Options.Create(new TwelveDataCreditOptions { PerMinuteCreditLimit = perMinuteLimit, DailyCreditBudget = dailyBudget }),
+            Options.Create(new TwelveDataCreditOptions
+            {
+                PerMinuteCreditLimit = perMinuteLimit,
+                DailyCreditBudget = dailyBudget,
+                ReconciliationIntervalMinutes = reconciliationIntervalMinutes,
+            }),
             NullLogger<TwelveDataCreditThrottle>.Instance);
 
         return (throttle, time);
@@ -136,6 +151,121 @@ public sealed class TwelveDataCreditThrottleTests
         var status = await second.GetStatusAsync(CancellationToken.None);
         status.CreditsUsedToday.Should().Be(8);
         status.RemainingToday.Should().Be(792);
+    }
+
+    /// <summary>
+    /// D39's core fix: the pre-fix behaviour started a brand-new UTC day's ledger at zero
+    /// regardless of what Twelve Data's own counter already showed — this reproduces that exact
+    /// gap (a day already 300 credits deep in real spend, e.g. from a source outside this
+    /// process) and proves the first write of the day seeds from the real counter instead.
+    /// </summary>
+    [Fact]
+    public async Task TryAcquireAsync_FirstWriteOfANewDay_SeedsLedgerFromRealUsage_NotZero()
+    {
+        var usageProvider = Substitute.For<ITwelveDataUsageProvider>();
+        usageProvider.GetDailyUsageAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<int?>(300));
+        var (sut, _) = CreateSut(usageProvider: usageProvider);
+
+        var granted = await sut.TryAcquireAsync(5, CancellationToken.None);
+
+        granted.Should().BeTrue();
+        var status = await sut.GetStatusAsync(CancellationToken.None);
+        status.CreditsUsedToday.Should().Be(305, "the day must be seeded from the real 300 already spent, plus this request's 5");
+    }
+
+    /// <summary>Confirms the pre-D39 fallback is preserved rather than a hard dependency being
+    /// introduced: when no <see cref="ITwelveDataUsageProvider"/> is available at all (as in every
+    /// other test in this file), a new day still starts from zero instead of throwing.</summary>
+    [Fact]
+    public async Task TryAcquireAsync_FirstWriteOfANewDay_WithNoUsageProviderWired_FallsBackToZero()
+    {
+        var (sut, _) = CreateSut(usageProvider: null);
+
+        (await sut.TryAcquireAsync(5, CancellationToken.None)).Should().BeTrue();
+
+        var status = await sut.GetStatusAsync(CancellationToken.None);
+        status.CreditsUsedToday.Should().Be(5);
+    }
+
+    /// <summary>Same reproduction, but the real counter is unreachable (transient failure) — the
+    /// seed must degrade to zero rather than fail the credit request outright.</summary>
+    [Fact]
+    public async Task TryAcquireAsync_FirstWriteOfANewDay_WhenRealUsageUnavailable_FallsBackToZero()
+    {
+        var usageProvider = Substitute.For<ITwelveDataUsageProvider>();
+        usageProvider.GetDailyUsageAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<int?>(null));
+        var (sut, _) = CreateSut(usageProvider: usageProvider);
+
+        (await sut.TryAcquireAsync(5, CancellationToken.None)).Should().BeTrue();
+
+        var status = await sut.GetStatusAsync(CancellationToken.None);
+        status.CreditsUsedToday.Should().Be(5);
+    }
+
+    /// <summary>
+    /// D39's second half: even after a correct seed, a long-lived process's locally-accumulated
+    /// total can still drift from reality (an untracked spend elsewhere, a retry, etc.) — so it
+    /// must be corrected periodically. Here the local ledger says 5 after the first call; the real
+    /// counter has since moved to 400 by some means this process never recorded. Once the
+    /// reconciliation interval has elapsed, the next acquire must pull the ledger back to reality
+    /// rather than keep compounding on the stale local total.
+    /// </summary>
+    [Fact]
+    public async Task TryAcquireAsync_AfterReconciliationIntervalElapses_OverwritesLocalTotalFromRealUsage()
+    {
+        var usageProvider = Substitute.For<ITwelveDataUsageProvider>();
+        usageProvider.GetDailyUsageAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<int?>(300), Task.FromResult<int?>(400));
+        var (sut, time) = CreateSut(usageProvider: usageProvider, reconciliationIntervalMinutes: 60);
+
+        (await sut.TryAcquireAsync(5, CancellationToken.None)).Should().BeTrue(); // seeds at 300, now 305
+
+        time.Advance(TimeSpan.FromMinutes(61));
+
+        (await sut.TryAcquireAsync(1, CancellationToken.None)).Should().BeTrue(); // reconciles to 400, then +1
+
+        var status = await sut.GetStatusAsync(CancellationToken.None);
+        status.CreditsUsedToday.Should().Be(401);
+    }
+
+    /// <summary>
+    /// The other half of "periodically, not per call": reconciliation must not fire on every
+    /// acquire just because a usage provider happens to be wired up — <c>GET /api_usage</c> costs
+    /// a real credit, so calling it more often than the configured interval would itself become a
+    /// meaningful drain on the budget it exists to protect.
+    /// </summary>
+    [Fact]
+    public async Task TryAcquireAsync_WithinTheReconciliationInterval_DoesNotCallTheUsageProviderAgain()
+    {
+        var usageProvider = Substitute.For<ITwelveDataUsageProvider>();
+        usageProvider.GetDailyUsageAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<int?>(300));
+        var (sut, time) = CreateSut(usageProvider: usageProvider, reconciliationIntervalMinutes: 60);
+
+        (await sut.TryAcquireAsync(1, CancellationToken.None)).Should().BeTrue(); // seeds — 1 call
+        time.Advance(TimeSpan.FromMinutes(30)); // well within the 60-minute interval
+        (await sut.TryAcquireAsync(1, CancellationToken.None)).Should().BeTrue();
+        (await sut.TryAcquireAsync(1, CancellationToken.None)).Should().BeTrue();
+
+        await usageProvider.Received(1).GetDailyUsageAsync(Arg.Any<CancellationToken>());
+
+        var status = await sut.GetStatusAsync(CancellationToken.None);
+        status.CreditsUsedToday.Should().Be(303, "local accumulation must continue between reconciliations, on top of the 300 seed");
+    }
+
+    /// <summary>D39 explicitly forbids reconciling from a read-only status check — <c>GET
+    /// /api/prices/status</c> can be polled by the frontend far more often than any sane credit
+    /// reconciliation cadence, so it must never itself spend a Twelve Data credit.</summary>
+    [Fact]
+    public async Task GetStatusAsync_NeverCallsTheUsageProvider()
+    {
+        var usageProvider = Substitute.For<ITwelveDataUsageProvider>();
+        usageProvider.GetDailyUsageAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<int?>(300));
+        var (sut, _) = CreateSut(usageProvider: usageProvider);
+
+        await sut.GetStatusAsync(CancellationToken.None);
+        await sut.GetStatusAsync(CancellationToken.None);
+        await sut.GetStatusAsync(CancellationToken.None);
+
+        await usageProvider.DidNotReceive().GetDailyUsageAsync(Arg.Any<CancellationToken>());
     }
 
     /// <summary>Nudges the fake clock forward in small steps until <paramref name="task"/>

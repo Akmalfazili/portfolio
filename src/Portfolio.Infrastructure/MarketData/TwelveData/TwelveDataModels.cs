@@ -66,6 +66,24 @@ public sealed class TwelveDataExchangeRate
     public bool IsError => string.Equals(Status, "error", StringComparison.OrdinalIgnoreCase);
 }
 
+/// <summary><c>/api_usage</c> response — Twelve Data's own authoritative credit counter, snake_case
+/// unlike most of its other endpoints (verified live: <c>"daily_usage":323</c>). Used only for D39
+/// reconciliation (<see cref="TwelveDataUsageProvider"/>), never for gating a data call.</summary>
+public sealed class TwelveDataUsageResponse
+{
+    [JsonPropertyName("current_usage")]
+    public int CurrentUsage { get; set; }
+
+    [JsonPropertyName("plan_limit")]
+    public int PlanLimit { get; set; }
+
+    [JsonPropertyName("daily_usage")]
+    public int DailyUsage { get; set; }
+
+    [JsonPropertyName("plan_daily_limit")]
+    public int PlanDailyLimit { get; set; }
+}
+
 /// <summary>One row of a <c>/time_series</c> response.</summary>
 public sealed class TwelveDataTimeSeriesValue
 {

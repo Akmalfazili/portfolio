@@ -91,6 +91,17 @@ public static class DependencyInjection
             .AddHttpMessageHandler<RedactingLoggingHandler>()
             .AddResilienceHandler("twelve-data-fx", ConfigureTwelveDataResilience);
 
+        // D39: GET /api_usage reconciles the credit ledger against Twelve Data's own counter.
+        // Deliberately no resilience/retry pipeline — see TwelveDataUsageProvider's own remarks;
+        // retrying a 1-credit monitoring call would spend more of the budget it exists to measure.
+        services.AddHttpClient<TwelveDataUsageProvider>((sp, client) =>
+            {
+                var options = sp.GetRequiredService<IOptions<TwelveDataOptions>>().Value;
+                client.BaseAddress = new Uri(EnsureTrailingSlash(options.BaseUrl));
+            })
+            .RemoveAllLoggers()
+            .AddHttpMessageHandler<RedactingLoggingHandler>();
+
         // CoinGecko: keyless public API, no query-string secret to leak, but the same
         // redacting/no-default-logging pipeline is applied for consistency and in case a Demo/
         // Pro key is configured later (sent as a header, not logged by the custom handler).
@@ -132,6 +143,7 @@ public static class DependencyInjection
         services.AddScoped<IQuoteProvider>(sp => sp.GetRequiredService<CoinGeckoQuoteProvider>());
         services.AddScoped<IQuoteProvider>(sp => sp.GetRequiredService<YahooQuoteProvider>());
         services.AddScoped<IFxRateProvider>(sp => sp.GetRequiredService<TwelveDataFxProvider>());
+        services.AddScoped<ITwelveDataUsageProvider>(sp => sp.GetRequiredService<TwelveDataUsageProvider>());
 
         services.AddScoped<IQuoteProviderRouter, QuoteProviderRouter>();
 
