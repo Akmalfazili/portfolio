@@ -1436,6 +1436,29 @@ is running, and D39's closure means the credit numbers it depends on can finally
 > otherwise block every action once connected. One wrong turn already taken and disproved, recorded
 > so it is not retaken: Chrome's *profile* Google account is **not** the claude.ai account the
 > extension is signed into — the mismatch there is a red herring.
+>
+> 🔌🔌 **2026-08-25 UPDATE — THE NAMED-PIPE CONTENTION THEORY IS NOW DISPROVED. Do not spend another
+> session on it.** The note above named contention from 12 concurrent `claude` processes as "the
+> remaining documented cause". It was tested directly today and **fails to explain the symptom**:
+>
+> | Condition | 2026-08-24 | 2026-08-25 | Result |
+> |---|---|---|---|
+> | `claude` processes | 12 | **2** (this session + 1) | connection still refused |
+> | Chrome running | restarted | **yes**, 23 procs since 05:16 UTC | connection still refused |
+> | `/chrome` run by the user | — | **yes** | connection still refused |
+>
+> Two `tabs_context_mcp` probes, one **before** and one **after** the user ran `/chrome`, both
+> returned the same "Browser extension is not connected". With contention at its practical floor and
+> Chrome demonstrably up, **contention is not a sufficient cause** — so the next session must NOT
+> open by closing terminals and declaring the path clear. ⚠️ Also observed and unexplained: the
+> user's `/chrome` invocation produced **no status output at all**, where the note above expects a
+> `Status: Enabled` / `Extension: Installed` panel. That silence is itself a lead and is the first
+> thing worth chasing — a `/chrome` that prints nothing is a different failure from one that prints
+> `Disabled`.
+>
+> **Standing rule, reaffirmed and now costed twice:** two failed probes is the limit. 2026-08-24
+> spent an entire session on seven; 2026-08-25 stopped at two and spent the remainder productively.
+> If the extension does not connect on the second try, say so and switch to non-browser work.
 
 ```
 Read tracker.md. D36, D37, D38 and D39 are all CLOSED — do not redo any of them,
