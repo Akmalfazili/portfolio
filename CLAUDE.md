@@ -96,8 +96,17 @@ Always check the market calendar before spending credits, and cache aggressively
 
 | Source | Covers |
 |---|---|
-| Twelve Data | US equities, SGX `Z74:XSES`, USD/SGD FX |
+| Twelve Data | US equities, USD/SGD FX |
+| Yahoo Finance | SGX `Z74.SI` only |
 | CoinGecko | `ethereum`, `amp-token`, `anvil` — all three in one call |
+
+Routing is an explicit per-asset field (`Asset.QuoteProviderKind`), never inferred from currency,
+exchange, or symbol shape. **Z74 does not go to Twelve Data and cannot**: the free tier 404s on it
+with *"available starting with the Pro or Venture plan"*, verified live. `Z74:XSES` is Twelve Data's
+syntax and is dead for this asset; Yahoo's chart endpoint resolves the SGX listing as `Z74.SI`.
+Yahoo has no key, no SLA, and no batch form, so every call is treated as fallible and a failure
+falls back to the last stored quote rather than taking down a multi-asset refresh. It is also
+**free** — Z74 costs zero Twelve Data credits, which matters whenever credit arithmetic is done.
 
 Prices refresh automatically via a market-hours-aware background service (5 min floor while the
 relevant exchange is open — Twelve Data's actual interval is derived at runtime from the live
