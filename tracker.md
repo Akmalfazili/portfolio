@@ -62,6 +62,22 @@ the market gate meant the stock path never executed. That blindness is what hid 
 06:11:51 UTC, cross-checked against `GET /api/prices/status` reading 23 — a divergence of exactly
 1, which is the `/api_usage` call paying for itself, and confirms D39 has not regressed.
 
+**A live NYSE window opened on 2026-08-25 and was left running.** State captured at 13:52 UTC,
+19 minutes after the 13:30 UTC open:
+
+| Check | Reading |
+|---|---|
+| NYSE gate | `nyseOpen: true` |
+| Stack uptime | up since **~13:37 UTC** — a restart **7 minutes after the open** |
+| Container freshness | images built 2026-08-24 09:21 UTC; all four commits since touched only `tracker.md` / `CLAUDE.md` → **containers hold HEAD's application code** |
+| `creditsUsedToday` | **62/800** (free read; cost nothing) |
+| Effective TD interval | 720 s, derived at runtime |
+
+**The 7-minute gap at the head of the window is a declared contamination, not a clean run.** It is
+small enough that the day's total is still informative, but the figure must be reported *with* the
+gap stated — a partial window reported as a full one is precisely the failure mode this file's
+opening rule exists to prevent.
+
 **If it is ever picked up again**, the whole procedure is:
 
 1. Confirm the stack has been **continuously up** across the session (`docker compose ps`). A
