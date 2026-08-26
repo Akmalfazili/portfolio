@@ -204,6 +204,18 @@
   --ui-font-weight-bold: 700;
 
   // ---------------------------------------------------------------------------
+  // Snackbar (toast) — NotificationService / AppSnackbar (see styles.scss for
+  // the Material component-token repointing that uses these). The max-width
+  // is so a long action-outcome message wraps at a sensible measure instead
+  // of spanning the viewport; the accent-bar width is the tone cue that sits
+  // beside the icon at the toast's leading edge — colour comes from the
+  // existing status/accent tokens, never a new one, so no dark-mode step is
+  // needed here (these are plain dimensions, not colours).
+  // ---------------------------------------------------------------------------
+  --ui-layout-snackbar-max-width: 420px;
+  --ui-size-snackbar-accent-bar: 4px;
+
+  // ---------------------------------------------------------------------------
   // Z-index layers (app shell chrome — CDK overlays manage their own stack)
   // ---------------------------------------------------------------------------
   --ui-z-base: 0;

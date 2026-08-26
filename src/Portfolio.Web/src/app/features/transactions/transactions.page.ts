@@ -7,6 +7,7 @@ import { MatIconModule } from '@angular/material/icon';
 
 import { AssetClass, AssetDto, TransactionDto } from '../../core/api/models';
 import { API_ROUTES } from '../../core/api/api-routes';
+import { NotificationService } from '../../core/notifications/notification.service';
 import { MoneyPipe } from '../../shared/pipes/money.pipe';
 import { QuantityPipe } from '../../shared/pipes/quantity.pipe';
 import { StateMessage } from '../../shared/state-message/state-message';
@@ -41,6 +42,7 @@ function sortTransactions(transactions: TransactionDto[]): TransactionDto[] {
 export class TransactionsPage {
   private readonly dialog = inject(MatDialog);
   private readonly http = inject(HttpClient);
+  private readonly notifications = inject(NotificationService);
 
   private readonly transactionsResource = httpResource<TransactionDto[]>(() => API_ROUTES.transactions);
   private readonly assetsResource = httpResource<AssetDto[]>(() => API_ROUTES.assets);
@@ -69,8 +71,6 @@ export class TransactionsPage {
    *  asset picker with no options, and there is nowhere in that dialog to
    *  fix an assetId that was never set. */
   readonly assetsReady = computed(() => this.assetsResource.hasValue());
-
-  readonly deleteError = signal<string | null>(null);
 
   retry(): void {
     this.transactionsResource.reload();
@@ -104,6 +104,7 @@ export class TransactionsPage {
     ref.afterClosed().subscribe((result) => {
       if (result?.kind === 'saved') {
         this.upsertTransaction(result.transaction);
+        this.notifications.success('Transaction recorded.');
       }
     });
   }
@@ -121,10 +122,14 @@ export class TransactionsPage {
     ref.afterClosed().subscribe((result) => {
       if (result?.kind === 'saved') {
         this.upsertTransaction(result.transaction);
+        this.notifications.success('Transaction updated.');
       } else if (result?.kind === 'deleted-elsewhere') {
         // The row this dialog was editing is already gone server-side —
         // reconcile the local list with the server rather than guessing.
+        // Not an error: the user didn't do anything wrong, the world just
+        // moved out from under this dialog while it was open.
         this.transactionsResource.reload();
+        this.notifications.info('That transaction no longer exists — the list has been refreshed.');
       }
     });
   }
@@ -144,23 +149,21 @@ export class TransactionsPage {
         return;
       }
 
-      this.deleteError.set(null);
       // Optimistic removal — rolled back by reload() below if the DELETE fails.
       this.transactionsResource.update((list) => (list ?? []).filter((t) => t.id !== transaction.id));
 
       this.http.delete<void>(API_ROUTES.transaction(transaction.id)).subscribe({
+        next: () => {
+          this.notifications.success(`${transaction.assetSymbol} transaction deleted.`);
+        },
         error: () => {
-          this.deleteError.set(
+          this.notifications.error(
             `Couldn't delete the ${transaction.assetSymbol} transaction — it has been restored.`,
           );
           this.transactionsResource.reload();
         },
       });
     });
-  }
-
-  dismissDeleteError(): void {
-    this.deleteError.set(null);
   }
 
   private upsertTransaction(transaction: TransactionDto): void {

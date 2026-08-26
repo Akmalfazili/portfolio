@@ -1,0 +1,62 @@
+// Structural layout only. Container colour, border, elevation, measure and
+// the tone accent bar all live in styles.scss instead: this component's view
+// is projected into Material's own `.mat-mdc-snackbar-surface`, an element
+// that belongs to `MatSnackBarContainer`, not to this component — normal
+// (scoped) component styles here can never reach it.
+.app-snackbar {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-3);
+  width: 100%;
+}
+
+.app-snackbar__icon {
+  flex: none;
+  width: var(--ui-size-icon-sm);
+  height: var(--ui-size-icon-sm);
+  font-size: var(--ui-size-icon-sm);
+}
+
+// Tone colour on the icon — never the message text, which stays the plain
+// on-surface colour so the accent bar plus the icon carry the tone, not a
+// saturated fill across the whole toast.
+.app-snackbar--success .app-snackbar__icon {
+  color: var(--ui-color-status-good);
+}
+
+.app-snackbar--error .app-snackbar__icon {
+  color: var(--ui-color-status-critical);
+}
+
+.app-snackbar--info .app-snackbar__icon {
+  color: var(--ui-color-accent);
+}
+
+.app-snackbar__message {
+  flex: 1 1 auto;
+  font-size: var(--ui-font-size-sm);
+  line-height: var(--ui-line-height-normal);
+}
+
+// This button is plain `mat-button`, NOT Material's `matSnackBarAction`
+// directive, so it never picks up `.mat-mdc-snack-bar-action` and never gets
+// `--mat-snack-bar-button-color`. Left alone it falls through to
+// `MatButton`'s own default, `--mat-button-text-label-text-color` sourced
+// from `--mat-sys-primary` — which styles.scss repoints to
+// `--ui-color-accent`, the per-section (Stocks/Crypto) colour. That reads
+// fine for Stocks but fails WCAG AA for Crypto's orange on this toast's
+// near-white surface, and it's the error toast's only interactive control.
+// The tone is already carried by the icon colour and the accent bar, so this
+// button doesn't need to carry it too — repoint its own component token to a
+// fixed, section-independent neutral instead: --ui-color-on-surface is
+// near-black on the light surface and near-white on the dark one, so it
+// stays legible in both themes without drifting with [data-section].
+// Reachable from here (unlike the outer Material surface) because this
+// button lives inside AppSnackbar's own projected content, not
+// MatSnackBarContainer's.
+.app-snackbar__dismiss {
+  flex: none;
+  --mat-button-text-label-text-color: var(--ui-color-on-surface);
+  --mat-button-text-state-layer-color: var(--ui-color-on-surface);
+  --mat-button-text-ripple-color: color-mix(in srgb, var(--ui-color-on-surface) 20%, transparent);
+}

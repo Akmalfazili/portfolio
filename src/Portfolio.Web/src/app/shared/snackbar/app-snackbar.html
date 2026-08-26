@@ -1,0 +1,9 @@
+<div class="app-snackbar" [class]="'app-snackbar--' + data.tone">
+  <mat-icon class="app-snackbar__icon" aria-hidden="true">{{ icon }}</mat-icon>
+  <span class="app-snackbar__message">{{ data.message }}</span>
+  @if (data.dismissLabel) {
+    <button mat-button type="button" class="app-snackbar__dismiss" (click)="dismiss()">
+      {{ data.dismissLabel }}
+    </button>
+  }
+</div>

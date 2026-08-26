@@ -64,6 +64,90 @@ html {
   // confirm-dialog.scss and asset-management.page.scss.
   --mat-sys-error: var(--ui-color-loss);
   --mat-sys-on-error: var(--ui-color-on-accent-stock);
+
+  // ---------------------------------------------------------------------------
+  // Snackbar (toast) — NotificationService / shared/snackbar/AppSnackbar.
+  //
+  // MatSnackBarContainer renders in a CDK overlay attached to <body>, entirely
+  // outside AppSnackbar's own style encapsulation, so its colours cannot be
+  // reached with a scoped component stylesheet — the same reason the block
+  // above repoints --mat-sys-* rather than leaving each component to fight
+  // Material's palette on its own. Be precise about what each of these three
+  // actually drives, though — they are not interchangeable:
+  //   - --mat-snack-bar-container-color and --mat-snack-bar-container-shape
+  //     genuinely apply to the whole `.mat-mdc-snackbar-surface` (background
+  //     and corner radius) regardless of what's projected inside it.
+  //   - --mat-snack-bar-supporting-text-color sets the surface's base text
+  //     colour, which AppSnackbar's message span inherits — but NOT its icon
+  //     or Dismiss button, both of which set their own colour explicitly in
+  //     app-snackbar.scss (tone colour on the icon; a fixed neutral,
+  //     section-independent colour on Dismiss — see the comment there for
+  //     why the button needed its own override).
+  //   - --mat-snack-bar-button-color is deliberately NOT repointed here: it
+  //     only styles Material's own `matSnackBarAction` directive, which
+  //     AppSnackbar's Dismiss button does not use (it's a plain `mat-button`
+  //     rendered inside our own template, not Material's action slot).
+  // Everything that isn't one of Material's own snack-bar tokens (border,
+  // elevation, max measure, the tone accent bar) is written directly onto
+  // Material's own surface selector below, scoped by the panelClass
+  // NotificationService passes.
+  --mat-snack-bar-container-color: var(--ui-color-surface);
+  --mat-snack-bar-supporting-text-color: var(--ui-color-on-surface);
+  --mat-snack-bar-container-shape: var(--ui-radius-md);
+}
+
+// Structural styling Material has no token for. `.mat-mdc-snackbar-surface`
+// is the element panelClass's ancestor container wraps — not `::ng-deep`,
+// because this is already the global style layer, the correct place per the
+// "one source of truth" convention this file documents above.
+.app-snackbar-panel .mat-mdc-snackbar-surface {
+  border: 1px solid var(--ui-color-border);
+  max-width: var(--ui-layout-snackbar-max-width);
+}
+
+// The tone accent bar. An INSET box-shadow (rather than a border) so it
+// still respects --mat-snack-bar-container-shape's rounded corners instead
+// of squaring off the leading edge, and layers cleanly with the elevation
+// shadow in the same property. Physical (not logical) left edge — this app
+// has no RTL surface to account for elsewhere either.
+.app-snackbar-panel--success .mat-mdc-snackbar-surface {
+  box-shadow: var(--ui-elevation-3), inset var(--ui-size-snackbar-accent-bar) 0 0 var(--ui-color-status-good);
+}
+
+.app-snackbar-panel--error .mat-mdc-snackbar-surface {
+  box-shadow: var(--ui-elevation-3), inset var(--ui-size-snackbar-accent-bar) 0 0 var(--ui-color-status-critical);
+}
+
+.app-snackbar-panel--info .mat-mdc-snackbar-surface {
+  box-shadow: var(--ui-elevation-3), inset var(--ui-size-snackbar-accent-bar) 0 0 var(--ui-color-accent);
+}
+
+// NotificationService sets `verticalPosition: 'top'`, so the CDK overlay
+// anchors the toast to the *viewport* edge — it is not part of the app
+// shell's layout or stacking context at all, so without this it renders
+// OVER `.shell__toolbar` (app-shell.scss; `position: sticky; top: 0`),
+// covering the title and, on handset, the nav menu button.
+//
+// panelClass lands on `.mat-mdc-snack-bar-container` itself (confirmed in
+// MatSnackBarContainer._afterPortalAttached in the compiled snack-bar
+// source), and Material's own structural CSS already puts `margin: 8px` on
+// that same element. `margin-top` is a longhand, so it overrides only the
+// top component of that shorthand rather than stacking on top of it — the
+// total top offset actually ends up being exactly the calc() below (e.g.
+// 64px + 8px = 72px at the default toolbar height), not that plus Material's
+// own 8px. The compound selector (both classes, not `.app-snackbar-panel`
+// alone) also gives this rule strictly higher specificity than Material's
+// single-class one, so it wins regardless of which stylesheet happens to be
+// inserted into <head> later — MatSnackBarContainer's own styles are only
+// injected on first use, which is *after* this global stylesheet loads.
+//
+// Reads `--ui-layout-toolbar-height`, never a hardcoded 64px, so this tracks
+// ui.tokens.scss's own 56px step under the 599px breakpoint for free — the
+// same token `.shell__content`'s min-height calc() in app-shell.scss reads.
+// The added `--ui-space-2` is a deliberate small gap below the toolbar's
+// bottom border rather than sitting flush against it.
+.mat-mdc-snack-bar-container.app-snackbar-panel {
+  margin-top: calc(var(--ui-layout-toolbar-height) + var(--ui-space-2));
 }
 
 body {

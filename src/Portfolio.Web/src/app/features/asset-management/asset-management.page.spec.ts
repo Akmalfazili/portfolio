@@ -8,6 +8,7 @@ import { of } from 'rxjs';
 import { AssetManagementPage } from './asset-management.page';
 import { API_ROUTES } from '../../core/api/api-routes';
 import { AssetDto } from '../../core/api/models';
+import { NotificationService } from '../../core/notifications/notification.service';
 
 const AAPL: AssetDto = {
   id: 1,
@@ -47,6 +48,8 @@ const MSFT_INACTIVE: AssetDto = {
 describe('AssetManagementPage', () => {
   let fixture: ComponentFixture<AssetManagementPage>;
   let httpMock: HttpTestingController;
+  let notifySuccess: ReturnType<typeof vi.fn>;
+  let notifyError: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     TestBed.configureTestingModule({
@@ -54,6 +57,12 @@ describe('AssetManagementPage', () => {
       providers: [provideHttpClient(), provideHttpClientTesting(), provideNoopAnimations()],
     });
     httpMock = TestBed.inject(HttpTestingController);
+    // Discrete action outcomes go through NotificationService, not an inline
+    // banner — spy on it rather than digging through the CDK overlay for a
+    // snackbar's rendered text.
+    const notifications = TestBed.inject(NotificationService);
+    notifySuccess = vi.spyOn(notifications, 'success').mockImplementation(() => {});
+    notifyError = vi.spyOn(notifications, 'error').mockImplementation(() => {});
     fixture = TestBed.createComponent(AssetManagementPage);
   });
 
@@ -272,7 +281,27 @@ describe('AssetManagementPage', () => {
     fixture.detectChanges();
 
     expect(fixture.nativeElement.textContent).toContain('GOOGL');
+    expect(notifySuccess).toHaveBeenCalledWith('GOOGL is now tracked.');
     httpMock.verify();
+  });
+
+  it('shows a success toast once the deactivate PUT completes', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const dialog = TestBed.inject(MatDialog);
+    vi.spyOn(dialog, 'open').mockReturnValue({ afterClosed: () => of(true) } as ReturnType<MatDialog['open']>);
+
+    fixture.componentInstance.toggleActive(AAPL);
+    fixture.detectChanges();
+
+    httpMock.expectOne(API_ROUTES.asset(AAPL.id)).flush({ ...AAPL, isActive: false });
+    fixture.detectChanges();
+
+    expect(notifySuccess).toHaveBeenCalledWith('AAPL deactivated.');
+    expect(notifyError).not.toHaveBeenCalled();
   });
 
   it('optimistically deactivates via a full-replace PUT, and rolls back if it fails', async () => {
@@ -309,7 +338,8 @@ describe('AssetManagementPage', () => {
 
     expect(fixture.nativeElement.textContent).toContain('Active');
     expect(fixture.nativeElement.textContent).not.toContain('Inactive');
-    expect(fixture.nativeElement.textContent).toContain("Couldn't deactivate");
+    expect(notifyError).toHaveBeenCalledWith("Couldn't deactivate AAPL — it has been restored.");
+    expect(notifySuccess).not.toHaveBeenCalled();
   });
 
   it('reactivates an inactive asset the same way, in the other direction', async () => {
@@ -329,6 +359,8 @@ describe('AssetManagementPage', () => {
     const req = httpMock.expectOne(API_ROUTES.asset(MSFT_INACTIVE.id));
     expect(req.request.body.isActive).toBe(true);
     req.flush({ ...MSFT_INACTIVE, isActive: true });
+
+    expect(notifySuccess).toHaveBeenCalledWith('MSFT reactivated.');
   });
 
   // --- Hard delete. Two things worth pinning: the confirmation names the
@@ -381,6 +413,9 @@ describe('AssetManagementPage', () => {
     expect(data.message).toContain('transactions and price history');
     expect(data.message).not.toContain('no transactions');
     expect(data.message).not.toContain('0 transaction');
+    // The pre-delete count GET failing is not itself a failed action — the
+    // user hasn't clicked Delete yet at this point — so it must not toast.
+    expect(notifyError).not.toHaveBeenCalled();
   });
 
   it('DELETEs the asset and drops the row only once the server confirms', async () => {
@@ -407,6 +442,7 @@ describe('AssetManagementPage', () => {
     const text = fixture.nativeElement.textContent as string;
     expect(text).not.toContain('AAPL');
     expect(text).toContain('MSFT');
+    expect(notifySuccess).toHaveBeenCalledWith('AAPL and its history were deleted.');
   });
 
   it('keeps the row and reports the failure when the DELETE fails', async () => {
@@ -425,9 +461,9 @@ describe('AssetManagementPage', () => {
       .flush('boom', { status: 500, statusText: 'Server Error' });
     fixture.detectChanges();
 
-    const text = fixture.nativeElement.textContent as string;
-    expect(text).toContain('AAPL');
-    expect(text).toContain("Couldn't delete AAPL");
+    expect(fixture.nativeElement.textContent).toContain('AAPL');
+    expect(notifyError).toHaveBeenCalledWith("Couldn't delete AAPL — it is unchanged.");
+    expect(notifySuccess).not.toHaveBeenCalled();
   });
 
   it('does not touch the server when the confirmation is cancelled', async () => {

@@ -48,14 +48,6 @@
   }
 }
 
-.transactions__warning--error {
-  background: color-mix(in srgb, var(--ui-color-loss) 12%, transparent);
-
-  mat-icon {
-    color: var(--ui-color-loss);
-  }
-}
-
 .transactions__table {
   width: 100%;
   border-collapse: collapse;

@@ -36,14 +36,6 @@
     </p>
   }
 
-  @if (deleteError(); as error) {
-    <p class="transactions__warning transactions__warning--error">
-      <mat-icon aria-hidden="true">error_outline</mat-icon>
-      {{ error }}
-      <button mat-button type="button" (click)="dismissDeleteError()">Dismiss</button>
-    </p>
-  }
-
   @if (isLoading()) {
     <app-state-message variant="loading" title="Loading transactions…" />
   } @else if (hasError()) {

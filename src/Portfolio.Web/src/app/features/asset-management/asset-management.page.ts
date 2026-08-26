@@ -6,6 +6,7 @@ import { MatIconModule } from '@angular/material/icon';
 
 import { AssetDto, QuoteProviderKind, TransactionDto, UpdateAssetRequest } from '../../core/api/models';
 import { API_ROUTES } from '../../core/api/api-routes';
+import { NotificationService } from '../../core/notifications/notification.service';
 import { StateMessage } from '../../shared/state-message/state-message';
 import { ConfirmDialog, ConfirmDialogData } from '../../shared/confirm-dialog/confirm-dialog';
 import { AssetFormDialog, AssetFormDialogData, AssetFormDialogResult } from './asset-form.dialog';
@@ -107,6 +108,7 @@ function unpricedState(asset: AssetDto, now: number): UnpricedState | null {
 export class AssetManagementPage {
   private readonly dialog = inject(MatDialog);
   private readonly http = inject(HttpClient);
+  private readonly notifications = inject(NotificationService);
 
   private readonly assetsResource = httpResource<AssetDto[]>(() => API_ROUTES.assets);
 
@@ -127,8 +129,6 @@ export class AssetManagementPage {
     return this.assets().map((asset) => ({ asset, unpriced: unpricedState(asset, now) }));
   });
 
-  readonly actionError = signal<string | null>(null);
-
   /** The asset currently being deleted — its row's buttons are disabled while the
    *  DELETE is in flight. Deletion is pessimistic, unlike the deactivate toggle:
    *  showing a row vanish and then reappear on failure reads as data loss. */
@@ -136,10 +136,6 @@ export class AssetManagementPage {
 
   retry(): void {
     this.assetsResource.reload();
-  }
-
-  dismissActionError(): void {
-    this.actionError.set(null);
   }
 
   openCreateDialog(): void {
@@ -150,6 +146,7 @@ export class AssetManagementPage {
     ref.afterClosed().subscribe((result) => {
       if (result?.kind === 'saved') {
         this.assetsResource.update((list) => sortAssets([...(list ?? []), result.asset]));
+        this.notifications.success(`${result.asset.symbol} is now tracked.`);
       }
     });
   }
@@ -172,7 +169,6 @@ export class AssetManagementPage {
         return;
       }
 
-      this.actionError.set(null);
       const previous = asset;
       const next: AssetDto = { ...asset, isActive: activating };
       // Optimistic — rolled back below if the PUT fails.
@@ -191,8 +187,11 @@ export class AssetManagementPage {
       };
 
       this.http.put<AssetDto>(API_ROUTES.asset(asset.id), request).subscribe({
+        next: () => {
+          this.notifications.success(`${asset.symbol} ${activating ? 'reactivated' : 'deactivated'}.`);
+        },
         error: () => {
-          this.actionError.set(
+          this.notifications.error(
             `Couldn't ${activating ? 'reactivate' : 'deactivate'} ${asset.symbol} — it has been restored.`,
           );
           this.assetsResource.update((list) => (list ?? []).map((a) => (a.id === asset.id ? previous : a)));
@@ -211,10 +210,11 @@ export class AssetManagementPage {
    * only fact that would make someone press Cancel. If that GET fails the
    * delete is still offered — with the vaguer wording, never with a made-up
    * count of zero, which would understate exactly the risk being warned about.
+   * That GET failing is deliberately NOT surfaced as an error toast: it isn't
+   * a failed action, the user hasn't asked for anything yet at that point —
+   * only the PUT/DELETE below are outcomes worth a notification.
    */
   deleteAsset(asset: AssetDto): void {
-    this.actionError.set(null);
-
     this.http.get<TransactionDto[]>(API_ROUTES.transactionsByAsset(asset.id)).subscribe({
       next: (transactions) => this.confirmDelete(asset, transactions.length),
       error: () => this.confirmDelete(asset, null),
@@ -249,10 +249,11 @@ export class AssetManagementPage {
         next: () => {
           this.deletingId.set(null);
           this.assetsResource.update((list) => (list ?? []).filter((a) => a.id !== asset.id));
+          this.notifications.success(`${asset.symbol} and its history were deleted.`);
         },
         error: () => {
           this.deletingId.set(null);
-          this.actionError.set(`Couldn't delete ${asset.symbol} — it is unchanged.`);
+          this.notifications.error(`Couldn't delete ${asset.symbol} — it is unchanged.`);
         },
       });
     });

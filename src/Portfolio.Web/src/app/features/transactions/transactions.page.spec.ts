@@ -8,6 +8,7 @@ import { of } from 'rxjs';
 import { TransactionsPage } from './transactions.page';
 import { API_ROUTES } from '../../core/api/api-routes';
 import { TransactionDto } from '../../core/api/models';
+import { NotificationService } from '../../core/notifications/notification.service';
 
 const ANVL_BUY: TransactionDto = {
   id: 1,
@@ -40,6 +41,9 @@ const AAPL_BUY: TransactionDto = {
 describe('TransactionsPage', () => {
   let fixture: ComponentFixture<TransactionsPage>;
   let httpMock: HttpTestingController;
+  let notifySuccess: ReturnType<typeof vi.fn>;
+  let notifyError: ReturnType<typeof vi.fn>;
+  let notifyInfo: ReturnType<typeof vi.fn>;
 
   function flushAssets(): void {
     httpMock.expectOne(API_ROUTES.assets).flush([]);
@@ -51,6 +55,13 @@ describe('TransactionsPage', () => {
       providers: [provideHttpClient(), provideHttpClientTesting(), provideNoopAnimations()],
     });
     httpMock = TestBed.inject(HttpTestingController);
+    // Discrete action outcomes go through NotificationService, not an inline
+    // banner — spy on it rather than digging through the CDK overlay for a
+    // snackbar's rendered text.
+    const notifications = TestBed.inject(NotificationService);
+    notifySuccess = vi.spyOn(notifications, 'success').mockImplementation(() => {});
+    notifyError = vi.spyOn(notifications, 'error').mockImplementation(() => {});
+    notifyInfo = vi.spyOn(notifications, 'info').mockImplementation(() => {});
     fixture = TestBed.createComponent(TransactionsPage);
   });
 
@@ -155,7 +166,54 @@ describe('TransactionsPage', () => {
     fixture.detectChanges();
 
     expect(fixture.nativeElement.textContent).toContain('AAPL');
+    expect(notifySuccess).toHaveBeenCalledWith('Transaction recorded.');
     httpMock.verify();
+  });
+
+  it('shows a distinct success toast for an edit, not the create wording', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.transactions).flush([ANVL_BUY]);
+    flushAssets();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const dialog = TestBed.inject(MatDialog);
+    const edited: TransactionDto = { ...ANVL_BUY, quantity: 2000000 };
+    vi.spyOn(dialog, 'open').mockReturnValue({
+      afterClosed: () => of({ kind: 'saved', transaction: edited }),
+    } as ReturnType<MatDialog['open']>);
+
+    fixture.componentInstance.openEditDialog(ANVL_BUY);
+    fixture.detectChanges();
+
+    expect(notifySuccess).toHaveBeenCalledWith('Transaction updated.');
+    expect(notifySuccess).not.toHaveBeenCalledWith('Transaction recorded.');
+  });
+
+  it('reloads and shows an info toast (not an error) when the edited row was deleted elsewhere', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.transactions).flush([ANVL_BUY]);
+    flushAssets();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const dialog = TestBed.inject(MatDialog);
+    vi.spyOn(dialog, 'open').mockReturnValue({
+      afterClosed: () => of({ kind: 'deleted-elsewhere' }),
+    } as ReturnType<MatDialog['open']>);
+
+    fixture.componentInstance.openEditDialog(ANVL_BUY);
+    fixture.detectChanges();
+
+    httpMock.expectOne(API_ROUTES.transactions).flush([]); // reload() triggered by deleted-elsewhere
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(notifyInfo).toHaveBeenCalledWith(
+      'That transaction no longer exists — the list has been refreshed.',
+    );
+    expect(notifyError).not.toHaveBeenCalled();
+    expect(notifySuccess).not.toHaveBeenCalled();
   });
 
   it('does not open the create dialog before the asset list has loaded — there would be nothing to pick', async () => {
@@ -170,6 +228,26 @@ describe('TransactionsPage', () => {
 
     expect(openSpy).not.toHaveBeenCalled();
     flushAssets();
+  });
+
+  it('shows a success toast once the DELETE completes', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.transactions).flush([ANVL_BUY]);
+    flushAssets();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const dialog = TestBed.inject(MatDialog);
+    vi.spyOn(dialog, 'open').mockReturnValue({
+      afterClosed: () => of(true),
+    } as ReturnType<MatDialog['open']>);
+
+    fixture.componentInstance.deleteTransaction(ANVL_BUY);
+    httpMock.expectOne(API_ROUTES.transaction(ANVL_BUY.id)).flush(null, { status: 204, statusText: 'No Content' });
+    fixture.detectChanges();
+
+    expect(notifySuccess).toHaveBeenCalledWith('ANVL transaction deleted.');
+    expect(notifyError).not.toHaveBeenCalled();
   });
 
   it('optimistically removes a row on delete, and restores it if the DELETE call fails', async () => {
@@ -201,6 +279,9 @@ describe('TransactionsPage', () => {
     fixture.detectChanges();
 
     expect(fixture.nativeElement.textContent).toContain('ANVL');
-    expect(fixture.nativeElement.textContent).toContain("Couldn't delete");
+    expect(notifyError).toHaveBeenCalledWith(
+      "Couldn't delete the ANVL transaction — it has been restored.",
+    );
+    expect(notifySuccess).not.toHaveBeenCalled();
   });
 });

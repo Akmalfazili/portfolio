@@ -354,6 +354,29 @@ history erased — a decision that looks arbitrary is usually one whose reason w
 - **Gains and losses are distinguishable without colour** — an explicit `+`/`-`, an arrow glyph with
   an `aria-label`, *and* the colour token, so a grayscale render or a screen reader gets the same
   answer.
+- **Page state and action outcome are different things and use different UI.** A resource that is
+  loading, empty, or failed to load is *persistent* state that needs a Retry sitting next to the
+  content it describes — that stays `app-state-message` and must never be a toast that can vanish
+  before it is read. A discrete action that just finished (save, delete, activate) is *transient*
+  and gets a snackbar via `NotificationService`. Form validation is neither: the dialog stays open
+  on failure, so the message belongs beside the field, not in a toast the user has to correlate
+  back to the form. The transient inline warning banners the assets and transactions pages used to
+  carry were **replaced** by snackbars, not duplicated by them.
+- **`NotificationService` is the only entry point for action feedback, and the error interceptor is
+  deliberately not wired to it.** An outcome message has to be phrased by the caller that knows
+  what the user was trying to do; a global hook on `errorInterceptor` would also double-toast every
+  flow that already reports its own failure. `PriceStore` stays out for the same reason — the 429
+  refresh cooldown is UI state on the refresh indicator, never an error toast.
+- **The snackbar renders in a CDK overlay attached to `<body>`, outside every component's style
+  encapsulation and outside the shell's layout.** Two consequences that are easy to get wrong:
+  its container colours can only be reached by repointing `--mat-snack-bar-*` in the global layer
+  (not `::ng-deep`), and a `verticalPosition: 'top'` toast anchors to the *viewport*, not below the
+  sticky toolbar — it needs an explicit `margin-top` of `--ui-layout-toolbar-height` or it covers
+  the toolbar. Read that token rather than hardcoding 64px, so the offset follows its own 56px step
+  under the 599px breakpoint. Material's structural CSS puts `margin: 8px` on that same container
+  at single-class specificity, and its snack-bar styles are injected into `<head>` lazily on first
+  use — *after* the global stylesheet loads — so the override needs a compound selector
+  (`.mat-mdc-snack-bar-container.app-snackbar-panel`) to win regardless of injection order.
 
 ### Containers
 
@@ -520,6 +543,22 @@ These are general, and every one of them was learned the expensive way here.
     `color="primary"` bindings in this app are equally inert but happen to be correct, since
     primary is the M3 default anyway.
 
+    **This bit a second time the same day**, on the snackbar's Dismiss button, and the second case
+    is the more instructive one because nothing looked wrong. The button was a plain `mat-button`,
+    so it never received Material's `.mat-mdc-snack-bar-action` class and the
+    `--mat-snack-bar-button-color` token that *appears* to govern it never applied — the label fell
+    straight through to `--mat-sys-primary`, i.e. `--ui-color-accent`. On the new near-white toast
+    surface that put the Dismiss label at roughly **3.1:1 on a Crypto route** (`#eb6834` on
+    `#fcfcfb`) and 4.3:1 on a Stocks one, both under AA, *and* made its readability depend on which
+    section the user happened to be in. It was on the error toast — the only tone with a Dismiss,
+    and the one whose message matters most. Two lessons on top of trap 10's: **a token that exists
+    for a component is not necessarily the token that paints your element** — check which selector
+    Material's rule actually requires — and **when a surface changes from Material's dark
+    `inverse-surface` default to an app surface, every colour that assumed the dark background has
+    to be re-checked, not just the ones you set.** Fixed by pinning the label to
+    `--ui-color-on-surface`: neutral, section-independent, and the tone is already carried by the
+    icon and the accent bar.
+
 ---
 
 ## Known gaps, deliberately accepted
@@ -618,6 +657,7 @@ and it is a measurement on hold, not a defect** — see the top of this file.
 | 2026-08-24 | D39 (credit ledger reconciliation) and D36 (zero-price acquisitions) closed. The stale-container trap found and documented |
 | 2026-08-25 | Phase 11's four browser checks closed, D36's browser gaps closed, `CLAUDE.md`'s stale market-data routing corrected. D6 baseline captured |
 | 2026-08-26 | Asset deletion added — `DELETE /api/assets/{id}` cascading to transactions, price history and quote, plus the `/assets` delete action. Verified against the live API and SQL Server's own transaction log; not browser-verified (the Chrome extension is still unavailable). A user then spotted that the delete buttons were not red, which exposed trap 10: Material's `color` input is inert under M3, and `ConfirmDialog`'s destructive styling had been dead since Phase 12 |
+| 2026-08-26 | Snackbar action feedback added — `NotificationService` + `AppSnackbar`, replacing the transient inline warning banners on the assets and transactions pages, positioned below the toolbar. Trap 10 recurred on the Dismiss button, caught in review by tracing the token cascade in Material's compiled source rather than by a test. **Not browser-verified** — the Chrome extension is still unavailable (trap 8), so nothing here has been seen rendered in either theme |
 
 ---
 
