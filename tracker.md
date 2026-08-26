@@ -62,27 +62,50 @@ the market gate meant the stock path never executed. That blindness is what hid 
 06:11:51 UTC, cross-checked against `GET /api/prices/status` reading 23 — a divergence of exactly
 1, which is the `/api_usage` call paying for itself, and confirms D39 has not regressed.
 
-**A live NYSE window opened on 2026-08-25 and was left running.** State captured at 13:52 UTC,
-19 minutes after the 13:30 UTC open:
+**A live NYSE window opened on 2026-08-25 and was NOT captured — 11.5% of the session.**
+This entry originally read "*and was left running*", with a snapshot taken at 13:52 UTC and a
+declared 7-minute contamination at the head of the window. That was written forward, as an
+intention, and never confirmed. The user pointed out they had shut the laptop down around 22:00
+SGT; the database agrees, and the original wording was wrong.
 
 | Check | Reading |
 |---|---|
-| NYSE gate | `nyseOpen: true` |
-| Stack uptime | up since **~13:37 UTC** — a restart **7 minutes after the open** |
-| Container freshness | images built 2026-08-24 09:21 UTC; all four commits since touched only `tracker.md` / `CLAUDE.md` → **containers hold HEAD's application code** |
-| `creditsUsedToday` | **62/800** (free read; cost nothing) |
-| Effective TD interval | 720 s, derived at runtime |
+| NYSE session (Tue 2026-08-25) | 13:30 – 20:00 UTC |
+| Stack up from | ~13:37 UTC — a restart 7 minutes after the open |
+| **Last `RefreshRuns` row** | **14:22:02 UTC = 22:22 SGT** |
+| Session actually covered | **45 of 390 minutes — 11.5%** |
+| Never observed | 5 h 45 m — the back **88%** of the window |
+| `TwelveDataCreditLedgerEntries` for the day | 109 credits — **not** a full-day figure |
 
-**The 7-minute gap at the head of the window is a declared contamination, not a clean run.** It is
-small enough that the day's total is still informative, but the figure must be reported *with* the
-gap stated — a partial window reported as a full one is precisely the failure mode this file's
-opening rule exists to prevent.
+The 109 credits are mostly *closed-market* polling (runs start 05:57 UTC) plus 45 minutes at the
+open-market cadence. Quoting it as a D6 answer would understate a real full day substantially.
+
+**The lesson is the wording, not the shutdown.** A laptop going to sleep is ordinary; describing a
+run as "left running" before anything had confirmed it kept running is not. The declared 7-minute
+gap at the *head* of the window read as diligence and drew attention away from the fact that the
+entire *tail* was missing — the same shape as D10/D26/D33/D35/D38, where a report reads healthier
+than the reality behind it. **Never write up a measurement window in the future tense.** Close it
+by re-reading `RefreshRuns` at the end and stating the observed span, or record nothing.
+
+Verified 2026-08-26 by querying the container database directly:
+
+```bash
+docker compose exec -T db bash -lc '/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -C -d Portfolio -W -Q "SELECT CONVERT(date, StartedAt) Day, COUNT(*) Runs, MIN(StartedAt) FirstRun, MAX(StartedAt) LastRun FROM RefreshRuns GROUP BY CONVERT(date, StartedAt) ORDER BY Day DESC;"'
+```
 
 **If it is ever picked up again**, the whole procedure is:
 
-1. Confirm the stack has been **continuously up** across the session (`docker compose ps`). A
-   restart gap means the refresh may not have run for the whole window — that is exactly the
-   contamination D6 exists to avoid, and it is what spoiled every earlier attempt.
+0. **The window closes at 20:00 UTC = 04:00 SGT.** That is the middle of the night in this
+   timezone, and it is why every attempt so far has died: the laptop goes to sleep long before
+   the bell. Either arrange for the machine to stay awake through 04:00 SGT, or accept up front
+   that this will be a partial reading and label it as one. Do not start a window intending to
+   "leave it running" and write the result up before it has run — see the 2026-08-25 attempt
+   above, which captured 11.5% of the session and was recorded as though it had captured all of it.
+1. Confirm the stack has been **continuously up** across the session, and confirm it **from
+   `RefreshRuns`, at the end, not from `docker compose ps` at the start**. `ps` tells you the
+   container is up *now*; only `MAX(StartedAt)` tells you it was still refreshing when the bell
+   rang. A restart gap means the refresh may not have run for the whole window — that is exactly
+   the contamination D6 exists to avoid, and it is what spoiled every earlier attempt.
 2. Confirm the containers are **not stale** — see the trap note under *Traps* below.
 3. Read `GET /api_usage` **once**, after NYSE closes (20:00 UTC) and before the UTC day rolls.
    ~23:00 UTC = 07:00 SGT is the comfortable slot. **It costs 1 credit. Do not poll it.** Twelve
