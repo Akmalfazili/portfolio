@@ -246,6 +246,13 @@ export interface HoldingDto {
   currency: string;
   quantityHeld: number;
   costBasisUsd: number;
+  /**
+   * Blended average cost per unit of `quantityHeld`, USD, rounded to 10 dp
+   * server-side (`costBasisUsd / quantityHeld`). `null` when `quantityHeld`
+   * is 0 — a fully sold-down position has no average cost — NOT because of
+   * a missing price, so this must never be gated behind `priceSource`.
+   */
+  averageCostUsd: number | null;
   currentPriceNative: number | null;
   currentPriceUsd: number | null;
   priceAsOf: string | null;

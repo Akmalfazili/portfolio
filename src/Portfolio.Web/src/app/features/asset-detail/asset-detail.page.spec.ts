@@ -34,6 +34,7 @@ const AAPL_HOLDING: HoldingDto = {
   currency: 'USD',
   quantityHeld: 12,
   costBasisUsd: 3864,
+  averageCostUsd: 322,
   currentPriceNative: null,
   currentPriceUsd: null,
   priceAsOf: null,
@@ -338,5 +339,91 @@ describe('AssetDetailPage', () => {
     fixture.detectChanges();
 
     expect(fixture.nativeElement.textContent).not.toContain('Cost vs market value');
+  });
+
+  it('shows average cost beside the hero price for a holding, with no redundant unit label on a USD-native asset', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY_WITH_HOLDING);
+    await flushStockAssetRequests();
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('Avg cost');
+    expect(text).toContain('$322.00');
+    expect(text).not.toContain('Avg cost (USD)');
+  });
+
+  it('does not render an average cost line when the asset has no holding', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(EMPTY_STOCK_SUMMARY);
+    await flushStockAssetRequests(PERFORMANCE, []);
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).not.toContain('Avg cost');
+  });
+
+  it('renders an em-dash, not $0.00, for average cost on a fully sold-down holding', async () => {
+    const soldDown: HoldingDto = {
+      ...AAPL_HOLDING,
+      quantityHeld: 0,
+      costBasisUsd: 0,
+      averageCostUsd: null,
+      currentPriceNative: 175.5,
+      currentPriceUsd: 175.5,
+      priceAsOf: '2026-08-07T11:15:00+00:00',
+      priceSource: 'Live',
+    };
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+    httpMock
+      .expectOne(API_ROUTES.portfolioSummary('Stock'))
+      .flush({ ...STOCK_SUMMARY_WITH_HOLDING, unpricedHoldingsCount: 0, holdings: [soldDown] });
+    await flushStockAssetRequests();
+    fixture.detectChanges();
+
+    const avgCostValue = fixture.nativeElement.querySelector('.detail__avg-cost-value') as HTMLElement;
+    expect(avgCostValue.textContent?.trim()).toBe('—');
+  });
+
+  /**
+   * `averageCostUsd` is always USD, but the hero price above it is in the
+   * asset's own native currency (Z74 is SGD) — the same silent unit-mismatch
+   * risk as D4/D20 if the two dollar-shaped figures sit side by side
+   * unlabelled. The label must spell out "(USD)" for a non-USD asset.
+   */
+  it('labels average cost with "(USD)" when the asset is not USD-native', async () => {
+    const z74: AssetDto = {
+      ...AAPL,
+      id: 9,
+      symbol: 'Z74',
+      name: 'Singtel',
+      exchange: 'XSES',
+      currency: 'SGD',
+      quoteProviderKind: 'Yahoo',
+    };
+    const z74Holding: HoldingDto = {
+      ...AAPL_HOLDING,
+      assetId: 9,
+      symbol: 'Z74',
+      currency: 'SGD',
+      currentPriceNative: 2.5,
+      currentPriceUsd: 1.85,
+      priceAsOf: '2026-08-07T11:15:00+00:00',
+      priceSource: 'Live',
+    };
+
+    fixture.componentRef.setInput('symbol', 'Z74');
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([z74]);
+    httpMock
+      .expectOne(API_ROUTES.portfolioSummary('Stock'))
+      .flush({ ...STOCK_SUMMARY_WITH_HOLDING, holdings: [z74Holding] });
+    (await waitForRequest(httpMock, API_ROUTES.assetPerformance(9))).flush({ ...PERFORMANCE, assetId: 9 });
+    (await waitForRequest(httpMock, API_ROUTES.transactionsByAsset(9))).flush([]);
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain('Avg cost (USD)');
   });
 });

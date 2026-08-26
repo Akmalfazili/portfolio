@@ -11,6 +11,7 @@ const PRICED: HoldingDto = {
   currency: 'USD',
   quantityHeld: 0.5,
   costBasisUsd: 905,
+  averageCostUsd: 1810,
   currentPriceNative: 1865.25,
   currentPriceUsd: 1865.25,
   priceAsOf: '2026-08-01T10:48:40+00:00',
@@ -30,9 +31,25 @@ const UNPRICED: HoldingDto = {
   priceSource: null,
   marketValueUsd: 0,
   costBasisUsd: 3864,
+  averageCostUsd: 322,
   unrealizedPnlUsd: -3864,
   unrealizedPnlPercent: -100,
   realizedPnlUsd: 23,
+};
+
+// Fully sold-down: quantityHeld 0 means averageCostUsd is null for that
+// reason alone — a priced holding, so this must NOT hit the "Awaiting price"
+// path, and averageCostUsd must render as an em-dash, not $0.00.
+const SOLD_DOWN: HoldingDto = {
+  ...PRICED,
+  symbol: 'DOGE',
+  quantityHeld: 0,
+  costBasisUsd: 0,
+  averageCostUsd: null,
+  marketValueUsd: 0,
+  unrealizedPnlUsd: 0,
+  unrealizedPnlPercent: null,
+  realizedPnlUsd: 410.5,
 };
 
 describe('GainLossCard', () => {
@@ -49,6 +66,7 @@ describe('GainLossCard', () => {
 
     const text = fixture.nativeElement.textContent as string;
     expect(text).toContain('$905.00');
+    expect(text).toContain('$1,810.00');
     expect(text).toContain('$932.63');
     expect(text).toContain('+$27.63');
     expect(text).toContain('+3.05%');
@@ -68,5 +86,16 @@ describe('GainLossCard', () => {
     fixture.componentRef.setInput('holding', UNPRICED);
     fixture.detectChanges();
     expect(fixture.nativeElement.textContent).toContain('+$23.00');
+  });
+
+  it('renders an em-dash for average cost on a fully sold-down position, not $0.00 or "Awaiting price"', () => {
+    fixture.componentRef.setInput('holding', SOLD_DOWN);
+    fixture.detectChanges();
+
+    const tiles = fixture.nativeElement.querySelectorAll('app-stat-tile');
+    const avgCostTile = Array.from(tiles as NodeListOf<HTMLElement>).find(
+      (tile) => tile.querySelector('.stat-tile__label')?.textContent?.trim() === 'Avg cost',
+    );
+    expect(avgCostTile?.querySelector('.stat-tile__value')?.textContent?.trim()).toBe('—');
   });
 });

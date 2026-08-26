@@ -21,13 +21,21 @@
     <header class="detail__header">
       <h1 class="detail__symbol">{{ found.symbol }}</h1>
       <p class="detail__name">{{ found.name }}</p>
-      @if (quote(); as q) {
-        <p class="detail__price">{{ q.price | money: q.currency }}</p>
-      } @else if (fallbackPrice(); as native) {
-        <p class="detail__price">{{ native | money: found.currency }}</p>
-      } @else {
-        <p class="detail__price detail__price--pending">Waiting for a live quote…</p>
-      }
+      <div class="detail__price-row">
+        @if (quote(); as q) {
+          <p class="detail__price">{{ q.price | money: q.currency }}</p>
+        } @else if (fallbackPrice(); as native) {
+          <p class="detail__price">{{ native | money: found.currency }}</p>
+        } @else {
+          <p class="detail__price detail__price--pending">Waiting for a live quote…</p>
+        }
+        @if (holding(); as h) {
+          <p class="detail__avg-cost">
+            <span class="detail__avg-cost-label">Avg cost{{ isUsdNative() ? '' : ' (USD)' }}</span>
+            <span class="detail__avg-cost-value">{{ h.averageCostUsd | money }}</span>
+          </p>
+        }
+      </div>
       <!--
         D4 — the caption sits OUTSIDE the branches above, not inside the fallback
         one where it used to live. A pushed quote can be a stale close too (an

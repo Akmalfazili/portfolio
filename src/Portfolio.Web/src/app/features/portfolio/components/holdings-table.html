@@ -1,45 +1,49 @@
-<table class="holdings-table">
-  <thead>
-    <tr>
-      <th>Symbol</th>
-      <th>Quantity</th>
-      <th>Cost basis</th>
-      <th>Current price</th>
-      <th>Market value</th>
-      <th>Unrealized</th>
-      <th>Realized</th>
-    </tr>
-  </thead>
-  <tbody>
-    @for (holding of holdings(); track holding.assetId) {
+<div class="holdings-table__scroll">
+  <table class="holdings-table">
+    <thead>
       <tr>
-        <td>
-          <a class="holdings-table__symbol" [routerLink]="[basePath(), holding.symbol]">{{ holding.symbol }}</a>
-        </td>
-        <td class="holdings-table__num">{{ holding.quantityHeld | quantity }}</td>
-        <td class="holdings-table__num">{{ holding.costBasisUsd | money }}</td>
-        <td class="holdings-table__num">
-          @if (hasPrice(holding)) {
-            {{ holding.currentPriceUsd | money }}
-            @if (isCloseSourced(holding)) {
-              <span class="holdings-table__price-source">Close &middot; {{ closeDateLabel(holding) }}</span>
-            }
-          } @else {
-            <span class="holdings-table__pending">Awaiting price</span>
-          }
-        </td>
-        <td class="holdings-table__num">{{ holding.marketValueUsd | money }}</td>
-        <td class="holdings-table__num">
-          @if (hasPrice(holding)) {
-            <app-gain-loss [amountUsd]="holding.unrealizedPnlUsd" [percent]="holding.unrealizedPnlPercent" />
-          } @else {
-            <span class="holdings-table__pending">Awaiting first price</span>
-          }
-        </td>
-        <td class="holdings-table__num">
-          <app-gain-loss [amountUsd]="holding.realizedPnlUsd" />
-        </td>
+        <th>Symbol</th>
+        <th>Quantity</th>
+        <th>Cost basis</th>
+        <th>Avg cost</th>
+        <th>Current price</th>
+        <th>Market value</th>
+        <th>Unrealized</th>
+        <th>Realized</th>
       </tr>
-    }
-  </tbody>
-</table>
+    </thead>
+    <tbody>
+      @for (holding of holdings(); track holding.assetId) {
+        <tr>
+          <td>
+            <a class="holdings-table__symbol" [routerLink]="[basePath(), holding.symbol]">{{ holding.symbol }}</a>
+          </td>
+          <td class="holdings-table__num">{{ holding.quantityHeld | quantity }}</td>
+          <td class="holdings-table__num">{{ holding.costBasisUsd | money }}</td>
+          <td class="holdings-table__num">{{ holding.averageCostUsd | money }}</td>
+          <td class="holdings-table__num">
+            @if (hasPrice(holding)) {
+              {{ holding.currentPriceUsd | money }}
+              @if (isCloseSourced(holding)) {
+                <span class="holdings-table__price-source">Close &middot; {{ closeDateLabel(holding) }}</span>
+              }
+            } @else {
+              <span class="holdings-table__pending">Awaiting price</span>
+            }
+          </td>
+          <td class="holdings-table__num">{{ holding.marketValueUsd | money }}</td>
+          <td class="holdings-table__num">
+            @if (hasPrice(holding)) {
+              <app-gain-loss [amountUsd]="holding.unrealizedPnlUsd" [percent]="holding.unrealizedPnlPercent" />
+            } @else {
+              <span class="holdings-table__pending">Awaiting first price</span>
+            }
+          </td>
+          <td class="holdings-table__num">
+            <app-gain-loss [amountUsd]="holding.realizedPnlUsd" />
+          </td>
+        </tr>
+      }
+    </tbody>
+  </table>
+</div>

@@ -23,11 +23,40 @@
   color: var(--ui-color-on-surface-secondary);
 }
 
+.detail__price-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--ui-space-4);
+}
+
 .detail__price {
   margin: 0;
   font-size: var(--ui-font-size-xl);
   font-weight: var(--ui-font-weight-semibold);
   font-variant-numeric: var(--ui-font-numeric-variant);
+}
+
+// The average cost figure is a secondary stat paired with the hero price,
+// not a second hero — smaller, lighter weight, muted colour, clearly
+// subordinate in the type scale.
+.detail__avg-cost {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--ui-space-2);
+  font-size: var(--ui-font-size-sm);
+  color: var(--ui-color-on-surface-muted);
+}
+
+.detail__avg-cost-label {
+  font-weight: var(--ui-font-weight-regular);
+}
+
+.detail__avg-cost-value {
+  font-weight: var(--ui-font-weight-medium);
+  font-variant-numeric: var(--ui-font-numeric-variant);
+  color: var(--ui-color-on-surface-secondary);
 }
 
 .detail__price--pending {

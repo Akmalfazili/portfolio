@@ -453,6 +453,48 @@ and all 1,176 price-history rows untouched. `DELETE` on the now-missing id retur
 
 ---
 
+### Average cost per unit is derived at the DTO boundary, not stored (2026-08-26)
+
+The holdings tables on `/stocks` and `/crypto` showed cost basis and current price but nothing
+per-unit, so "am I up or down on each share?" could only be answered by dividing two columns in
+your head. `HoldingDto.AverageCostUsd` now carries it, and the asset detail page shows it beside
+the hero price and as a tile on the gain/loss card.
+
+It is a **derivation, not a new calculation**: `AverageCostCalculator` and `ICostBasisCalculator`
+were not touched. `PortfolioSummaryService` divides at the point it builds the DTO, and divides the
+**already-`DisplayRounding.Money`-rounded** `CostBasisUsd` — the exact value the DTO carries — so a
+reader who divides the two displayed columns by hand gets the third back exactly rather than a
+figure off in the last place. Rounding still happens once, at the edge.
+
+Two things it would have been easy to get wrong:
+
+- **Rounded with `Price` (10 dp), not `Money` (4 dp).** It is a per-unit price, not a monetary
+  total. ANVL near $0.0005326 rounds to `0.0000` at money precision — the same class of silent
+  destruction the `decimal(28,10)` columns exist to prevent, reintroduced at the wire instead of
+  the schema.
+- **`null` when `QuantityHeld` is zero, never `0m`.** `PortfolioSummaryDto.Holdings` deliberately
+  includes fully closed positions for their realised P&L, and `0` there would render as "average
+  cost of $0.00" rather than "not applicable" — the D17/D20 family of mistake, a zero that means
+  ignorance looking identical to a zero that means a real value. The frontend renders the em-dash
+  the `money` pipe already gives for null, and does **not** gate the field behind `hasPrice()`:
+  an unpriced holding still has a perfectly good average cost.
+
+The detail page's hero price is in the asset's **native** currency while this figure is USD, so
+the label spells out `Avg cost (USD)` whenever the asset is not USD-native — Z74 reads
+`SGD 4.51` beside `Avg cost (USD) $1.94`, rather than two dollar-shaped numbers sitting side by
+side inviting a subtraction that means nothing. No second percentage was added: the delta between
+average cost and current price *is* the unrealised % the gain/loss card already shows.
+
+The holdings table reached eight columns with this, and now scrolls horizontally inside its own
+`.holdings-table__scroll` wrapper — the page body never scrolls sideways.
+
+**Verified live**, not from tests: real `GET /api/portfolio/{class}/summary` responses carried
+`averageCostUsd` 100.5 for an open position, `null` alongside a `realizedPnlUsd` of 500 for a fully
+closed one, and `0.0005333333` for a sub-cent ANVL position. The rendered pages were checked at
+1440px and 390px in both themes.
+
+---
+
 ## Traps — the lessons that cost a session each
 
 These are general, and every one of them was learned the expensive way here.

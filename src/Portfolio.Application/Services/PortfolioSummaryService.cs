@@ -203,6 +203,14 @@ public sealed class PortfolioSummaryService(
             }
 
             var costBasisUsd = DisplayRounding.Money(finalStep.CostBasisUsd);
+
+            // Null on a fully closed position rather than 0m — see HoldingDto.AverageCostUsd.
+            // Divides the already-rounded costBasisUsd above (not finalStep.CostBasisUsd) so the
+            // displayed average cost is arithmetically consistent with the displayed cost basis.
+            var averageCostUsd = finalStep.QuantityHeld > 0m
+                ? DisplayRounding.Price(costBasisUsd / finalStep.QuantityHeld)
+                : (decimal?)null;
+
             marketValueUsd = DisplayRounding.Money(marketValueUsd);
             var unrealizedPnlUsd = marketValueUsd - costBasisUsd;
             var unrealizedPnlPercent = costBasisUsd > 0m
@@ -217,6 +225,7 @@ public sealed class PortfolioSummaryService(
                 asset.Currency,
                 finalStep.QuantityHeld,
                 costBasisUsd,
+                averageCostUsd,
                 currentPriceNative,
                 DisplayRounding.Price(currentPriceUsd),
                 priceAsOf,

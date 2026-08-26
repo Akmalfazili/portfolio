@@ -331,6 +331,128 @@ public sealed class PortfolioSummaryServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task GetSummaryAsync_BuyOnlyPosition_AverageCostUsd_IsCostBasisDividedByQuantity()
+    {
+        var aapl = AddAsset(1, "AAPL", AssetClass.Stock, "USD");
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = aapl.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
+            Quantity = 10m, PricePerUnit = 100m, Fees = 5m, Currency = "USD",
+        });
+        await _db.SaveChangesAsync();
+
+        var summary = await _sut.GetSummaryAsync(AssetClass.Stock, CancellationToken.None);
+
+        var holding = summary.Holdings.Should().ContainSingle().Subject;
+        holding.CostBasisUsd.Should().Be(1005m); // 1000 + 5 fee
+        holding.AverageCostUsd.Should().Be(100.5m); // 1005 / 10
+    }
+
+    [Fact]
+    public async Task GetSummaryAsync_MultipleBuysAtDifferentPrices_AverageCostUsd_IsBlendedAcrossBoth()
+    {
+        var aapl = AddAsset(1, "AAPL", AssetClass.Stock, "USD");
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = aapl.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
+            Quantity = 10m, PricePerUnit = 100m, Fees = 0m, Currency = "USD",
+        });
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = aapl.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 10),
+            Quantity = 10m, PricePerUnit = 200m, Fees = 0m, Currency = "USD",
+        });
+        await _db.SaveChangesAsync();
+
+        var summary = await _sut.GetSummaryAsync(AssetClass.Stock, CancellationToken.None);
+
+        var holding = summary.Holdings.Should().ContainSingle().Subject;
+        holding.QuantityHeld.Should().Be(20m);
+        holding.CostBasisUsd.Should().Be(3000m); // (10*100) + (10*200)
+        holding.AverageCostUsd.Should().Be(150m); // 3000 / 20, blended across both buys
+    }
+
+    /// <summary>
+    /// An average-cost sell costs the units sold out at the average cost per unit immediately
+    /// before the sale (see <see cref="AverageCostCalculator"/>), so it removes cost and quantity
+    /// in the same proportion — the remaining position's average cost per unit is unchanged by the
+    /// sale itself, even though both <see cref="HoldingDto.CostBasisUsd"/> and
+    /// <see cref="HoldingDto.QuantityHeld"/> shrink.
+    /// </summary>
+    [Fact]
+    public async Task GetSummaryAsync_PartiallySoldPosition_AverageCostUsd_IsUnchangedByTheSell()
+    {
+        var aapl = AddAsset(1, "AAPL", AssetClass.Stock, "USD");
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = aapl.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
+            Quantity = 20m, PricePerUnit = 100m, Fees = 0m, Currency = "USD",
+        });
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = aapl.Id, Type = TransactionType.Sell, TradeDate = new DateOnly(2026, 1, 15),
+            Quantity = 10m, PricePerUnit = 150m, Fees = 0m, Currency = "USD",
+        });
+        await _db.SaveChangesAsync();
+
+        var summary = await _sut.GetSummaryAsync(AssetClass.Stock, CancellationToken.None);
+
+        var holding = summary.Holdings.Should().ContainSingle().Subject;
+        holding.QuantityHeld.Should().Be(10m);
+        holding.CostBasisUsd.Should().Be(1000m); // 2000 basis - (100 avg * 10 sold)
+        holding.AverageCostUsd.Should().Be(100m); // unchanged: still 100/unit, same as before the sell
+    }
+
+    [Fact]
+    public async Task GetSummaryAsync_FullyClosedPosition_AverageCostUsd_IsNull_NotZero()
+    {
+        var aapl = AddAsset(1, "AAPL", AssetClass.Stock, "USD");
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = aapl.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
+            Quantity = 10m, PricePerUnit = 100m, Fees = 0m, Currency = "USD",
+        });
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = aapl.Id, Type = TransactionType.Sell, TradeDate = new DateOnly(2026, 1, 15),
+            Quantity = 10m, PricePerUnit = 150m, Fees = 0m, Currency = "USD",
+        });
+        await _db.SaveChangesAsync();
+
+        var summary = await _sut.GetSummaryAsync(AssetClass.Stock, CancellationToken.None);
+
+        var holding = summary.Holdings.Should().ContainSingle().Subject;
+        holding.QuantityHeld.Should().Be(0m);
+        holding.AverageCostUsd.Should().BeNull("a fully sold-down position has realised P&L, not an average cost");
+    }
+
+    /// <summary>
+    /// Pins the <see cref="DisplayRounding.Price"/> (10 dp), not <c>Money</c> (4 dp), rounding for
+    /// <see cref="HoldingDto.AverageCostUsd"/>. A sub-cent asset priced like ANVL
+    /// (~$0.0005326/unit) forces a repeating decimal once divided back out over a quantity that
+    /// does not divide evenly, so this also proves the division happens after money-rounding the
+    /// cost basis, not before: 3 * 0.0005326 = 0.0015978, rounded to 0.0016 at 4 dp, then
+    /// 0.0016 / 3 = 0.0005333333333333... rounded to 10 dp = 0.0005333333.
+    /// </summary>
+    [Fact]
+    public async Task GetSummaryAsync_SubCentAsset_AverageCostUsd_RoundsToTenDecimalPlaces_NotFour()
+    {
+        var anvl = AddAsset(5, "ANVL", AssetClass.Crypto, "USD");
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = anvl.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
+            Quantity = 3m, PricePerUnit = 0.0005326m, Fees = 0m, Currency = "USD",
+        });
+        await _db.SaveChangesAsync();
+
+        var summary = await _sut.GetSummaryAsync(AssetClass.Crypto, CancellationToken.None);
+
+        var holding = summary.Holdings.Should().ContainSingle().Subject;
+        holding.CostBasisUsd.Should().Be(0.0016m);
+        holding.AverageCostUsd.Should().Be(0.0005333333m);
+    }
+
+    [Fact]
     public async Task GetSummaryAsync_NoLiveQuote_SgdAsset_ClosePriorToTheOnlyStoredFxRate_StillConverts_ByCarryingRateBack()
     {
         // The close predates every stored FX rate (2026-01-15 close, earliest rate 2026-01-20) —

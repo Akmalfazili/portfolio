@@ -42,6 +42,23 @@ public sealed record HoldingDto(
     string Currency,
     decimal QuantityHeld,
     decimal CostBasisUsd,
+
+    /// <summary>
+    /// The blended average cost <i>per unit</i> of <see cref="QuantityHeld"/>, in USD —
+    /// <see cref="CostBasisUsd"/> divided by <see cref="QuantityHeld"/>, using the same
+    /// (already <see cref="Calculators.DisplayRounding.Money"/>-rounded) <see cref="CostBasisUsd"/>
+    /// value carried on this DTO, so a reader who divides the two displayed columns by hand gets
+    /// this figure back exactly. Rounded with <see cref="Calculators.DisplayRounding.Price"/> (10 dp),
+    /// not <c>Money</c> (4 dp) — this is a per-unit price, not a monetary total, and a sub-cent
+    /// asset like ANVL (~$0.0005326) would round to <c>0.00</c> at 4 dp, the exact class of lie the
+    /// price-honesty rules in tracker.md exist to prevent.
+    ///
+    /// <para><c>null</c> when <see cref="QuantityHeld"/> is zero — a fully sold-down position has
+    /// no average cost, only realised P&amp;L (<see cref="RealizedPnlUsd"/>), and
+    /// <see cref="PortfolioSummaryDto.Holdings"/> deliberately includes those closed positions.
+    /// Emitting <c>0m</c> there would read as "average cost of $0.00", not "not applicable".</para>
+    /// </summary>
+    decimal? AverageCostUsd,
     decimal? CurrentPriceNative,
     decimal? CurrentPriceUsd,
     DateTimeOffset? PriceAsOf,

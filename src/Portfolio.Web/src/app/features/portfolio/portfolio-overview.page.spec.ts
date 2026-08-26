@@ -27,6 +27,7 @@ const STOCK_SUMMARY: PortfolioSummaryDto = {
       currency: 'USD',
       quantityHeld: 12,
       costBasisUsd: 3864,
+      averageCostUsd: 322,
       currentPriceNative: null,
       currentPriceUsd: null,
       priceAsOf: null,

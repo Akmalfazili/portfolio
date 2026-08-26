@@ -56,6 +56,17 @@ export class AssetDetailPage {
 
   readonly isStock = computed(() => this.assetClass() === 'Stock');
 
+  /**
+   * `averageCostUsd` is always USD, while the hero price above it is in the
+   * asset's native currency (`q.currency` / `found.currency`). For a USD
+   * asset those are the same unit and labelling both would just be noise.
+   * For Z74 (SGD) they are NOT the same unit — same class of silent
+   * unit-mismatch mistake as D4/D20 — so the avg cost label spells out
+   * "(USD)" whenever the asset's native currency isn't USD, rather than
+   * letting two dollar-shaped numbers sit side by side unlabelled.
+   */
+  readonly isUsdNative = computed(() => this.asset()?.currency === 'USD');
+
   readonly holding = computed(() => {
     const asset = this.asset();
     if (!asset) {

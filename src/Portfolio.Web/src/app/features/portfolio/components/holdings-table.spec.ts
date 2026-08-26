@@ -12,6 +12,7 @@ const AAPL_NO_PRICE: HoldingDto = {
   currency: 'USD',
   quantityHeld: 12,
   costBasisUsd: 3864,
+  averageCostUsd: 322,
   currentPriceNative: null,
   currentPriceUsd: null,
   priceAsOf: null,
@@ -30,6 +31,7 @@ const ANVL_SUBCENT: HoldingDto = {
   currency: 'USD',
   quantityHeld: 1_000_000,
   costBasisUsd: 400.1,
+  averageCostUsd: 0.0004001,
   currentPriceNative: 0.00050448,
   currentPriceUsd: 0.00050448,
   priceAsOf: '2026-08-01T10:48:50+00:00',
@@ -51,6 +53,7 @@ const MSFT_CLOSE: HoldingDto = {
   currency: 'USD',
   quantityHeld: 3,
   costBasisUsd: 1000,
+  averageCostUsd: 333.3333333333,
   currentPriceNative: 381.700012,
   currentPriceUsd: 381.700012,
   priceAsOf: '2026-07-24T00:00:00+00:00',
@@ -59,6 +62,28 @@ const MSFT_CLOSE: HoldingDto = {
   unrealizedPnlUsd: 145.1,
   unrealizedPnlPercent: 14.51,
   realizedPnlUsd: 0,
+};
+
+// A fully sold-down position: quantityHeld 0 means "no average cost", not
+// "missing price" — averageCostUsd is null for that reason and must render
+// as an em-dash, never borrow the "Awaiting price" treatment.
+const GOOGL_SOLD_DOWN: HoldingDto = {
+  assetId: 3,
+  symbol: 'GOOGL',
+  name: 'Alphabet Inc.',
+  assetClass: 'Stock',
+  currency: 'USD',
+  quantityHeld: 0,
+  costBasisUsd: 0,
+  averageCostUsd: null,
+  currentPriceNative: 175.5,
+  currentPriceUsd: 175.5,
+  priceAsOf: '2026-08-01T10:48:50+00:00',
+  priceSource: 'Live',
+  marketValueUsd: 0,
+  unrealizedPnlUsd: 0,
+  unrealizedPnlPercent: null,
+  realizedPnlUsd: 612.4,
 };
 
 describe('HoldingsTable', () => {
@@ -120,5 +145,22 @@ describe('HoldingsTable', () => {
 
     const priceCell = fixture.nativeElement.querySelector('.holdings-table__price-source') as HTMLElement | null;
     expect(priceCell).toBeNull();
+  });
+
+  it('never floors a sub-cent average cost to $0.00', () => {
+    fixture.componentRef.setInput('holdings', [ANVL_SUBCENT]);
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('$0.0004001');
+  });
+
+  it('renders an em-dash, not $0.00 or "Awaiting price", for a fully sold-down position with no average cost', () => {
+    fixture.componentRef.setInput('holdings', [GOOGL_SOLD_DOWN]);
+    fixture.detectChanges();
+
+    const cells = fixture.nativeElement.querySelectorAll('td.holdings-table__num') as NodeListOf<HTMLElement>;
+    // Column order: quantity, cost basis, avg cost, current price, ...
+    expect(cells[2].textContent?.trim()).toBe('—');
   });
 });

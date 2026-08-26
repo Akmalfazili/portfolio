@@ -1,6 +1,13 @@
 <div class="gain-loss-card">
   <app-stat-tile label="Cost basis" [value]="holding().costBasisUsd | money"></app-stat-tile>
 
+  <!--
+    Blended average cost per unit currently held — USD, `null` for a fully
+    sold-down position (quantityHeld 0), never for a missing price, so the
+    `money` pipe's em-dash is correct here with no `hasPrice()` gate.
+  -->
+  <app-stat-tile label="Avg cost" [value]="holding().averageCostUsd | money"></app-stat-tile>
+
   <app-stat-tile label="Market value" [value]="hasPrice() ? (holding().marketValueUsd | money) : 'Awaiting price'">
   </app-stat-tile>
 

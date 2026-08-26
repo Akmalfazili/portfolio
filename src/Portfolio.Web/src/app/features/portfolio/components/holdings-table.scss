@@ -1,4 +1,15 @@
+// Eight columns of financial data does not fit a narrow viewport without
+// crushing every number unreadably. The table scrolls horizontally inside
+// this wrapper instead — the page body itself must never scroll sideways.
+.holdings-table__scroll {
+  overflow-x: auto;
+}
+
 .holdings-table {
+  // `width: 100%` is a floor, not a cap: a table's rendered width is never
+  // less than the sum of its columns' own minimum content widths, so eight
+  // numeric columns still force the `&__scroll` wrapper to scroll rather
+  // than crushing every figure unreadably on a narrow viewport.
   width: 100%;
   border-collapse: collapse;
   font-size: var(--ui-font-size-sm);
