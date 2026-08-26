@@ -4,10 +4,17 @@
 </mat-dialog-content>
 <mat-dialog-actions align="end">
   <button mat-button type="button" (click)="cancel()">{{ data.cancelLabel ?? 'Cancel' }}</button>
+  <!--
+    NOT `[color]="'warn'"` — this app themes with `mat.theme()`, and Material's
+    `color` input is M2-only and has no effect under an M3 theme. That is why
+    the destructive confirm had been rendering in the primary accent ever since
+    this dialog was written. The M3 way is a class that repoints the button's
+    own component tokens; see confirm-dialog.scss.
+  -->
   <button
     mat-flat-button
     type="button"
-    [color]="data.destructive ? 'warn' : 'primary'"
+    [class.confirm-dialog__confirm--destructive]="data.destructive"
     (click)="confirm()"
   >
     {{ data.confirmLabel ?? 'Confirm' }}

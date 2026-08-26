@@ -133,6 +133,20 @@
 
 .asset-management__actions {
   text-align: right;
+  white-space: nowrap;
+}
+
+/* The destructive action, so it is the one red thing in the row.
+   `color="warn"` does NOT work here: this app themes with `mat.theme()`, and
+   under an M3 theme Material's `color` input is documented as having no
+   effect — it is M2-only. The M3 way is to repoint the button's own component
+   tokens, which is what this does. The disabled token is deliberately left
+   alone so the button still greys out while a delete is in flight. */
+.asset-management__delete {
+  margin-left: var(--ui-space-1);
+  --mat-button-text-label-text-color: var(--ui-color-loss);
+  --mat-button-text-state-layer-color: var(--ui-color-loss);
+  --mat-button-text-ripple-color: color-mix(in srgb, var(--ui-color-loss) 20%, transparent);
 }
 
 @include ui.ui-breakpoint-down(sm) {

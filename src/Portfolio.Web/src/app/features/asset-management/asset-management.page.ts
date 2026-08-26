@@ -4,7 +4,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
 
-import { AssetDto, QuoteProviderKind, UpdateAssetRequest } from '../../core/api/models';
+import { AssetDto, QuoteProviderKind, TransactionDto, UpdateAssetRequest } from '../../core/api/models';
 import { API_ROUTES } from '../../core/api/api-routes';
 import { StateMessage } from '../../shared/state-message/state-message';
 import { ConfirmDialog, ConfirmDialogData } from '../../shared/confirm-dialog/confirm-dialog';
@@ -76,11 +76,18 @@ function unpricedState(asset: AssetDto, now: number): UnpricedState | null {
 }
 
 /**
- * D24 — list / create / deactivate for the assets the app can track. There
- * is no separate deactivate endpoint (`PUT /api/assets/{id}` is a full
- * replace, and `IsActive` is the only field this page ever flips), and no
- * DELETE at all, so "deactivate" and "reactivate" are the same action in
- * both directions here.
+ * D24 — list / create / deactivate / delete for the assets the app can track.
+ * There is no separate deactivate endpoint (`PUT /api/assets/{id}` is a full
+ * replace, and `IsActive` is the only field this page ever flips), so
+ * "deactivate" and "reactivate" are the same action in both directions here.
+ *
+ * `DELETE /api/assets/{id}` is a different thing entirely and the only
+ * irreversible action on the page: it destroys the asset AND every child row
+ * — transactions, price history, quote. Deactivation is offered first and
+ * left as the plain-text button; delete is styled as the warn action and its
+ * confirmation states the transaction count out loud, because "3 transactions
+ * will be permanently deleted" is the fact that changes the answer and the
+ * row itself does not show it.
  *
  * `GET /api/assets` returns inactive assets too (confirmed live) — this is
  * the ONE place they should still be visible, with a clear inactive
@@ -121,6 +128,11 @@ export class AssetManagementPage {
   });
 
   readonly actionError = signal<string | null>(null);
+
+  /** The asset currently being deleted — its row's buttons are disabled while the
+   *  DELETE is in flight. Deletion is pessimistic, unlike the deactivate toggle:
+   *  showing a row vanish and then reappear on failure reads as data loss. */
+  readonly deletingId = signal<number | null>(null);
 
   retry(): void {
     this.assetsResource.reload();
@@ -184,6 +196,63 @@ export class AssetManagementPage {
             `Couldn't ${activating ? 'reactivate' : 'deactivate'} ${asset.symbol} — it has been restored.`,
           );
           this.assetsResource.update((list) => (list ?? []).map((a) => (a.id === asset.id ? previous : a)));
+        },
+      });
+    });
+  }
+
+  /**
+   * Permanent delete, cascading to every child row on the server.
+   *
+   * The transaction count is fetched first, purely so the confirmation can
+   * name it. That costs one extra GET on an explicit click, and it is worth
+   * it: the row shows symbol, provider and status but nothing about how much
+   * history hangs off it, and "this will also delete 47 transactions" is the
+   * only fact that would make someone press Cancel. If that GET fails the
+   * delete is still offered — with the vaguer wording, never with a made-up
+   * count of zero, which would understate exactly the risk being warned about.
+   */
+  deleteAsset(asset: AssetDto): void {
+    this.actionError.set(null);
+
+    this.http.get<TransactionDto[]>(API_ROUTES.transactionsByAsset(asset.id)).subscribe({
+      next: (transactions) => this.confirmDelete(asset, transactions.length),
+      error: () => this.confirmDelete(asset, null),
+    });
+  }
+
+  private confirmDelete(asset: AssetDto, transactionCount: number | null): void {
+    const children =
+      transactionCount === null
+        ? 'Its transactions and price history will be permanently deleted with it.'
+        : transactionCount === 0
+          ? 'It has no transactions. Its price history will be permanently deleted with it.'
+          : `Its ${transactionCount} transaction${transactionCount === 1 ? '' : 's'} and all of its price history will be permanently deleted with it.`;
+
+    const ref = this.dialog.open<ConfirmDialog, ConfirmDialogData, boolean>(ConfirmDialog, {
+      data: {
+        title: `Delete ${asset.symbol}?`,
+        message: `${children} This cannot be undone — deactivate instead if you only want to stop recording new transactions against it.`,
+        confirmLabel: 'Delete',
+        destructive: true,
+      },
+    });
+
+    ref.afterClosed().subscribe((confirmed) => {
+      if (!confirmed) {
+        return;
+      }
+
+      this.deletingId.set(asset.id);
+
+      this.http.delete<void>(API_ROUTES.asset(asset.id)).subscribe({
+        next: () => {
+          this.deletingId.set(null);
+          this.assetsResource.update((list) => (list ?? []).filter((a) => a.id !== asset.id));
+        },
+        error: () => {
+          this.deletingId.set(null);
+          this.actionError.set(`Couldn't delete ${asset.symbol} — it is unchanged.`);
         },
       });
     });

@@ -54,6 +54,16 @@ html {
   // instead of this app's own light/dark steps.
   --mat-sys-background: var(--ui-color-surface-alt);
   --mat-sys-on-background: var(--ui-color-on-surface);
+  // The error role, which `mat-error` (12 uses across the two form dialogs)
+  // paints its validation text with. Left unrepointed it kept mat.theme()'s
+  // own red rather than this app's --ui-color-loss — two reds a shade apart on
+  // the same screen as tables that use --ui-color-loss for negative numbers.
+  // NOTE this does NOT drive Material's `color="warn"` input: that input is
+  // M2-only and has no effect under mat.theme(). Destructive BUTTONS repoint
+  // their own --mat-button-*-* component tokens instead — see
+  // confirm-dialog.scss and asset-management.page.scss.
+  --mat-sys-error: var(--ui-color-loss);
+  --mat-sys-on-error: var(--ui-color-on-accent-stock);
 }
 
 body {

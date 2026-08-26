@@ -3,3 +3,14 @@ p {
   max-width: var(--ui-layout-dialog-width-sm);
   color: var(--ui-color-on-surface-secondary);
 }
+
+/* The destructive confirm — a filled button, so the RED is the fill and the
+   label goes to the on-accent white. Repoints the M3 component tokens rather
+   than using `color="warn"`, which is M2-only and inert under `mat.theme()`.
+   No value is introduced here: both come from ui.tokens.scss. */
+.confirm-dialog__confirm--destructive {
+  --mat-button-filled-container-color: var(--ui-color-loss);
+  --mat-button-filled-label-text-color: var(--ui-color-on-accent-stock);
+  --mat-button-filled-state-layer-color: var(--ui-color-on-accent-stock);
+  --mat-button-filled-ripple-color: color-mix(in srgb, var(--ui-color-on-accent-stock) 24%, transparent);
+}

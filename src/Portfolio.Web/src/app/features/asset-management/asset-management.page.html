@@ -92,10 +92,26 @@
               <button
                 mat-button
                 type="button"
+                [disabled]="deletingId() === asset.id"
                 [attr.aria-label]="(asset.isActive ? 'Deactivate ' : 'Reactivate ') + asset.symbol"
                 (click)="toggleActive(asset)"
               >
                 {{ asset.isActive ? 'Deactivate' : 'Reactivate' }}
+              </button>
+              <!--
+                The only irreversible action on this page, and it takes the
+                asset's transactions and price history with it — hence the warn
+                colour, and a confirmation that counts the transactions out loud.
+              -->
+              <button
+                mat-button
+                type="button"
+                class="asset-management__delete"
+                [disabled]="deletingId() === asset.id"
+                [attr.aria-label]="'Delete ' + asset.symbol"
+                (click)="deleteAsset(asset)"
+              >
+                {{ deletingId() === asset.id ? 'Deleting…' : 'Delete' }}
               </button>
             </td>
           </tr>

@@ -94,6 +94,15 @@ crypto have separate navigation, separate totals, and never aggregate together.
 components are never imported into the crypto path rather than rendering empty. This is a
 one-way door for the past: unrecorded days cannot be bought back from CoinGecko's free tier.
 
+### Asset deletion
+
+Deleting an asset (`DELETE /api/assets/{id}`) cascades to its transactions, price history and
+quote — but the cascade is written out in `AssetService.DeleteAsync`, never delegated to the
+database. The `Asset → Transaction` foreign key is `DeleteBehavior.Restrict` on purpose, and the
+EF Core InMemory provider cascades only to already-tracked entities, so a DB-level cascade would
+make the unit tests pass while proving nothing. `AssetDeleteCascadeTests` (integration, real SQL
+Server) is the tripwire — **extend it whenever a new child table hangs off `Asset`**.
+
 ### Currency
 
 Transactions are stored in their native currency (USD for US stocks and crypto, SGD for Z74).

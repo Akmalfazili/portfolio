@@ -29,9 +29,25 @@ public interface IPortfolioDbContext
 
     void AddAsset(Asset asset);
 
+    /// <summary>
+    /// Removes an asset row only. Its children are NOT removed implicitly — see
+    /// <see cref="RemoveTransactions"/>, <see cref="RemovePriceHistories"/> and
+    /// <see cref="RemovePriceQuotes"/>, which callers must invoke explicitly. Relying on the
+    /// database's cascade would behave differently under the EF Core InMemory provider (which
+    /// only cascades to entities already tracked) than under SQL Server, and the Transaction
+    /// foreign key is <c>Restrict</c> on purpose, so a cascade there does not exist at all.
+    /// </summary>
+    void RemoveAsset(Asset asset);
+
     void AddTransaction(Transaction transaction);
 
     void RemoveTransaction(Transaction transaction);
+
+    void RemoveTransactions(IEnumerable<Transaction> transactions);
+
+    void RemovePriceHistories(IEnumerable<PriceHistory> priceHistories);
+
+    void RemovePriceQuotes(IEnumerable<PriceQuote> priceQuotes);
 
     void AddPriceHistory(PriceHistory priceHistory);
 

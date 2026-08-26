@@ -467,4 +467,94 @@ public sealed class AssetServiceTests : IDisposable
         result.IsSuccess.Should().BeTrue();
         result.Value!.Name.Should().Be("Apple Incorporated");
     }
+
+    // --- Hard delete. The point of these is the cascade: an asset row on its own is not a
+    // meaningful unit to remove, and orphaned transactions would keep being summed into
+    // portfolio totals with no asset to attribute them to.
+
+    [Fact]
+    public async Task DeleteAsync_RemovesTheAssetAndEveryChildRow()
+    {
+        var created = await _sut.CreateAsync(
+            new CreateAssetRequest("AAPL", "Apple Inc.", AssetClass.Stock, "NASDAQ", "USD", QuoteProviderKind.TwelveData, "AAPL", null),
+            CancellationToken.None);
+        var id = created.Value!.Id;
+
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = id,
+            Type = TransactionType.Buy,
+            TradeDate = new DateOnly(2026, 1, 5),
+            Quantity = 3m,
+            PricePerUnit = 190.25m,
+            Fees = 1.5m,
+            Currency = "USD",
+        });
+        _db.PriceHistories.Add(new PriceHistory { AssetId = id, Date = new DateOnly(2026, 1, 5), Close = 191m, Currency = "USD" });
+        _db.PriceQuotes.Add(new PriceQuote { AssetId = id, Price = 192m, Currency = "USD", AsOf = Now });
+        await _db.SaveChangesAsync();
+
+        var deleted = await _sut.DeleteAsync(id, CancellationToken.None);
+
+        deleted.Should().BeTrue();
+        (await _db.Assets.AnyAsync(a => a.Id == id)).Should().BeFalse();
+        (await _db.Transactions.AnyAsync(t => t.AssetId == id)).Should().BeFalse();
+        (await _db.PriceHistories.AnyAsync(p => p.AssetId == id)).Should().BeFalse();
+        (await _db.PriceQuotes.AnyAsync(q => q.AssetId == id)).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task DeleteAsync_LeavesOtherAssetsChildrenAlone()
+    {
+        var doomed = await _sut.CreateAsync(
+            new CreateAssetRequest("AAPL", "Apple Inc.", AssetClass.Stock, "NASDAQ", "USD", QuoteProviderKind.TwelveData, "AAPL", null),
+            CancellationToken.None);
+        var survivor = await _sut.CreateAsync(
+            new CreateAssetRequest("MSFT", "Microsoft", AssetClass.Stock, "NASDAQ", "USD", QuoteProviderKind.TwelveData, "MSFT", null),
+            CancellationToken.None);
+        var survivorId = survivor.Value!.Id;
+
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = survivorId,
+            Type = TransactionType.Buy,
+            TradeDate = new DateOnly(2026, 1, 5),
+            Quantity = 2m,
+            PricePerUnit = 410m,
+            Fees = 0m,
+            Currency = "USD",
+        });
+        _db.PriceQuotes.Add(new PriceQuote { AssetId = survivorId, Price = 415m, Currency = "USD", AsOf = Now });
+        await _db.SaveChangesAsync();
+
+        await _sut.DeleteAsync(doomed.Value!.Id, CancellationToken.None);
+
+        (await _db.Assets.AnyAsync(a => a.Id == survivorId)).Should().BeTrue();
+        (await _db.Transactions.CountAsync(t => t.AssetId == survivorId)).Should().Be(1);
+        (await _db.PriceQuotes.CountAsync(q => q.AssetId == survivorId)).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_ReturnsFalseForAnUnknownId()
+    {
+        (await _sut.DeleteAsync(9999, CancellationToken.None)).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task DeleteAsync_FreesTheSymbolForReuse()
+    {
+        // The unique index on Symbol is the reason this is worth asserting: a delete that left
+        // the row behind (or a "delete" that only flipped IsActive) would fail this.
+        var created = await _sut.CreateAsync(
+            new CreateAssetRequest("AAPL", "Apple Inc.", AssetClass.Stock, "NASDAQ", "USD", QuoteProviderKind.TwelveData, "AAPL", null),
+            CancellationToken.None);
+
+        await _sut.DeleteAsync(created.Value!.Id, CancellationToken.None);
+
+        var recreated = await _sut.CreateAsync(
+            new CreateAssetRequest("AAPL", "Apple Inc.", AssetClass.Stock, "NASDAQ", "USD", QuoteProviderKind.TwelveData, "AAPL", null),
+            CancellationToken.None);
+
+        recreated.IsSuccess.Should().BeTrue();
+    }
 }

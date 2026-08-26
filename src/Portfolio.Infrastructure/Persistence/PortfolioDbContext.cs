@@ -50,9 +50,17 @@ public class PortfolioDbContext(DbContextOptions<PortfolioDbContext> options) : 
 
     public void AddAsset(Asset asset) => Assets.Add(asset);
 
+    public void RemoveAsset(Asset asset) => Assets.Remove(asset);
+
     public void AddTransaction(Transaction transaction) => Transactions.Add(transaction);
 
     public void RemoveTransaction(Transaction transaction) => Transactions.Remove(transaction);
+
+    public void RemoveTransactions(IEnumerable<Transaction> transactions) => Transactions.RemoveRange(transactions);
+
+    public void RemovePriceHistories(IEnumerable<PriceHistory> priceHistories) => PriceHistories.RemoveRange(priceHistories);
+
+    public void RemovePriceQuotes(IEnumerable<PriceQuote> priceQuotes) => PriceQuotes.RemoveRange(priceQuotes);
 
     public void AddPriceHistory(PriceHistory priceHistory) => PriceHistories.Add(priceHistory);
 

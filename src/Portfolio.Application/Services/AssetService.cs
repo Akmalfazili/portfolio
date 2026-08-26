@@ -153,6 +153,34 @@ public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvid
         return ServiceResult<AssetDto>.Success(ToDto(asset, hasEverBeenPriced, providerHasEverSucceeded));
     }
 
+    public async Task<bool> DeleteAsync(int id, CancellationToken cancellationToken)
+    {
+        var asset = await db.FindAssetAsync(id, cancellationToken);
+        if (asset is null)
+        {
+            return false;
+        }
+
+        // Every child is removed explicitly rather than left to the database's cascade. Two
+        // reasons, and both matter: the Transaction foreign key is DeleteBehavior.Restrict on
+        // purpose (nothing may take transactions away by accident — only this call, which says
+        // so in its name), and the EF Core InMemory provider the unit tests run on cascades only
+        // to entities the change tracker already holds, so a DB-level cascade would make the
+        // tests pass while proving nothing about SQL Server. One SaveChangesAsync wraps the lot
+        // in a single transaction, so a failure part-way leaves the asset and its children whole.
+        var transactions = await db.Transactions.Where(t => t.AssetId == id).ToListAsync(cancellationToken);
+        var priceHistories = await db.PriceHistories.Where(p => p.AssetId == id).ToListAsync(cancellationToken);
+        var priceQuotes = await db.PriceQuotes.Where(q => q.AssetId == id).ToListAsync(cancellationToken);
+
+        db.RemoveTransactions(transactions);
+        db.RemovePriceHistories(priceHistories);
+        db.RemovePriceQuotes(priceQuotes);
+        db.RemoveAsset(asset);
+
+        await db.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
     /// <summary>
     /// D23: beyond the pre-existing "required, unique symbol" checks, the provider identifier
     /// field matching <paramref name="providerKind"/> is required too. <c>QuoteProviderRouter</c>

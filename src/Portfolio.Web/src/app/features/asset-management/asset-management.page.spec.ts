@@ -330,4 +330,120 @@ describe('AssetManagementPage', () => {
     expect(req.request.body.isActive).toBe(true);
     req.flush({ ...MSFT_INACTIVE, isActive: true });
   });
+
+  // --- Hard delete. Two things worth pinning: the confirmation names the
+  // transaction count (the only fact on that screen that would make someone
+  // press Cancel), and the row is removed only AFTER the server confirms —
+  // showing a row vanish and reappear would read as data loss.
+
+  it('counts the transactions on the asset before asking, and names them in the confirmation', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const dialog = TestBed.inject(MatDialog);
+    const open = vi
+      .spyOn(dialog, 'open')
+      .mockReturnValue({ afterClosed: () => of(false) } as ReturnType<MatDialog['open']>);
+
+    fixture.componentInstance.deleteAsset(AAPL);
+
+    const countReq = httpMock.expectOne(API_ROUTES.transactionsByAsset(AAPL.id));
+    expect(countReq.request.method).toBe('GET');
+    countReq.flush([{ id: 1 }, { id: 2 }, { id: 3 }]);
+
+    expect(open).toHaveBeenCalled();
+    const data = open.mock.calls[0][1]?.data as { title: string; message: string };
+    expect(data.title).toContain('AAPL');
+    expect(data.message).toContain('3 transactions');
+    expect(data.message).toContain('cannot be undone');
+  });
+
+  it('still offers the delete when the transaction count cannot be fetched, without claiming zero', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const dialog = TestBed.inject(MatDialog);
+    const open = vi
+      .spyOn(dialog, 'open')
+      .mockReturnValue({ afterClosed: () => of(false) } as ReturnType<MatDialog['open']>);
+
+    fixture.componentInstance.deleteAsset(AAPL);
+    httpMock
+      .expectOne(API_ROUTES.transactionsByAsset(AAPL.id))
+      .flush('boom', { status: 500, statusText: 'Server Error' });
+
+    expect(open).toHaveBeenCalled();
+    const data = open.mock.calls[0][1]?.data as { message: string };
+    expect(data.message).toContain('transactions and price history');
+    expect(data.message).not.toContain('no transactions');
+    expect(data.message).not.toContain('0 transaction');
+  });
+
+  it('DELETEs the asset and drops the row only once the server confirms', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([AAPL, MSFT_INACTIVE]);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const dialog = TestBed.inject(MatDialog);
+    vi.spyOn(dialog, 'open').mockReturnValue({ afterClosed: () => of(true) } as ReturnType<MatDialog['open']>);
+
+    fixture.componentInstance.deleteAsset(AAPL);
+    httpMock.expectOne(API_ROUTES.transactionsByAsset(AAPL.id)).flush([]);
+    fixture.detectChanges();
+
+    // Still there while the DELETE is in flight — pessimistic, unlike the toggle.
+    expect(fixture.nativeElement.textContent).toContain('AAPL');
+
+    const req = httpMock.expectOne(API_ROUTES.asset(AAPL.id));
+    expect(req.request.method).toBe('DELETE');
+    req.flush(null, { status: 204, statusText: 'No Content' });
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).not.toContain('AAPL');
+    expect(text).toContain('MSFT');
+  });
+
+  it('keeps the row and reports the failure when the DELETE fails', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const dialog = TestBed.inject(MatDialog);
+    vi.spyOn(dialog, 'open').mockReturnValue({ afterClosed: () => of(true) } as ReturnType<MatDialog['open']>);
+
+    fixture.componentInstance.deleteAsset(AAPL);
+    httpMock.expectOne(API_ROUTES.transactionsByAsset(AAPL.id)).flush([]);
+    httpMock
+      .expectOne(API_ROUTES.asset(AAPL.id))
+      .flush('boom', { status: 500, statusText: 'Server Error' });
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('AAPL');
+    expect(text).toContain("Couldn't delete AAPL");
+  });
+
+  it('does not touch the server when the confirmation is cancelled', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const dialog = TestBed.inject(MatDialog);
+    vi.spyOn(dialog, 'open').mockReturnValue({ afterClosed: () => of(false) } as ReturnType<MatDialog['open']>);
+
+    fixture.componentInstance.deleteAsset(AAPL);
+    httpMock.expectOne(API_ROUTES.transactionsByAsset(AAPL.id)).flush([]);
+    fixture.detectChanges();
+
+    // No DELETE at all — httpMock.verify() in afterEach is the assertion.
+    expect(fixture.nativeElement.textContent).toContain('AAPL');
+  });
 });

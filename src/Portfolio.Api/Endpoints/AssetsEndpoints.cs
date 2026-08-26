@@ -67,6 +67,21 @@ public static class AssetsEndpoints
                 : TypedResults.ValidationProblem(result.Error.ValidationErrors!);
         });
 
+        // Hard delete, and the only irreversible action on this resource. It takes every child
+        // row with it — transactions, price history, the quote — because an asset row alone is
+        // not a meaningful unit to remove: orphaned transactions would still be summed into
+        // portfolio totals with no asset to attribute them to. Deactivation (PUT with
+        // IsActive = false) remains the non-destructive option and is what the UI offers first.
+        // 204 on success, 404 for an unknown id — same shape as DELETE /api/transactions/{id}.
+        group.MapDelete("/{id:int}", async Task<Results<NoContent, NotFound>> (
+            int id,
+            IAssetService assetService,
+            CancellationToken cancellationToken) =>
+        {
+            var deleted = await assetService.DeleteAsync(id, cancellationToken);
+            return deleted ? TypedResults.NoContent() : TypedResults.NotFound();
+        });
+
         // Stocks only, per the crypto scope decision. A crypto asset id returns a clean 400
         // (ValidationProblem) rather than an empty series that would render as a flat line at
         // zero; an unknown asset id returns 404.

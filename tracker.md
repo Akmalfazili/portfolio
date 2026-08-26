@@ -37,8 +37,8 @@ daily-vs-per-minute error, D36's "that state is unreachable"). Measure before yo
 **Defects D1–D39 are all closed except D6**, which is the measurement described below rather
 than a fault. The register is kept as history, not as a to-do list.
 
-**Test suites, re-run 2026-08-25:** backend `dotnet test portfolio.slnx` **222/222** (215 unit +
-7 integration), frontend `ng test` **206/206** across 29 files. Backend builds clean under
+**Test suites, re-run 2026-08-26:** backend `dotnet test portfolio.slnx` **227/227** (219 unit +
+8 integration), frontend `ng test` **211/211** across 29 files. Backend builds clean under
 `TreatWarningsAsErrors`; the Angular build carries one accepted bundle-budget warning (~10 kB over
 the 500 kB initial budget, from the chart libraries).
 
@@ -116,7 +116,7 @@ tests/Portfolio.IntegrationTests/  7 tests — the only place decimal precision 
 
 | Route | Notes |
 |---|---|
-| `GET/POST /api/assets`, `GET/PUT /api/assets/{id}` | `PUT` is full-replace including `IsActive` — there is no deactivate route and no `DELETE` |
+| `GET/POST /api/assets`, `GET/PUT/DELETE /api/assets/{id}` | `PUT` is full-replace including `IsActive` — there is no separate deactivate route. `DELETE` is a hard, cascading delete: `204`, or `404` for an unknown id |
 | `GET/POST /api/transactions`, `PUT/DELETE /api/transactions/{id}` | filters: `assetClass`, `assetId` |
 | `GET /api/portfolio/{assetClass}/summary`, `/allocation` | both asset classes |
 | `GET /api/portfolio/stock/annual-returns` | stocks only |
@@ -363,6 +363,48 @@ history erased — a decision that looks arbitrary is usually one whose reason w
 - **`docker compose down` (never `-v`)** preserves the named `mssql-data` volume; verified by
   round-tripping a probe transaction through a full `down`/`up`.
 
+### Asset deletion cascades explicitly, in the service, not through the database (2026-08-26)
+
+`/assets` could create and deactivate but not delete, and an asset row alone is not a meaningful
+unit to remove — orphaned transactions would still be summed into portfolio totals with no asset
+to attribute them to. `AssetService.DeleteAsync` therefore removes transactions, price history and
+the quote itself before removing the asset, in one `SaveChangesAsync`.
+
+Every child is deleted **in code**, and the reason is not style:
+
+- The `Asset → Transaction` foreign key is `DeleteBehavior.Restrict` and stays that way. Nothing
+  may take transactions away by accident — only a call that says so in its name. Switching it to
+  `Cascade` would have needed a migration *and* would have made every future accidental asset
+  delete silently destructive.
+- The EF Core InMemory provider the unit tests run on has no foreign keys at all, so it cascades
+  only to entities the change tracker already holds. A database-level cascade would have made the
+  unit tests pass while proving nothing about SQL Server — the same class of false comfort as the
+  decimal-precision tests. `AssetDeleteCascadeTests` in `Portfolio.IntegrationTests` is the real
+  tripwire, and it is the test to extend when a new child table appears.
+
+The UI counts the asset's transactions with one extra `GET /api/transactions?assetId=` before it
+asks, so the confirmation can say *"Its 3 transactions and all of its price history will be
+permanently deleted"*. The row shows symbol, provider and status and nothing about how much
+history hangs off it, and the count is the only fact on that screen that would make someone press
+Cancel. If that `GET` fails the delete is still offered, with vaguer wording — never with a
+fabricated count of zero, which would understate exactly the risk being warned about.
+
+Unlike the deactivate toggle, delete is **pessimistic**: the row is dropped only after the `204`.
+Showing a row vanish and then reappear on failure reads as data loss.
+
+The red on both the row's Delete and the confirmation's Delete comes from repointing Material's
+**component** tokens (`--mat-button-text-label-text-color`, `--mat-button-filled-container-color`)
+to `--ui-color-loss`. The obvious `color="warn"` was tried first and is inert — see trap 10; it
+also revealed that `ConfirmDialog`'s `destructive` flag had never rendered red since Phase 12.
+`--mat-sys-error` was repointed to `--ui-color-loss` in the same pass, but for `mat-error`
+validation text (12 uses across the two form dialogs), which is what actually reads that role —
+not for the buttons.
+
+**Verified live**, not from tests: a probe asset with two transactions, one price-history row and
+one quote was deleted through the running API, and SQL Server's own `fn_dblog` showed exactly
+1 asset + 2 transactions + 1 history + 1 quote removed and nothing else — with the six real assets
+and all 1,176 price-history rows untouched. `DELETE` on the now-missing id returns `404`.
+
 ---
 
 ## Traps — the lessons that cost a session each
@@ -425,6 +467,35 @@ These are general, and every one of them was learned the expensive way here.
 9. **Never list `dotnet user-secrets` to obtain a key.** A redaction regex failed to match
    PowerShell's `Key = Value` spacing and printed a real API key into a transcript. Read the single
    value you need and pipe it straight into the call, or let the app make the call for you.
+
+10. **Angular Material's `color` input is M2-only and silently does nothing here.** This app themes
+    with `mat.theme()`, an M3 theme, where `color="warn"` / `color="primary"` are documented as
+    having *no effect* — `button.d.ts` says so outright. `ConfirmDialog`'s destructive confirm had
+    carried `[color]="'warn'"` since Phase 12 and had **never once rendered red**; the same mistake
+    was repeated on the new assets-page delete button, and every test still passed, because a
+    colour that never arrives is invisible to a component test. It was caught by a user looking at
+    the screen. The M3 mechanism is to repoint the component's own tokens on a class:
+
+    ```scss
+    .my-delete-button {
+      --mat-button-text-label-text-color: var(--ui-color-loss);      /* text button   */
+      --mat-button-filled-container-color: var(--ui-color-loss);     /* filled button */
+    }
+    ```
+
+    Note the naming is `--mat-button-<variant>-<property>`; the `--mat-text-button-…` form quoted
+    in Material's own `_definition.scss` comment is stale. Do not guess these names — grep the
+    built output for what Material actually consumes:
+
+    ```bash
+    grep -ho "\-\-mat-button-[a-z-]*" src/Portfolio.Web/dist/Portfolio.Web/browser/*.js | sort -u
+    ```
+
+    The give-away is the fallback: Material emits
+    `var(--mat-button-text-label-text-color, var(--mat-sys-primary))`, so an unset token renders in
+    the **primary accent** — which reads as "styled", not as "broken". The remaining
+    `color="primary"` bindings in this app are equally inert but happen to be correct, since
+    primary is the M3 default anyway.
 
 ---
 
@@ -523,6 +594,7 @@ and it is a measurement on hold, not a defect** — see the top of this file.
 | 2026-08-21 | **First live NYSE window in project history**, which immediately exposed D38: the stock quote path had never once succeeded. D37 and D38 fixed and verified during real market hours |
 | 2026-08-24 | D39 (credit ledger reconciliation) and D36 (zero-price acquisitions) closed. The stale-container trap found and documented |
 | 2026-08-25 | Phase 11's four browser checks closed, D36's browser gaps closed, `CLAUDE.md`'s stale market-data routing corrected. D6 baseline captured |
+| 2026-08-26 | Asset deletion added — `DELETE /api/assets/{id}` cascading to transactions, price history and quote, plus the `/assets` delete action. Verified against the live API and SQL Server's own transaction log; not browser-verified (the Chrome extension is still unavailable). A user then spotted that the delete buttons were not red, which exposed trap 10: Material's `color` input is inert under M3, and `ConfirmDialog`'s destructive styling had been dead since Phase 12 |
 
 ---
 
