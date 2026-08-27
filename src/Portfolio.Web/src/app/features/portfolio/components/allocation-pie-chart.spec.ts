@@ -101,6 +101,142 @@ describe('AllocationPieChart', () => {
     expect(aapl).not.toContain('No price yet');
   });
 
+  /**
+   * Follow-up on the orphan-leader-line fix: an 8% label threshold removed
+   * the orphan lines by hiding small slices' labels entirely (PG at 5.8% on
+   * /stocks, ETH on /crypto market value, near-zero slivers on /crypto cost
+   * basis). The user wants every slice labelled — no threshold, nothing
+   * silently hidden. Overlap is handled by pie's native `avoidLabelOverlap`
+   * shifting labels apart (see the `labelLayout`/`minAngle` tests below for
+   * how that pass is kept from detaching a line from its label), never by
+   * dropping one.
+   */
+  it('shows a label and a leader line on every slice — no threshold, nothing hidden', () => {
+    const many: AllocationSlice[] = [
+      { assetId: 1, symbol: 'AMP', name: 'Amp', value: 999.9, percent: 99.98 },
+      { assetId: 2, symbol: 'ETH', name: 'Ethereum', value: 0.06, percent: 0.006 },
+      { assetId: 3, symbol: 'ANVL', name: 'Anvil', value: 0.04, percent: 0.004 },
+    ];
+    fixture.componentRef.setInput('slices', many);
+    fixture.detectChanges();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const series = (fixture.componentInstance.options() as any).series[0];
+    expect(series.label.show).toBe(true);
+    expect(series.labelLine.show).toBe(true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const item of series.data as any[]) {
+      // No per-item override quietly turns either off for a small slice.
+      expect(item.label?.show).not.toBe(false);
+      expect(item.labelLine?.show).not.toBe(false);
+    }
+  });
+
+  /**
+   * Follow-up: the generic `labelLayout.moveOverlap: 'shiftY'` pass shifts a
+   * label's y without moving its leader line (verified from ECharts' own
+   * source), which measurably overlapped label blocks in the browser (PG/
+   * ERIC on /stocks, ANVL/ETH on /crypto cost basis). Overlap must now be
+   * resolved entirely by pie's own native `avoidLabelOverlap` pass, which
+   * keeps the line glued to the label it moves. `hideOverlap: false` stays
+   * — nothing may be silently hidden — but nothing may move a label without
+   * its line following.
+   */
+  it('resolves overlap via native avoidLabelOverlap only — no generic moveOverlap pass that could detach a line from its label', () => {
+    fixture.componentRef.setInput('slices', SLICES);
+    fixture.detectChanges();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const series = (fixture.componentInstance.options() as any).series[0];
+    expect(series.avoidLabelOverlap).toBe(true);
+    expect(series.labelLayout).toEqual({ hideOverlap: false });
+  });
+
+  it('gives every slice a rendered wedge wide enough for its label block to clear its neighbours', () => {
+    // The crypto cost-basis worst case, measured in the browser: AMP ~100%,
+    // ANVL and ETH both ~0%. At minAngle 4 the two near-zero slices' label
+    // blocks still overlapped by ~2px and one grazed the ring. 8 degrees is
+    // the value that gave the native overlap pass enough angular room to
+    // separate them.
+    fixture.componentRef.setInput('slices', [
+      { assetId: 1, symbol: 'AMP', name: 'Amp', value: 1000, percent: 99.98 },
+      { assetId: 2, symbol: 'ETH', name: 'Ethereum', value: 0.1, percent: 0.01 },
+      { assetId: 3, symbol: 'ANVL', name: 'Anvil', value: 0.1, percent: 0.01 },
+    ]);
+    fixture.detectChanges();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const series = (fixture.componentInstance.options() as any).series[0];
+    expect(series.minAngle).toBeGreaterThanOrEqual(8);
+  });
+
+  /**
+   * Follow-up: the label text rendered ABOVE the leader line's end rather
+   * than beside it. `alignTo: 'labelLine'` ties the text's horizontal anchor
+   * to the line, `verticalAlign: 'middle'` centres the two-line block on the
+   * line's y, and `distanceToLabelLine` gives a small deliberate gap. `align`
+   * must stay unset so ECharts keeps auto-flipping left/right per side.
+   */
+  it('positions the label beside the leader line, not above it', () => {
+    fixture.componentRef.setInput('slices', SLICES);
+    fixture.detectChanges();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const series = (fixture.componentInstance.options() as any).series[0];
+    expect(series.label.alignTo).toBe('labelLine');
+    expect(series.label.verticalAlign).toBe('middle');
+    expect(series.label.distanceToLabelLine).toBeGreaterThan(0);
+    // Must not hardcode a side — that would fight ECharts' automatic
+    // left/right flip between the two halves of the donut.
+    expect(series.label.align).toBeUndefined();
+  });
+
+  /**
+   * Follow-up: a two-tier `length2` (short leader line under 5% share, long
+   * otherwise) created a visible discontinuity — a mid-size slice sandwiched
+   * between two labels `shiftY` had pushed apart (PG at 5.8% on /stocks
+   * market value, between "Other" and ERIC) landed on the short tier exactly
+   * where it needed the most room, so its label crowded the donut ring while
+   * its neighbours sat farther out. Every slice must share one leader-line
+   * geometry so labels sit at a uniform radial distance regardless of size.
+   */
+  it('gives every slice the same leader-line geometry — no per-slice tiering by size', () => {
+    const eightStockLikeSlices: AllocationSlice[] = [
+      { assetId: 1, symbol: 'AVGO', name: 'Broadcom', value: 227, percent: 22.7 },
+      { assetId: 2, symbol: 'MSFT', name: 'Microsoft', value: 159, percent: 15.9 },
+      { assetId: 3, symbol: 'AMZN', name: 'Amazon', value: 136, percent: 13.6 },
+      { assetId: 4, symbol: 'SPUS', name: 'SP Funds', value: 130, percent: 13.0 },
+      { assetId: 5, symbol: 'HLAL', name: 'Wahed', value: 113, percent: 11.3 },
+      { assetId: 6, symbol: 'ERIC', name: 'Ericsson', value: 89, percent: 8.9 },
+      { assetId: 7, symbol: 'PG', name: 'Procter & Gamble', value: 58, percent: 5.8 },
+      { assetId: 8, symbol: 'OTH', name: 'Other holding', value: 88, percent: 8.8 },
+    ];
+    fixture.componentRef.setInput('slices', eightStockLikeSlices);
+    fixture.detectChanges();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const series = (fixture.componentInstance.options() as any).series[0];
+    // The series-level geometry is generous and fixed...
+    expect(series.labelLine.length).toBeGreaterThanOrEqual(14);
+    expect(series.labelLine.length2).toBeGreaterThanOrEqual(20);
+    // ...and no data item — regardless of its share, including PG at 5.8% —
+    // overrides it with a shorter (or longer) leader line of its own.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const item of series.data as any[]) {
+      expect(item.labelLine).toBeUndefined();
+    }
+  });
+
+  it('formats a near-zero slice as "<0.1%" instead of a misleading "0.0%"', () => {
+    fixture.componentRef.setInput('slices', SLICES);
+    fixture.detectChanges();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const series = (fixture.componentInstance.options() as any).series[0];
+    expect(series.label.formatter({ percent: 0.03, name: 'ANVL' })).toContain('<0.1%');
+    expect(series.label.formatter({ percent: 22.7, name: 'AVGO' })).toContain('22.7%');
+  });
+
   it('assigns colour by asset identity, not by current value rank', () => {
     fixture.componentRef.setInput('slices', SLICES);
     fixture.detectChanges();
