@@ -1,3 +1,5 @@
+@use '../../../styles/ui.mixins' as ui;
+
 .detail {
   max-width: var(--ui-layout-content-max);
   margin: 0 auto;
@@ -100,6 +102,10 @@
   color: var(--ui-color-on-surface);
 }
 
+.detail__caption {
+  @include ui.ui-visually-hidden;
+}
+
 .detail__transactions {
   width: 100%;
   border-collapse: collapse;
@@ -112,17 +118,61 @@
   font-weight: var(--ui-font-weight-medium);
   padding: var(--ui-space-2) var(--ui-space-3);
   border-bottom: 1px solid var(--ui-color-gridline);
+  height: auto;
 }
 
 .detail__transactions td {
   padding: var(--ui-space-2) var(--ui-space-3);
   border-bottom: 1px solid var(--ui-color-gridline);
   color: var(--ui-color-on-surface);
+  height: var(--ui-size-table-row-height);
 }
 
 .detail__num {
   text-align: right;
   font-variant-numeric: var(--ui-font-numeric-variant);
+}
+
+// mat-sort-header's own container is a block-level flex box that ignores the
+// header cell's text-align (see holdings-table.scss's identical comment).
+.detail__num .mat-sort-header-container {
+  justify-content: flex-end;
+}
+
+// -----------------------------------------------------------------------------
+// "All" — the virtualized CSS-grid ARIA table, mirroring the real <table>
+// above column-for-column.
+// -----------------------------------------------------------------------------
+.detail__grid {
+  font-size: var(--ui-font-size-sm);
+  border: 1px solid var(--ui-color-border);
+  border-radius: var(--ui-radius-sm);
+  overflow: hidden;
+}
+
+.detail__grid-row {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr 1fr 1fr 1fr;
+  align-items: center;
+  column-gap: var(--ui-space-3);
+  padding: 0 var(--ui-space-3);
+  height: var(--ui-size-table-row-height);
+  border-bottom: 1px solid var(--ui-color-gridline);
+  font-variant-numeric: var(--ui-font-numeric-variant);
+  color: var(--ui-color-on-surface);
+}
+
+.detail__grid-row--head {
+  height: auto;
+  padding-top: var(--ui-space-2);
+  padding-bottom: var(--ui-space-2);
+  color: var(--ui-color-on-surface-muted);
+  font-weight: var(--ui-font-weight-medium);
+  font-variant-numeric: normal;
+}
+
+.detail__viewport {
+  height: calc(var(--ui-size-table-row-height) * 10);
 }
 
 .detail__empty {

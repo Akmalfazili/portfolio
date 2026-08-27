@@ -216,6 +216,19 @@
   --ui-size-snackbar-accent-bar: 4px;
 
   // ---------------------------------------------------------------------------
+  // Table rows — the transactions tables' single-line rows, in both their
+  // paginated (a real <table>) and virtualized ("All", a CSS-grid ARIA table
+  // inside cdk-virtual-scroll-viewport) rendering, share one fixed height so
+  // switching page size never visibly re-flows a row. `TRANSACTION_ROW_HEIGHT_PX`
+  // in shared/table/table-row-height.ts duplicates this value as a plain JS
+  // number — CDK's fixed-size virtual-scroll strategy needs a real number for
+  // its scroll-offset math and cannot read a CSS custom property. Keep the two
+  // in sync if this changes; it is the one deliberate token/JS-constant split
+  // in the app, alongside the SCSS breakpoint variables above.
+  // ---------------------------------------------------------------------------
+  --ui-size-table-row-height: 44px;
+
+  // ---------------------------------------------------------------------------
   // Z-index layers (app shell chrome — CDK overlays manage their own stack)
   // ---------------------------------------------------------------------------
   --ui-z-base: 0;

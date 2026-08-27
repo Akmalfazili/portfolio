@@ -45,6 +45,14 @@ html {
   --mat-sys-surface-container: var(--ui-color-surface-alt);
   --mat-sys-outline: var(--ui-color-border);
   --mat-sys-outline-variant: var(--ui-color-gridline);
+  // `MatPaginator`'s enabled prev/next/first/last icon buttons read this role
+  // (`--mat-paginator-enabled-icon-color`'s own fallback, confirmed by
+  // grepping the built output per trap 10) — left unrepointed they'd paint
+  // with mat.theme()'s native seed-palette grey rather than this app's own
+  // muted-ink step, a step apart from every other muted label (axis text,
+  // the D27 unpriced hint, table header text) that already reads
+  // --ui-color-on-surface-muted.
+  --mat-sys-on-surface-variant: var(--ui-color-on-surface-muted);
   // D14 fix: mat.theme() also emits --mat-sys-background/-on-background as a
   // *separate* role from surface/on-surface, and mat-sidenav-container (plus
   // anything that inherits its computed `color` without setting its own,

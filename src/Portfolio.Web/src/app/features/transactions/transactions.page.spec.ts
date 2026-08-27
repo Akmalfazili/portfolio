@@ -284,4 +284,174 @@ describe('TransactionsPage', () => {
     );
     expect(notifySuccess).not.toHaveBeenCalled();
   });
+
+  describe('sorting, pagination and virtualization', () => {
+    function dates(fixture: ComponentFixture<TransactionsPage>): string[] {
+      return Array.from(fixture.nativeElement.querySelectorAll('tbody td:first-child') as NodeListOf<HTMLElement>).map(
+        (el) => el.textContent?.trim() ?? '',
+      );
+    }
+
+    it('defaults to trade date descending', async () => {
+      fixture.detectChanges();
+      httpMock.expectOne(API_ROUTES.transactions).flush([AAPL_BUY, ANVL_BUY]);
+      flushAssets();
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      expect(dates(fixture)).toEqual(['2026-07-30', '2026-07-20']);
+    });
+
+    it('reaches the <th> with mat-sort-header, emitting aria-sort', async () => {
+      fixture.detectChanges();
+      httpMock.expectOne(API_ROUTES.transactions).flush([ANVL_BUY]);
+      flushAssets();
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      const dateHeader = fixture.nativeElement.querySelector('th[mat-sort-header="date"]') as HTMLElement;
+      expect(dateHeader.getAttribute('aria-sort')).toBe('descending');
+      expect(dateHeader.getAttribute('scope')).toBe('col');
+    });
+
+    it('resets to page 0 when the asset-class filter changes', async () => {
+      const many: TransactionDto[] = Array.from({ length: 30 }, (_, i) => ({
+        ...ANVL_BUY,
+        id: i + 1,
+        tradeDate: `2026-07-${String(i + 1).padStart(2, '0')}`,
+      }));
+      fixture.detectChanges();
+      httpMock.expectOne(API_ROUTES.transactions).flush(many);
+      flushAssets();
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      fixture.componentInstance.tableState.setPageIndex(1);
+      expect(fixture.componentInstance.tableState.pageIndex()).toBe(1);
+
+      fixture.componentInstance.setFilter('Stock');
+      expect(fixture.componentInstance.tableState.pageIndex()).toBe(0);
+    });
+
+    it('hides the pager when the row count fits the smallest page size', async () => {
+      fixture.detectChanges();
+      httpMock.expectOne(API_ROUTES.transactions).flush([ANVL_BUY]);
+      flushAssets();
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      expect(fixture.nativeElement.querySelector('app-table-pager .table-pager')).toBeNull();
+    });
+
+    it(
+      'shows the pager and paginates once the row count exceeds the smallest page size',
+      async () => {
+        const many: TransactionDto[] = Array.from({ length: 30 }, (_, i) => ({
+          ...ANVL_BUY,
+          id: i + 1,
+          tradeDate: `2026-07-${String(i + 1).padStart(2, '0')}`,
+        }));
+        fixture.detectChanges();
+        httpMock.expectOne(API_ROUTES.transactions).flush(many);
+        flushAssets();
+        await fixture.whenStable();
+        fixture.detectChanges();
+
+        expect(fixture.nativeElement.querySelector('app-table-pager .table-pager')).not.toBeNull();
+        expect(fixture.nativeElement.querySelectorAll('tbody tr').length).toBe(25);
+      },
+      // 30 rows is genuinely more DOM work than this file's other cases — see
+      // the identical note in holdings-table.spec.ts.
+      15000,
+    );
+
+    it(
+      'switches to the virtualized CSS-grid view when "All" is selected, rendering every row',
+      async () => {
+        const many: TransactionDto[] = Array.from({ length: 30 }, (_, i) => ({
+          ...ANVL_BUY,
+          id: i + 1,
+          tradeDate: `2026-07-${String(i + 1).padStart(2, '0')}`,
+        }));
+        fixture.detectChanges();
+        httpMock.expectOne(API_ROUTES.transactions).flush(many);
+        flushAssets();
+        await fixture.whenStable();
+        fixture.detectChanges();
+
+        // Real <table> is present, grid is not, before "All" is selected.
+        expect(fixture.nativeElement.querySelector('table.transactions__table')).not.toBeNull();
+        expect(fixture.nativeElement.querySelector('.transactions__grid')).toBeNull();
+
+        fixture.componentInstance.tableState.setPageSize(Infinity);
+        fixture.detectChanges();
+
+        expect(fixture.nativeElement.querySelector('table.transactions__table')).toBeNull();
+        const grid = fixture.nativeElement.querySelector('.transactions__grid') as HTMLElement;
+        expect(grid).not.toBeNull();
+        expect(grid.getAttribute('role')).toBe('table');
+        // jsdom does no real layout, so the CDK viewport's own item count can't
+        // be asserted here — the structural pieces (role=table, a real
+        // cdk-virtual-scroll-viewport, and the header row outside it) are what's
+        // testable without a real browser. The rendered "All" view has NOT been
+        // confirmed visually — see tracker.md's verification caveats.
+        expect(fixture.nativeElement.querySelector('cdk-virtual-scroll-viewport')).not.toBeNull();
+        expect(fixture.nativeElement.querySelector('.transactions__grid-row--head')).not.toBeNull();
+      },
+      15000,
+    );
+
+    it(
+      'keeps the ARIA table owning its rows, and counts them, while virtualized',
+      async () => {
+        const many: TransactionDto[] = Array.from({ length: 30 }, (_, i) => ({
+          ...ANVL_BUY,
+          id: i + 1,
+          tradeDate: `2026-07-${String(i + 1).padStart(2, '0')}`,
+        }));
+        fixture.detectChanges();
+        httpMock.expectOne(API_ROUTES.transactions).flush(many);
+        flushAssets();
+        await fixture.whenStable();
+        fixture.detectChanges();
+
+        fixture.componentInstance.tableState.setPageSize(Infinity);
+        fixture.detectChanges();
+        await fixture.whenStable();
+        fixture.detectChanges();
+
+        const grid = fixture.nativeElement.querySelector('.transactions__grid') as HTMLElement;
+
+        // Header included, so 30 rows reads as 31 — without this a screen
+        // reader would announce only the handful of rows the viewport keeps
+        // in the DOM.
+        expect(grid.getAttribute('aria-rowcount')).toBe('31');
+        expect(
+          fixture.nativeElement.querySelector('.transactions__grid-row--head')!.getAttribute('aria-rowindex'),
+        ).toBe('1');
+
+        // The viewport must drop OUT of the a11y tree and its content wrapper
+        // must become the rowgroup, otherwise role=table does not own its
+        // role=row children at all (VirtualRowgroup's whole purpose).
+        const viewport = fixture.nativeElement.querySelector('cdk-virtual-scroll-viewport') as HTMLElement;
+        expect(viewport.getAttribute('role')).toBe('presentation');
+        expect(
+          viewport.querySelector('.cdk-virtual-scroll-content-wrapper')!.getAttribute('role'),
+        ).toBe('rowgroup');
+
+        // Every rendered body row is indexed against the FULL set, not the
+        // slice that happens to be in the DOM. jsdom renders no rows without
+        // layout, so assert only over whatever did render.
+        const bodyRows = Array.from(
+          viewport.querySelectorAll<HTMLElement>('[role="row"]'),
+        );
+        for (const row of bodyRows) {
+          const index = Number(row.getAttribute('aria-rowindex'));
+          expect(index).toBeGreaterThanOrEqual(2);
+          expect(index).toBeLessThanOrEqual(31);
+        }
+      },
+      15000,
+    );
+  });
 });

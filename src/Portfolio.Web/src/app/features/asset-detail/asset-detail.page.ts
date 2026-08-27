@@ -1,6 +1,8 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, untracked } from '@angular/core';
 import { httpResource } from '@angular/common/http';
 import { Router, RouterLink } from '@angular/router';
+import { MatSortModule, Sort } from '@angular/material/sort';
+import { ScrollingModule } from '@angular/cdk/scrolling';
 
 import { AssetClass, AssetDto, AssetPerformanceDto, PortfolioSummaryDto, TransactionDto } from '../../core/api/models';
 import { API_ROUTES } from '../../core/api/api-routes';
@@ -9,8 +11,14 @@ import { MoneyPipe } from '../../shared/pipes/money.pipe';
 import { QuantityPipe } from '../../shared/pipes/quantity.pipe';
 import { StateMessage } from '../../shared/state-message/state-message';
 import { formatCloseDate } from '../../shared/util/local-date';
+import { TablePager } from '../../shared/table/table-pager/table-pager';
+import { ALL_ROWS, TableSort, createTableState } from '../../shared/table/table-state';
+import { TRANSACTION_ROW_HEIGHT_PX } from '../../shared/table/table-row-height';
+import { VirtualRowgroup } from '../../shared/table/virtual-rowgroup';
 import { GainLossCard } from './components/gain-loss-card';
 import { CostVsMarketChart } from './components/cost-vs-market-chart';
+
+type TransactionColumn = 'date' | 'type' | 'quantity' | 'price' | 'fees';
 
 /**
  * Shared by /stocks/:symbol and /crypto/:symbol. `symbol` and `assetClass`
@@ -26,7 +34,18 @@ import { CostVsMarketChart } from './components/cost-vs-market-chart';
 @Component({
   selector: 'app-asset-detail-page',
   standalone: true,
-  imports: [RouterLink, MoneyPipe, QuantityPipe, StateMessage, GainLossCard, CostVsMarketChart],
+  imports: [
+    RouterLink,
+    MoneyPipe,
+    QuantityPipe,
+    StateMessage,
+    GainLossCard,
+    CostVsMarketChart,
+    MatSortModule,
+    TablePager,
+    ScrollingModule,
+    VirtualRowgroup,
+  ],
   templateUrl: './asset-detail.page.html',
   styleUrl: './asset-detail.page.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -92,6 +111,35 @@ export class AssetDetailPage {
   });
 
   readonly transactions = computed(() => this.transactionsResource.value() ?? []);
+
+  /** Sorting/pagination — see `shared/table/table-state.ts`. Same default
+   *  sort (trade date descending, stable id tiebreak) as the main
+   *  transactions page, since both read the same backend ordering. Price/fees
+   *  are the transaction's own native currency — see tracker.md's mixed-
+   *  currency sort caveat, same as the main transactions table. */
+  readonly tableState = createTableState<TransactionDto, TransactionColumn>({
+    rows: this.transactions,
+    columns: {
+      date: (t) => t.tradeDate,
+      type: (t) => t.type,
+      quantity: (t) => t.quantity,
+      price: (t) => t.pricePerUnit,
+      fees: (t) => t.fees,
+    },
+    defaultSort: { active: 'date', direction: 'desc' },
+    tiebreak: (a, b) => b.id - a.id,
+  });
+
+  readonly isVirtualized = computed(() => this.tableState.pageSize() === ALL_ROWS);
+  readonly rowHeightPx = TRANSACTION_ROW_HEIGHT_PX;
+
+  onSortChange(sort: Sort): void {
+    this.tableState.setSort(sort as TableSort<TransactionColumn>);
+  }
+
+  trackById(_index: number, transaction: TransactionDto): number {
+    return transaction.id;
+  }
 
   readonly quote = computed(() => {
     const asset = this.asset();

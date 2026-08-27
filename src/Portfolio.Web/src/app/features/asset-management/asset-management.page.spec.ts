@@ -466,6 +466,60 @@ describe('AssetManagementPage', () => {
     expect(notifySuccess).not.toHaveBeenCalled();
   });
 
+  // --- Sorting/pagination (shared table-state helper) ---------------------
+
+  function symbolsInOrder(fixture: ComponentFixture<AssetManagementPage>): string[] {
+    return Array.from(
+      fixture.nativeElement.querySelectorAll('td.asset-management__symbol') as NodeListOf<HTMLElement>,
+    ).map((el) => el.textContent?.trim() ?? '');
+  }
+
+  it('defaults to symbol ascending', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([MSFT_INACTIVE, AAPL]);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(symbolsInOrder(fixture)).toEqual(['AAPL', 'MSFT']);
+  });
+
+  it('groups Active before Inactive when sorted by status, rather than sorting the raw boolean arbitrarily', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([MSFT_INACTIVE, AAPL]);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    fixture.componentInstance.onSortChange({ active: 'status', direction: 'asc' });
+    fixture.detectChanges();
+
+    expect(symbolsInOrder(fixture)).toEqual(['AAPL', 'MSFT']);
+
+    fixture.componentInstance.onSortChange({ active: 'status', direction: 'desc' });
+    fixture.detectChanges();
+
+    expect(symbolsInOrder(fixture)).toEqual(['MSFT', 'AAPL']);
+  });
+
+  it('reaches the <th> with mat-sort-header, emitting aria-sort', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const symbolHeader = fixture.nativeElement.querySelector('th[mat-sort-header="symbol"]') as HTMLElement;
+    expect(symbolHeader.getAttribute('aria-sort')).toBe('ascending');
+    expect(symbolHeader.getAttribute('scope')).toBe('col');
+  });
+
+  it('hides the pager when the row count fits the smallest page size', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('app-table-pager .table-pager')).toBeNull();
+  });
+
   it('does not touch the server when the confirmation is cancelled', async () => {
     fixture.detectChanges();
     httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);

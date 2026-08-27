@@ -80,28 +80,81 @@
         @if (transactions().length === 0) {
           <p class="detail__empty">No transactions recorded.</p>
         } @else {
-          <table class="detail__transactions">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Type</th>
-                <th>Quantity</th>
-                <th>Price</th>
-                <th>Fees</th>
-              </tr>
-            </thead>
-            <tbody>
-              @for (t of transactions(); track t.id) {
-                <tr>
-                  <td>{{ t.tradeDate }}</td>
-                  <td>{{ t.type }}</td>
-                  <td class="detail__num">{{ t.quantity | quantity }}</td>
-                  <td class="detail__num">{{ t.pricePerUnit | money: t.currency }}</td>
-                  <td class="detail__num">{{ t.fees | money: t.currency }}</td>
-                </tr>
-              }
-            </tbody>
-          </table>
+          <div
+            class="detail__sort-scope"
+            matSort
+            matSortDisableClear
+            [matSortActive]="tableState.sort().active"
+            [matSortDirection]="tableState.sort().direction"
+            (matSortChange)="onSortChange($event)"
+          >
+            @if (isVirtualized()) {
+              <!-- See transactions.page.html's comment — same reasoning: rows are
+                   uniformly one line tall, so "All" virtualizes via a CSS-grid ARIA
+                   table (never <tr> inside cdk-virtual-scroll-viewport), and the
+                   header row lives outside the viewport rather than using
+                   position: sticky, which a transformed ancestor would defeat. -->
+              <div
+                class="detail__grid"
+                role="table"
+                [attr.aria-label]="'Transactions for ' + symbol()"
+                [attr.aria-rowcount]="tableState.total() + 1"
+              >
+                <div role="rowgroup">
+                  <div class="detail__grid-row detail__grid-row--head" role="row" aria-rowindex="1">
+                    <span role="columnheader" mat-sort-header="date">Date</span>
+                    <span role="columnheader" mat-sort-header="type">Type</span>
+                    <span role="columnheader" mat-sort-header="quantity" class="detail__num">Quantity</span>
+                    <span role="columnheader" mat-sort-header="price" class="detail__num">Price</span>
+                    <span role="columnheader" mat-sort-header="fees" class="detail__num">Fees</span>
+                  </div>
+                </div>
+                <cdk-virtual-scroll-viewport
+                  appVirtualRowgroup
+                  [itemSize]="rowHeightPx"
+                  class="detail__viewport"
+                >
+                  <div
+                    class="detail__grid-row"
+                    role="row"
+                    [attr.aria-rowindex]="i + 2"
+                    *cdkVirtualFor="let t of tableState.paged(); let i = index; trackBy: trackById"
+                  >
+                    <span role="cell">{{ t.tradeDate }}</span>
+                    <span role="cell">{{ t.type }}</span>
+                    <span role="cell" class="detail__num">{{ t.quantity | quantity }}</span>
+                    <span role="cell" class="detail__num">{{ t.pricePerUnit | money: t.currency }}</span>
+                    <span role="cell" class="detail__num">{{ t.fees | money: t.currency }}</span>
+                  </div>
+                </cdk-virtual-scroll-viewport>
+              </div>
+            } @else {
+              <table class="detail__transactions">
+                <caption class="detail__caption">Transactions for {{ symbol() }}</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" mat-sort-header="date">Date</th>
+                    <th scope="col" mat-sort-header="type">Type</th>
+                    <th scope="col" mat-sort-header="quantity" class="detail__num">Quantity</th>
+                    <th scope="col" mat-sort-header="price" class="detail__num">Price</th>
+                    <th scope="col" mat-sort-header="fees" class="detail__num">Fees</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (t of tableState.paged(); track t.id) {
+                    <tr>
+                      <td>{{ t.tradeDate }}</td>
+                      <td>{{ t.type }}</td>
+                      <td class="detail__num">{{ t.quantity | quantity }}</td>
+                      <td class="detail__num">{{ t.pricePerUnit | money: t.currency }}</td>
+                      <td class="detail__num">{{ t.fees | money: t.currency }}</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            }
+            <app-table-pager [pager]="tableState" itemLabel="Transactions" />
+          </div>
         }
         <a class="detail__manage-link" routerLink="/transactions">Manage transactions</a>
       </section>

@@ -505,4 +505,124 @@ describe('AssetDetailPage', () => {
 
     expect(fixture.nativeElement.textContent).toContain('Avg cost (USD)');
   });
+
+  describe('the transactions panel — sorting, pagination and virtualization', () => {
+    const MANY_TRANSACTIONS: TransactionDto[] = Array.from({ length: 30 }, (_, i) => ({
+      ...TRANSACTIONS[0],
+      id: i + 1,
+      tradeDate: `2026-07-${String(i + 1).padStart(2, '0')}`,
+    }));
+
+    it('defaults to trade date descending', async () => {
+      fixture.detectChanges();
+      httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+      httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY_WITH_HOLDING);
+      await flushStockAssetRequests(PERFORMANCE, [
+        { ...TRANSACTIONS[0], id: 1, tradeDate: '2026-07-20' },
+        { ...TRANSACTIONS[0], id: 2, tradeDate: '2026-08-01' },
+      ]);
+      fixture.detectChanges();
+
+      const dates = Array.from(
+        fixture.nativeElement.querySelectorAll('tbody td:first-child') as NodeListOf<HTMLElement>,
+      ).map((el) => el.textContent?.trim());
+      expect(dates).toEqual(['2026-08-01', '2026-07-20']);
+    });
+
+    it('reaches the <th> with mat-sort-header, emitting aria-sort', async () => {
+      fixture.detectChanges();
+      httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+      httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY_WITH_HOLDING);
+      await flushStockAssetRequests();
+      fixture.detectChanges();
+
+      const dateHeader = fixture.nativeElement.querySelector('th[mat-sort-header="date"]') as HTMLElement;
+      expect(dateHeader.getAttribute('aria-sort')).toBe('descending');
+      expect(dateHeader.getAttribute('scope')).toBe('col');
+    });
+
+    it('hides the pager when the row count fits the smallest page size', async () => {
+      fixture.detectChanges();
+      httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+      httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY_WITH_HOLDING);
+      await flushStockAssetRequests();
+      fixture.detectChanges();
+
+      expect(fixture.nativeElement.querySelector('app-table-pager .table-pager')).toBeNull();
+    });
+
+    it(
+      'paginates once the row count exceeds the smallest page size',
+      async () => {
+        fixture.detectChanges();
+        httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+        httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY_WITH_HOLDING);
+        await flushStockAssetRequests(PERFORMANCE, MANY_TRANSACTIONS);
+        fixture.detectChanges();
+
+        expect(fixture.nativeElement.querySelector('app-table-pager .table-pager')).not.toBeNull();
+        expect(fixture.nativeElement.querySelectorAll('tbody tr').length).toBe(25);
+      },
+      // 30 rows plus flushStockAssetRequests's own multi-tick polling is
+      // genuinely more work than this file's other cases — see the identical
+      // note in holdings-table.spec.ts.
+      15000,
+    );
+
+    it(
+      'switches to the virtualized CSS-grid view when "All" is selected',
+      async () => {
+        fixture.detectChanges();
+        httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+        httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY_WITH_HOLDING);
+        await flushStockAssetRequests(PERFORMANCE, MANY_TRANSACTIONS);
+        fixture.detectChanges();
+
+        expect(fixture.nativeElement.querySelector('table.detail__transactions')).not.toBeNull();
+
+        fixture.componentInstance.tableState.setPageSize(Infinity);
+        fixture.detectChanges();
+
+        expect(fixture.nativeElement.querySelector('table.detail__transactions')).toBeNull();
+        const grid = fixture.nativeElement.querySelector('.detail__grid') as HTMLElement;
+        expect(grid).not.toBeNull();
+        expect(grid.getAttribute('role')).toBe('table');
+        expect(fixture.nativeElement.querySelector('cdk-virtual-scroll-viewport')).not.toBeNull();
+      },
+      15000,
+    );
+
+    it(
+      'keeps the ARIA table owning its rows, and counts them, while virtualized',
+      async () => {
+        fixture.detectChanges();
+        httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+        httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY_WITH_HOLDING);
+        await flushStockAssetRequests(PERFORMANCE, MANY_TRANSACTIONS);
+        fixture.detectChanges();
+
+        fixture.componentInstance.tableState.setPageSize(Infinity);
+        fixture.detectChanges();
+        await fixture.whenStable();
+        fixture.detectChanges();
+
+        const grid = fixture.nativeElement.querySelector('.detail__grid') as HTMLElement;
+        // Header row included in the count.
+        expect(grid.getAttribute('aria-rowcount')).toBe(String(MANY_TRANSACTIONS.length + 1));
+        expect(
+          fixture.nativeElement.querySelector('.detail__grid-row--head')!.getAttribute('aria-rowindex'),
+        ).toBe('1');
+
+        // Without these two, role=table does not own its role=row children —
+        // CDK's viewport and content wrapper sit between them. See
+        // shared/table/virtual-rowgroup.ts.
+        const viewport = fixture.nativeElement.querySelector('cdk-virtual-scroll-viewport') as HTMLElement;
+        expect(viewport.getAttribute('role')).toBe('presentation');
+        expect(
+          viewport.querySelector('.cdk-virtual-scroll-content-wrapper')!.getAttribute('role'),
+        ).toBe('rowgroup');
+      },
+      15000,
+    );
+  });
 });

@@ -1,0 +1,25 @@
+@use '../../../../styles/ui.mixins' as ui;
+
+.table-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--ui-space-3);
+  padding: var(--ui-space-3) var(--ui-space-2) 0;
+}
+
+.table-pager__size {
+  font-size: var(--ui-font-size-xs);
+}
+
+@include ui.ui-breakpoint-down(sm) {
+  .table-pager {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .table-pager__nav {
+    align-self: center;
+  }
+}

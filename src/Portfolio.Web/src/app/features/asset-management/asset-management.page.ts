@@ -3,13 +3,18 @@ import { httpResource, HttpClient } from '@angular/common/http';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
+import { MatSortModule, Sort } from '@angular/material/sort';
 
 import { AssetDto, QuoteProviderKind, TransactionDto, UpdateAssetRequest } from '../../core/api/models';
 import { API_ROUTES } from '../../core/api/api-routes';
 import { NotificationService } from '../../core/notifications/notification.service';
 import { StateMessage } from '../../shared/state-message/state-message';
 import { ConfirmDialog, ConfirmDialogData } from '../../shared/confirm-dialog/confirm-dialog';
+import { TablePager } from '../../shared/table/table-pager/table-pager';
+import { SortValue, TableSort, createTableState } from '../../shared/table/table-state';
 import { AssetFormDialog, AssetFormDialogData, AssetFormDialogResult } from './asset-form.dialog';
+
+type AssetColumn = 'symbol' | 'name' | 'class' | 'currency' | 'provider' | 'identifier' | 'status';
 
 /** Symbol ascending — stable regardless of active/inactive status, so
  *  toggling one doesn't jump it around the list. */
@@ -96,11 +101,19 @@ function unpricedState(asset: AssetDto, now: number): UnpricedState | null {
  * transaction form's own asset picker filters them out
  * (`TransactionFormDialog.assetOptions`) — a deactivated asset must not be
  * selectable there.
+ *
+ * Sorting/pagination via the shared table-state helper — see
+ * `shared/table/table-state.ts`. Status sorts Active before Inactive (a
+ * boolean has no natural order a reader would recognise), never every other
+ * column's plain ascending/descending on the raw value. Rows carry variable
+ * height (the D27 unpriced hint adds a second line to some rows), so — same
+ * reasoning as the holdings table — "All" renders every row unvirtualized
+ * rather than through a fixed-size CDK viewport; see tracker.md.
  */
 @Component({
   selector: 'app-asset-management-page',
   standalone: true,
-  imports: [MatButtonModule, MatIconModule, StateMessage],
+  imports: [MatButtonModule, MatIconModule, StateMessage, MatSortModule, TablePager],
   templateUrl: './asset-management.page.html',
   styleUrl: './asset-management.page.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -128,6 +141,26 @@ export class AssetManagementPage {
     const now = Date.now();
     return this.assets().map((asset) => ({ asset, unpriced: unpricedState(asset, now) }));
   });
+
+  readonly tableState = createTableState<AssetRow, AssetColumn>({
+    rows: this.rows,
+    columns: {
+      symbol: (r) => r.asset.symbol,
+      name: (r) => r.asset.name,
+      class: (r) => r.asset.assetClass,
+      currency: (r) => r.asset.currency,
+      provider: (r) => r.asset.quoteProviderKind,
+      identifier: (r): SortValue => r.asset.providerSymbol ?? r.asset.providerCoinId,
+      // Groups Active before Inactive in ascending order (0 sorts before 1) —
+      // the raw boolean has no natural reading-order otherwise.
+      status: (r) => (r.asset.isActive ? 0 : 1),
+    },
+    defaultSort: { active: 'symbol', direction: 'asc' },
+  });
+
+  onSortChange(sort: Sort): void {
+    this.tableState.setSort(sort as TableSort<AssetColumn>);
+  }
 
   /** The asset currently being deleted — its row's buttons are disabled while the
    *  DELETE is in flight. Deletion is pessimistic, unlike the deactivate toggle:

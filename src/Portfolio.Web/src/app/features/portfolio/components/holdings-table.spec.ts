@@ -1,5 +1,6 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
+import { provideNoopAnimations } from '@angular/platform-browser/animations';
 
 import { HoldingsTable } from './holdings-table';
 import { HoldingDto } from '../../../core/api/models';
@@ -92,7 +93,7 @@ describe('HoldingsTable', () => {
   beforeEach(() => {
     TestBed.configureTestingModule({
       imports: [HoldingsTable],
-      providers: [provideRouter([])],
+      providers: [provideRouter([]), provideNoopAnimations()],
     });
     fixture = TestBed.createComponent(HoldingsTable);
     fixture.componentRef.setInput('basePath', '/stocks');
@@ -162,5 +163,74 @@ describe('HoldingsTable', () => {
     const cells = fixture.nativeElement.querySelectorAll('td.holdings-table__num') as NodeListOf<HTMLElement>;
     // Column order: quantity, cost basis, avg cost, current price, ...
     expect(cells[2].textContent?.trim()).toBe('—');
+  });
+
+  describe('sorting and pagination', () => {
+    function symbols(fixture: ComponentFixture<HoldingsTable>): string[] {
+      return Array.from(
+        fixture.nativeElement.querySelectorAll('a.holdings-table__symbol') as NodeListOf<HTMLElement>,
+      ).map((el) => el.textContent?.trim() ?? '');
+    }
+
+    it('defaults to market value descending — the largest position first', () => {
+      fixture.componentRef.setInput('holdings', [AAPL_NO_PRICE, ANVL_SUBCENT, MSFT_CLOSE]);
+      fixture.detectChanges();
+
+      // Market values: AAPL 0 (no price), ANVL 504.48, MSFT 1145.1
+      expect(symbols(fixture)).toEqual(['MSFT', 'ANVL', 'AAPL']);
+    });
+
+    it('reaches the <th> with mat-sort-header, emitting a real aria-sort', () => {
+      fixture.componentRef.setInput('holdings', [ANVL_SUBCENT]);
+      fixture.detectChanges();
+
+      const marketValueHeader = fixture.nativeElement.querySelector(
+        'th[mat-sort-header="marketValue"]',
+      ) as HTMLElement;
+      expect(marketValueHeader.getAttribute('aria-sort')).toBe('descending');
+      expect(marketValueHeader.getAttribute('scope')).toBe('col');
+    });
+
+    it('sorts the unrealized column on null (not the fabricated -100% figure) for a holding with no price yet', () => {
+      fixture.componentRef.setInput('holdings', [MSFT_CLOSE, AAPL_NO_PRICE]);
+      fixture.detectChanges();
+
+      fixture.componentInstance.onSortChange({ active: 'unrealized', direction: 'asc' });
+      fixture.detectChanges();
+
+      // AAPL has no price -> null unrealized -> sorts last even in ascending order,
+      // despite its "raw" unrealizedPnlUsd (-3864) being numerically the smallest.
+      expect(symbols(fixture)).toEqual(['MSFT', 'AAPL']);
+    });
+
+    it('hides the pager entirely when the row count fits the smallest page size', () => {
+      fixture.componentRef.setInput('holdings', [ANVL_SUBCENT]);
+      fixture.detectChanges();
+
+      expect(fixture.nativeElement.querySelector('app-table-pager .table-pager')).toBeNull();
+    });
+
+    it(
+      'shows the pager and paginates once the row count exceeds the smallest page size',
+      () => {
+        const many: HoldingDto[] = Array.from({ length: 30 }, (_, i) => ({
+          ...ANVL_SUBCENT,
+          assetId: i + 1,
+          symbol: `SYM${i}`,
+          marketValueUsd: 30 - i,
+        }));
+        fixture.componentRef.setInput('holdings', many);
+        fixture.detectChanges();
+
+        expect(fixture.nativeElement.querySelector('app-table-pager .table-pager')).not.toBeNull();
+        // Default page size 25 — only the first (highest market-value) 25 rows render.
+        expect(fixture.nativeElement.querySelectorAll('tbody tr').length).toBe(25);
+      },
+      // Rendering 30 Material-styled rows is genuinely more DOM work than this
+      // file's other cases — the default 5s vitest budget is comfortable on an
+      // idle machine but tight under load, so this gets explicit headroom
+      // rather than a systemic timeout bump (see tracker.md).
+      15000,
+    );
   });
 });

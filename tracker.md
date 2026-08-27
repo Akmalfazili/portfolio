@@ -527,6 +527,170 @@ zero and the null render as visibly different things. Checked at 1440px, 390px, 
 
 ---
 
+### Sorting, pagination and virtual scrolling added to all four tables (2026-08-27)
+
+The holdings table, both transaction tables and the assets table were plain `@for` markup with no
+way to sort or page — fine at the six-holding, low-double-digit-transaction scale the app was built
+against, but not indefinitely. Added without rewriting any of the four as `mat-table` — that
+decision was deliberate up front, since the cells carry real behaviour (`routerLink`, `app-gain-loss`,
+the D20 close caption, the D27 unpriced hint, edit/delete buttons) that `matColumnDef` would fight
+more than help.
+
+**`shared/table/table-state.ts`** is a small signal-based sort/page store, since `MatTableDataSource`
+is RxJS-based and does not fit a zoneless app. It takes a rows signal (already filtered by the
+caller — this helper composes with filtering, it does not own it), a typed value accessor per
+sortable column, a default sort, and an optional tiebreak comparator; it exposes `sorted()`,
+`paged()`, `total()`, `pageIndex()` (clamped), and setters. Two rules worth restating because they
+are the D17/D20 mistake family applied to sorting: **nulls always sort last, in both directions**
+(`compareSortValues` — never coerced to a sortable zero), and **the sort accessor reads the
+underlying typed value, never the formatted string** — `tradeDate` compares as its `YYYY-MM-DD`
+string directly (lexicographic order is correct; parsing it through `Date` would be the wire-contract
+mistake CLAUDE.md already warns about), and price/quantity columns compare real `decimal(28,10)`-scale
+numbers so ANVL's $0.0005326 sorts correctly against a $0.00050448 sibling that a naive 2dp-rounded
+comparison would treat as equal.
+
+The holdings table's `unrealized` column is a deliberate exception to "always the raw field": the
+backend's `unrealizedPnlUsd` is populated even for a holding with no price yet (a -100%-shaped
+artefact of cost-basis-minus-zero), but the UI never shows that number — it renders "Awaiting first
+price" instead — so the sort accessor returns `null` for exactly those rows, matching what's
+actually on screen rather than a number nobody sees.
+
+**Pagination** is `25 / 50 / 100 / All`, via a shared `app-table-pager` component wrapping a
+`mat-button-toggle-group` (the size choice) and a standalone `mat-paginator` (`hidePageSize`, prev/
+next/first/last + range label only). `mat-paginator`'s own page-size dropdown has no way to render
+one option as the word "All" without forking its template — every option renders as a bare number —
+so that control is the button-toggle-group instead, a pattern already used elsewhere in this app
+(the asset-class filter, the allocation-basis toggle). `ALL_ROWS` (`Infinity`) is translated to the
+real row count for `mat-paginator`'s own input, which collapses it to one page for free. The pager
+is hidden entirely — not just the size options, the whole control — when the row count fits the
+smallest page size (25): under that, a pager is noise.
+
+**Page-index clamping**, not just a page-0 reset, is what stops a delete from stranding the user:
+`pageIndex()` is `min(requestedIndex, pageCount - 1)`, recomputed from the live row count on every
+read, so deleting the last row on the last page lands on the new last valid page automatically —
+covered by `table-state.spec.ts`'s clamping test, which deletes down to zero rows in three steps
+and asserts the index never goes negative or points past the end. Sort changes, page-size changes,
+and (on the transactions page) the asset-class filter all explicitly reset to page 0 — the filter
+reset is a `tableState.resetPage()` call inside `setFilter()`, since the filter itself lives outside
+the table-state helper.
+
+**Virtual scrolling — deliberately only the two transaction tables.** Their rows are uniformly one
+line tall. The holdings and assets tables are not: the D20 "Close · <date>" caption and the D27
+unpriced-identifier hint both add a second line to *some* rows, and `cdk-virtual-scroll-viewport`'s
+fixed-size strategy needs one constant `itemSize` for every row. Guessing a row height, or reaching
+for the experimental autosize strategy, would have been exactly the kind of thing that passes a
+component test and renders as a collapsed/misaligned mess on screen — so for those two tables
+selecting "All" simply renders every row unvirtualized, which is fine at the single-digit/low-double-
+digit row counts this app actually has. **Do not "fix" this by turning on virtualization for those
+two tables** — the reasoning above is the fix already applied.
+
+For the two transaction tables, selecting "All" switches the body from the real `<table>` to a
+CSS-grid **ARIA table** (`role="table"/"row"/"columnheader"/"cell"` on plain `<div>`/`<span>`
+elements) inside a `cdk-virtual-scroll-viewport`, never a virtualized `<tr>`/`<td>` — wrapping real
+table rows in the viewport fights HTML's own table layout algorithm, which expects to size every
+row and column itself, not have a CDK transform reposition them. `TRANSACTION_ROW_HEIGHT_PX` (44,
+in `shared/table/table-row-height.ts`) is a deliberate duplicate of `--ui-size-table-row-height` in
+`ui.tokens.scss` — the CDK fixed-size strategy needs a real JS number for its scroll-offset maths
+and cannot read a CSS custom property, the same class of exception `ui.mixins.scss`'s breakpoint
+variables already are. Both the real `<table>`'s rows and the virtualized grid's rows read that
+same token, so switching page size never visibly re-flows row height.
+
+The header row for the virtualized view lives **outside** the `cdk-virtual-scroll-viewport`,
+not pinned inside it with `position: sticky`. This is not a shortcut: `cdk-virtual-scroll-viewport`
+positions its rendered content by applying a CSS `transform: translateY(...)` to a wrapper element,
+and a `transform` on an ancestor establishes a new containing block that `position: sticky` cannot
+escape — a header placed inside the viewport would visually scroll away with the data despite the
+`sticky` declaration, a well-known CDK gotcha. Placing the header above the viewport, in normal
+document flow, sidesteps the bug entirely and needed no extra CSS to "stick."
+
+`mat-sort-header` reaches every sortable header in both the real `<table>` (on the `<th>`) and the
+virtualized grid (on a `<span role="columnheader">`) — it is a plain attribute-selector component
+that projects its host's content plus an arrow indicator, tag-agnostic, so it works identically on
+either. Both live inside one `[matSort]` container wrapping the `@if`/`@else` branch, so the same
+`MatSort` instance serves whichever branch is actually in the DOM. Its own internal
+`.mat-sort-header-container` is a block-level flex box that ignores the header cell's `text-align`
+(only inline content responds to that), so every right-aligned numeric column needed an explicit
+`justify-content: flex-end` on that inner container — otherwise the arrow (and the header text)
+sit flush left while every number below reads flush right.
+
+**Trap 10 recurred, mildly.** `MatPaginator`'s enabled prev/next/first/last icon buttons read
+`--mat-paginator-enabled-icon-color`'s fallback, `--mat-sys-on-surface-variant` — a role this app's
+`--mat-sys-*` repoint block had never touched, so those icons would have painted with `mat.theme()`'s
+native seed-palette grey instead of this app's own muted-ink token, a shade apart from every other
+muted label (axis text, the D27 hint, table header text). Confirmed by grepping the built bundle for
+`--mat-paginator-*` (the literal token names are obscured behind a `%NS%` namespace-substitution
+placeholder in the minified output — `-%NS%mat-paginator-container-background-color` — but the
+suffix and its `var(--%NS%mat-sys-*, ...)` fallback chain are readable regardless). Fixed the same
+way as every other trap-10 case: added `--mat-sys-on-surface-variant: var(--ui-color-on-surface-muted)`
+to `styles.scss`'s existing `--mat-sys-*` block, not a component-local override, so anything else
+that reads this Material role gets it for free too.
+
+**Known limitation, not fixed:** the transactions tables' Price and Fees columns are the
+transaction's own **native** currency (USD for US stocks and crypto, SGD for Z74) — sorting those
+two columns therefore compares raw numeric magnitudes across currencies when both are present in
+the unfiltered list. The frontend does no FX math (CLAUDE.md), so there is no converted value to
+sort on instead without a backend change; left as-is and documented here rather than silently
+"fixed" by sorting on a number that would then disagree with what's printed in the cell.
+
+**A virtualized ARIA table silently loses ownership of its rows.** Caught in review, after the
+tables were otherwise finished and every `role` assertion in the specs was green. The virtualized
+"All" view declares `role="table"` on `.transactions__grid` / `.detail__grid` and `role="row"` on
+each row, but CDK renders two elements of its own in between:
+
+```
+<div role="table">
+  <cdk-virtual-scroll-viewport>                      <- generic, no role
+    <div class="cdk-virtual-scroll-content-wrapper"> <- generic, no role
+      <div role="row">
+```
+
+ARIA requires a `table` to **own** its `row`s — directly or through a `rowgroup`. Two role-less
+generic elements in between sever that, so the column and row semantics the template so carefully
+declares were not reliably exposed to assistive tech *at all*. This is invisible to tests of the
+obvious kind: every `role` attribute is present, every assertion on it passes, and the accessibility
+tree is still broken. It is the same shape as the D10/D26/D33/D35/D38 family — a healthy-looking
+report over a thing that is not actually working.
+
+Fixed structurally in `shared/table/virtual-rowgroup.ts`: the viewport takes `role="presentation"`
+so it drops out of the accessibility tree and its children are exposed to the nearest ancestor still
+in it, and the content wrapper becomes the `rowgroup`. CDK exposes the wrapper as neither an input
+nor a public member, so it is reached by query in `afterNextRender` — the rare case where a
+`setAttribute` beats a template binding. The header row got its own `role="rowgroup"` wrapper.
+
+Compounding it, and fixed in the same pass: virtualization keeps only the visible rows in the DOM,
+so a screen reader announced a **12-row table when there were 140**. `aria-rowcount` on the table
+(rows + 1 for the header) and `aria-rowindex` on every row (header 1, body `index + 2`) restore the
+true size. These are correct only because "All" is the *only* page size that virtualizes, so
+`paged()` is the full sorted set and the index really is the row's position in the table — if
+virtual scrolling is ever extended to a paged view, both must be offset by `pageIndex * pageSize`.
+
+The non-virtualized path needs none of this: a real `<table>` with `<thead>`/`<tbody>` carries the
+same semantics natively, which is exactly why it stayed a real `<table>`.
+
+**Verified by test, not by a real browser.** The **full** suite was run to completion on a quiet
+machine: **268 passed, 2 failed**, both `Hook timed out in 10000ms` in a `beforeEach` with zero
+assertion failures, and both pass 30/30 when the same files are re-run in isolation. One of the two
+(`transaction-form.dialog.spec.ts`) is a file this work never touched. That is
+`vitest-base.config.ts`'s own documented flake class, not a regression. The ARIA fix above is
+covered by new DOM assertions in both transaction specs (viewport `role="presentation"`, wrapper
+`role="rowgroup"`, `aria-rowcount`, `aria-rowindex`), alongside the existing ones that
+`mat-sort-header` reaches the `<th>` and emits a real `aria-sort`. `ng build` passes with a **+57KB
+initial-bundle budget warning** (557KB against a 500KB budget) from pulling in CDK Scrolling,
+MatSort and MatPaginator — a real trade-off left visible rather than silenced by raising the budget.
+
+**Nothing here has been looked at in a browser.** The Chrome extension needed for a real-browser
+pass was not available in this session (the same trap 8 gap prior entries record). **1440px/390px,
+light/dark, the rendered "All" virtual-scroll view, the sticky header, and the paginator's actual
+on-screen colour are all unconfirmed** — say so plainly rather than claiming a check that did not
+happen. Note also that the local `SQLEXPRESS` dev DB has the six assets but **zero transactions**,
+so it renders every table's empty state; the browser pass needs the Docker stack's data (25 assets,
+22 stock holdings, 140 transactions) — run the dev server with a `--proxy-config` pointed at
+`http://localhost:8080`. With that data only the transactions table exercises paging at all: 22
+holdings and 25 assets both sit at or under the smallest page size, so their pagers are correctly
+hidden.
+
+---
+
 ## Traps — the lessons that cost a session each
 
 These are general, and every one of them was learned the expensive way here.

@@ -106,6 +106,10 @@
   }
 }
 
+.asset-management__caption {
+  @include ui.ui-visually-hidden;
+}
+
 .asset-management__actions-header {
   text-align: right;
 }

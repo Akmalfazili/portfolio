@@ -63,49 +63,142 @@
       (action)="clearFilter()"
     />
   } @else {
-    <table class="transactions__table">
-      <thead>
-        <tr>
-          <th>Date</th>
-          <th>Symbol</th>
-          <th>Type</th>
-          <th>Quantity</th>
-          <th>Price</th>
-          <th>Fees</th>
-          <th class="transactions__actions-header">Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        @for (transaction of filteredTransactions(); track transaction.id) {
-          <tr>
-            <td>{{ transaction.tradeDate }}</td>
-            <td>{{ transaction.assetSymbol }}</td>
-            <td>{{ transaction.type }}</td>
-            <td>{{ transaction.quantity | quantity }}</td>
-            <td>{{ transaction.pricePerUnit | money: transaction.currency }}</td>
-            <td>{{ transaction.fees | money: transaction.currency }}</td>
-            <td class="transactions__actions">
-              <button
-                mat-icon-button
-                type="button"
-                [disabled]="!assetsReady()"
-                [attr.aria-label]="'Edit ' + transaction.assetSymbol + ' transaction'"
-                (click)="openEditDialog(transaction)"
-              >
-                <mat-icon aria-hidden="true">edit</mat-icon>
-              </button>
-              <button
-                mat-icon-button
-                type="button"
-                [attr.aria-label]="'Delete ' + transaction.assetSymbol + ' transaction'"
-                (click)="deleteTransaction(transaction)"
-              >
-                <mat-icon aria-hidden="true">delete_outline</mat-icon>
-              </button>
-            </td>
-          </tr>
-        }
-      </tbody>
-    </table>
+    <div
+      class="transactions__sort-scope"
+      matSort
+      matSortDisableClear
+      [matSortActive]="tableState.sort().active"
+      [matSortDirection]="tableState.sort().direction"
+      (matSortChange)="onSortChange($event)"
+    >
+      @if (isVirtualized()) {
+        <!--
+          "All" — rows are uniformly one line tall, so this switches to a CDK
+          virtual-scroll viewport (tracker.md). A real <table>'s <tr>/<td>
+          fight the viewport's own layout, so this is a CSS-grid ARIA table
+          instead — same column order and content as the <table> below, kept
+          in sync deliberately (see transactions.page.ts's header comment).
+          The header row lives OUTSIDE the viewport: cdk-virtual-scroll-viewport
+          translates its content with a CSS transform, which position: sticky
+          cannot escape, so a header inside it would not actually stick.
+        -->
+        <!--
+          aria-rowcount/aria-rowindex are NOT decoration here: virtualization
+          keeps only the visible rows in the DOM, so without them a screen
+          reader announces a twelve-row table when there are 140. The count
+          includes the header row, and the indices are 1-based with the header
+          at 1 — hence `index + 2` on the body rows. "All" is the only page
+          size that virtualizes, so `paged()` is the full sorted set and the
+          index is the row's true position in the table.
+        -->
+        <div
+          class="transactions__grid"
+          role="table"
+          aria-label="Transactions"
+          [attr.aria-rowcount]="tableState.total() + 1"
+        >
+          <div role="rowgroup">
+            <div
+              class="transactions__grid-row transactions__grid-row--head"
+              role="row"
+              aria-rowindex="1"
+            >
+              <span role="columnheader" mat-sort-header="date">Date</span>
+              <span role="columnheader" mat-sort-header="symbol">Symbol</span>
+              <span role="columnheader" mat-sort-header="type">Type</span>
+              <span role="columnheader" mat-sort-header="quantity">Quantity</span>
+              <span role="columnheader" mat-sort-header="price">Price</span>
+              <span role="columnheader" mat-sort-header="fees">Fees</span>
+              <span role="columnheader" class="transactions__actions-header">Actions</span>
+            </div>
+          </div>
+          <cdk-virtual-scroll-viewport
+            appVirtualRowgroup
+            [itemSize]="rowHeightPx"
+            class="transactions__viewport"
+          >
+            <div
+              class="transactions__grid-row"
+              role="row"
+              [attr.aria-rowindex]="i + 2"
+              *cdkVirtualFor="let transaction of tableState.paged(); let i = index; trackBy: trackById"
+            >
+              <span role="cell">{{ transaction.tradeDate }}</span>
+              <span role="cell">{{ transaction.assetSymbol }}</span>
+              <span role="cell">{{ transaction.type }}</span>
+              <span role="cell">{{ transaction.quantity | quantity }}</span>
+              <span role="cell">{{ transaction.pricePerUnit | money: transaction.currency }}</span>
+              <span role="cell">{{ transaction.fees | money: transaction.currency }}</span>
+              <span role="cell" class="transactions__actions">
+                <button
+                  mat-icon-button
+                  type="button"
+                  [disabled]="!assetsReady()"
+                  [attr.aria-label]="'Edit ' + transaction.assetSymbol + ' transaction'"
+                  (click)="openEditDialog(transaction)"
+                >
+                  <mat-icon aria-hidden="true">edit</mat-icon>
+                </button>
+                <button
+                  mat-icon-button
+                  type="button"
+                  [attr.aria-label]="'Delete ' + transaction.assetSymbol + ' transaction'"
+                  (click)="deleteTransaction(transaction)"
+                >
+                  <mat-icon aria-hidden="true">delete_outline</mat-icon>
+                </button>
+              </span>
+            </div>
+          </cdk-virtual-scroll-viewport>
+        </div>
+      } @else {
+        <table class="transactions__table">
+          <caption class="transactions__caption">Transactions</caption>
+          <thead>
+            <tr>
+              <th scope="col" mat-sort-header="date">Date</th>
+              <th scope="col" mat-sort-header="symbol">Symbol</th>
+              <th scope="col" mat-sort-header="type">Type</th>
+              <th scope="col" mat-sort-header="quantity">Quantity</th>
+              <th scope="col" mat-sort-header="price">Price</th>
+              <th scope="col" mat-sort-header="fees">Fees</th>
+              <th scope="col" class="transactions__actions-header">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (transaction of tableState.paged(); track transaction.id) {
+              <tr>
+                <td>{{ transaction.tradeDate }}</td>
+                <td>{{ transaction.assetSymbol }}</td>
+                <td>{{ transaction.type }}</td>
+                <td>{{ transaction.quantity | quantity }}</td>
+                <td>{{ transaction.pricePerUnit | money: transaction.currency }}</td>
+                <td>{{ transaction.fees | money: transaction.currency }}</td>
+                <td class="transactions__actions">
+                  <button
+                    mat-icon-button
+                    type="button"
+                    [disabled]="!assetsReady()"
+                    [attr.aria-label]="'Edit ' + transaction.assetSymbol + ' transaction'"
+                    (click)="openEditDialog(transaction)"
+                  >
+                    <mat-icon aria-hidden="true">edit</mat-icon>
+                  </button>
+                  <button
+                    mat-icon-button
+                    type="button"
+                    [attr.aria-label]="'Delete ' + transaction.assetSymbol + ' transaction'"
+                    (click)="deleteTransaction(transaction)"
+                  >
+                    <mat-icon aria-hidden="true">delete_outline</mat-icon>
+                  </button>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      }
+      <app-table-pager [pager]="tableState" itemLabel="Transactions" />
+    </div>
   }
 </section>

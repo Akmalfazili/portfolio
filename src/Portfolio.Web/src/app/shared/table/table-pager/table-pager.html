@@ -1,0 +1,24 @@
+@if (!hidden()) {
+  <div class="table-pager">
+    <mat-button-toggle-group
+      class="table-pager__size"
+      [value]="pager().pageSize()"
+      [attr.aria-label]="itemLabel() + ' per page'"
+      (change)="onSizeChange($event)"
+    >
+      @for (size of sizeOptions(); track size) {
+        <mat-button-toggle [value]="size">{{ sizeLabel(size) }}</mat-button-toggle>
+      }
+    </mat-button-toggle-group>
+
+    <mat-paginator
+      class="table-pager__nav"
+      [length]="pager().total()"
+      [pageIndex]="pager().pageIndex()"
+      [pageSize]="effectivePageSize()"
+      hidePageSize="true"
+      showFirstLastButtons="true"
+      (page)="onPage($event)"
+    ></mat-paginator>
+  </div>
+}

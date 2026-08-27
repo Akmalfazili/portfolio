@@ -48,6 +48,10 @@
   }
 }
 
+.transactions__caption {
+  @include ui.ui-visually-hidden;
+}
+
 .transactions__table {
   width: 100%;
   border-collapse: collapse;
@@ -61,6 +65,7 @@
     text-align: left;
     padding: var(--ui-space-3) var(--ui-space-4);
     border-bottom: 1px solid var(--ui-color-gridline);
+    height: var(--ui-size-table-row-height);
   }
 
   th {
@@ -68,6 +73,7 @@
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--ui-color-on-surface-muted);
+    height: auto;
   }
 
   td {
@@ -88,6 +94,48 @@
   justify-content: flex-end;
   gap: var(--ui-space-1);
   font-variant-numeric: normal;
+}
+
+// -----------------------------------------------------------------------------
+// "All" — the virtualized CSS-grid ARIA table. Mirrors the real <table>'s
+// seven columns exactly (see the header comment in transactions.page.ts for
+// why this can't just be a virtualized <table>).
+// -----------------------------------------------------------------------------
+.transactions__grid {
+  background: var(--ui-color-surface);
+  border: 1px solid var(--ui-color-border);
+  border-radius: var(--ui-radius-md);
+  overflow: hidden;
+}
+
+.transactions__grid-row {
+  display: grid;
+  grid-template-columns: 1.1fr 0.8fr 0.8fr 1fr 1fr 1fr 0.9fr;
+  align-items: center;
+  column-gap: var(--ui-space-3);
+  padding: 0 var(--ui-space-4);
+  height: var(--ui-size-table-row-height);
+  border-bottom: 1px solid var(--ui-color-gridline);
+  font-variant-numeric: var(--ui-font-numeric-variant);
+}
+
+.transactions__grid-row--head {
+  height: auto;
+  padding-top: var(--ui-space-3);
+  padding-bottom: var(--ui-space-3);
+  font-size: var(--ui-font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ui-color-on-surface-muted);
+  font-variant-numeric: normal;
+}
+
+// Reads `--ui-size-table-row-height` (the same token the real <table>'s rows
+// and the CDK itemSize input both use) so twelve rows are visible before the
+// viewport itself scrolls, on a `calc()` of an existing token rather than a
+// bare literal.
+.transactions__viewport {
+  height: calc(var(--ui-size-table-row-height) * 12);
 }
 
 @include ui.ui-breakpoint-down(sm) {

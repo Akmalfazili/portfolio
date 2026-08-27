@@ -1,3 +1,5 @@
+@use '../../../../styles/ui.mixins' as ui;
+
 // Eight columns of financial data does not fit a narrow viewport without
 // crushing every number unreadably. The table scrolls horizontally inside
 // this wrapper instead — the page body itself must never scroll sideways.
@@ -57,4 +59,22 @@
   font-size: var(--ui-font-size-xs);
   font-weight: var(--ui-font-weight-regular);
   font-style: normal;
+}
+
+// Accessible name for the table as a whole (rule: every table needs one) —
+// visually hidden, not a second visible title (the panel above it already
+// has "Holdings" as an <h2>).
+.holdings-table__caption {
+  @include ui.ui-visually-hidden;
+}
+
+// `mat-sort-header`'s own `.mat-sort-header-container` is a block-level flex
+// box (fills the <th>'s width like any block child), but its internal
+// text+arrow layout defaults to flex-start regardless of the <th>'s own
+// `text-align`, which only governs inline content — a block-level flex
+// child's own position isn't affected by a parent's text-align. Numeric
+// columns need this explicit `justify-content` or the sort arrow (and its
+// header text) sit flush left while every number below it is flush right.
+.holdings-table__num .mat-sort-header-container {
+  justify-content: flex-end;
 }

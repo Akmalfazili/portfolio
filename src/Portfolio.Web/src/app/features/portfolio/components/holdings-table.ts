@@ -1,11 +1,16 @@
-import { ChangeDetectionStrategy, Component, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import { RouterLink } from '@angular/router';
+import { MatSortModule, Sort } from '@angular/material/sort';
 
 import { HoldingDto } from '../../../core/api/models';
 import { MoneyPipe } from '../../../shared/pipes/money.pipe';
 import { QuantityPipe } from '../../../shared/pipes/quantity.pipe';
 import { GainLoss } from '../../../shared/gain-loss/gain-loss';
 import { formatCloseDate } from '../../../shared/util/local-date';
+import { TablePager } from '../../../shared/table/table-pager/table-pager';
+import { SortValue, TableSort, createTableState } from '../../../shared/table/table-state';
+
+type HoldingColumn = 'symbol' | 'quantity' | 'costBasis' | 'avgCost' | 'price' | 'marketValue' | 'unrealized' | 'realized';
 
 /**
  * The table-view twin of the allocation pie and summary tiles — every number
@@ -22,11 +27,22 @@ import { formatCloseDate } from '../../../shared/util/local-date';
  * quote yet, falling back to the last stored daily close) renders a distinct
  * "Close · Fri 24 Jul" caption under the price, using the CLOSE's own date
  * from `priceAsOf` — never presented as if it were a fresh, live number.
+ *
+ * Sorting/pagination: `mat-sort-header`/`MatPaginator` are standalone and
+ * work directly on this hand-rolled `<table>` — no `mat-table` involved. The
+ * "unrealized" column sorts on `null` (not the raw `unrealizedPnlUsd`, which
+ * the backend always populates even with no price, as a -100%-shaped
+ * artefact) whenever there is no price yet, so an "Awaiting first price" row
+ * — which shows no number at all — sorts last rather than by a number that
+ * was never actually displayed. Variable row height (the D20 close caption,
+ * an eventual second line) is why "All" here renders every row unvirtualized
+ * rather than through `cdk-virtual-scroll-viewport`'s fixed-size strategy —
+ * see tracker.md.
  */
 @Component({
   selector: 'app-holdings-table',
   standalone: true,
-  imports: [RouterLink, MoneyPipe, QuantityPipe, GainLoss],
+  imports: [RouterLink, MoneyPipe, QuantityPipe, GainLoss, MatSortModule, TablePager],
   templateUrl: './holdings-table.html',
   styleUrl: './holdings-table.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -34,6 +50,30 @@ import { formatCloseDate } from '../../../shared/util/local-date';
 export class HoldingsTable {
   readonly holdings = input.required<HoldingDto[]>();
   readonly basePath = input.required<string>();
+
+  private readonly rows = computed(() => this.holdings());
+
+  readonly tableState = createTableState<HoldingDto, HoldingColumn>({
+    rows: this.rows,
+    columns: {
+      symbol: (h) => h.symbol,
+      quantity: (h) => h.quantityHeld,
+      costBasis: (h) => h.costBasisUsd,
+      avgCost: (h) => h.averageCostUsd,
+      price: (h) => h.currentPriceUsd,
+      marketValue: (h) => h.marketValueUsd,
+      // The backend always populates unrealizedPnlUsd, even with no price
+      // (a -100%-shaped artefact of costBasis-minus-zero) — sort on what the
+      // row actually shows, not that fabricated number.
+      unrealized: (h): SortValue => (this.hasPrice(h) ? h.unrealizedPnlUsd : null),
+      realized: (h) => h.realizedPnlUsd,
+    },
+    defaultSort: { active: 'marketValue', direction: 'desc' },
+  });
+
+  onSortChange(sort: Sort): void {
+    this.tableState.setSort(sort as TableSort<HoldingColumn>);
+  }
 
   hasPrice(holding: HoldingDto): boolean {
     return holding.currentPriceUsd !== null;
