@@ -364,6 +364,85 @@ describe('AssetDetailPage', () => {
     expect(fixture.nativeElement.textContent).not.toContain('Avg cost');
   });
 
+  it('shows "Shares held" with the quantity beside the hero price for a stock holding', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY_WITH_HOLDING);
+    await flushStockAssetRequests();
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('Shares held');
+    expect(text).not.toContain('Units held');
+
+    const value = fixture.nativeElement.querySelector('.detail__units-held-value') as HTMLElement;
+    expect(value.textContent?.trim()).toBe('12');
+  });
+
+  it('labels the unit count "Units held" (not "Shares held") for a crypto holding, and renders the fractional quantity in full', async () => {
+    fixture.componentRef.setInput('assetClass', 'Crypto');
+    fixture.componentRef.setInput('symbol', 'ETH');
+    const eth: AssetDto = { ...AAPL, id: 4, symbol: 'ETH', name: 'Ethereum', assetClass: 'Crypto' };
+    const ethHolding: HoldingDto = {
+      ...AAPL_HOLDING,
+      assetId: 4,
+      symbol: 'ETH',
+      assetClass: 'Crypto',
+      quantityHeld: 0.1234567891,
+    };
+
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([eth]);
+    httpMock
+      .expectOne(API_ROUTES.portfolioSummary('Crypto'))
+      .flush({ ...EMPTY_STOCK_SUMMARY, assetClass: 'Crypto', holdings: [ethHolding] });
+    (await waitForRequest(httpMock, API_ROUTES.transactionsByAsset(4))).flush([]);
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('Units held');
+    expect(text).not.toContain('Shares held');
+
+    const value = fixture.nativeElement.querySelector('.detail__units-held-value') as HTMLElement;
+    // Full 10 dp precision, never rounded to 2 dp like a money amount.
+    expect(value.textContent?.trim()).toBe('0.1234567891');
+  });
+
+  it('shows a real "0", not an em-dash or a blank, for units held on a fully sold-down holding', async () => {
+    const soldDown: HoldingDto = {
+      ...AAPL_HOLDING,
+      quantityHeld: 0,
+      costBasisUsd: 0,
+      averageCostUsd: null,
+      currentPriceNative: 175.5,
+      currentPriceUsd: 175.5,
+      priceAsOf: '2026-08-07T11:15:00+00:00',
+      priceSource: 'Live',
+    };
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+    httpMock
+      .expectOne(API_ROUTES.portfolioSummary('Stock'))
+      .flush({ ...STOCK_SUMMARY_WITH_HOLDING, unpricedHoldingsCount: 0, holdings: [soldDown] });
+    await flushStockAssetRequests();
+    fixture.detectChanges();
+
+    const value = fixture.nativeElement.querySelector('.detail__units-held-value') as HTMLElement;
+    expect(value.textContent?.trim()).toBe('0');
+  });
+
+  it('does not render a units-held line when the asset has no holding', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(EMPTY_STOCK_SUMMARY);
+    await flushStockAssetRequests(PERFORMANCE, []);
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).not.toContain('Shares held');
+    expect(text).not.toContain('Units held');
+  });
+
   it('renders an em-dash, not $0.00, for average cost on a fully sold-down holding', async () => {
     const soldDown: HoldingDto = {
       ...AAPL_HOLDING,

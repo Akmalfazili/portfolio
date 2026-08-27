@@ -495,6 +495,38 @@ closed one, and `0.0005333333` for a sub-cent ANVL position. The rendered pages 
 
 ---
 
+### Units held joins the detail-page header row (2026-08-27)
+
+The overview tables always had a `Quantity` column but the asset detail page never surfaced it —
+`HoldingDto.quantityHeld` was loaded (the gain/loss card and the transactions list both depend on
+the same `holding()` signal) and simply never rendered as its own fact. Added as a header stat,
+sitting between the hero price and `Avg cost` in `.detail__price-row`: identity (how many you
+hold) reads before cost (what you paid), and both are visually subordinate to the price in the
+same way `Avg cost` already was — same type scale, same muted colour, reusing (not duplicating)
+the `.detail__avg-cost` SCSS rules under a shared `.detail__units-held, .detail__avg-cost`
+selector so the two stats can't drift apart.
+
+Label varies on `isStock()` — "Shares held" for stocks, "Units held" for crypto — rather than one
+word doing service for both, and the value goes through the existing `QuantityPipe` (10 dp,
+untruncated) instead of `MoneyPipe` or a default `DecimalPipe`, so ANVL-scale and multi-decimal
+crypto holdings display in full instead of rounding to 2 dp or 0.
+
+Unlike `Avg cost`, this does **not** gate on the value being non-null: `quantityHeld` is always a
+real number (never `null` in the DTO, unlike `averageCostUsd`), and a fully sold-down position
+(`quantityHeld === 0`) has a perfectly good answer — "0" — that is just as informative as "1.48".
+Copying `Avg cost`'s null-gating pattern here would have been the D17/D20 mistake in reverse:
+hiding a real, meaningful zero instead of risking a fake one. The whole stat still only renders
+inside the existing `@if (holding(); as h)` branch, so an asset with no transactions at all shows
+nothing, same as `Avg cost`.
+
+**Verified live** against the real running stack (rebuilt `portfolio-web` image, real
+`/api/portfolio/{class}/summary` data): NVDA read "Shares held 1.48" beside "Avg cost $202.68",
+ETH read "Units held 0.0007714" beside "Avg cost $0.00" (its crypto accent colour), and AAPL — a
+fully sold-down real position — read "Shares held **0**" beside "Avg cost **—**", confirming the
+zero and the null render as visibly different things. Checked at 1440px, 390px, and in dark theme.
+
+---
+
 ## Traps — the lessons that cost a session each
 
 These are general, and every one of them was learned the expensive way here.

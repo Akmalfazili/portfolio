@@ -37,9 +37,12 @@
   font-variant-numeric: var(--ui-font-numeric-variant);
 }
 
-// The average cost figure is a secondary stat paired with the hero price,
-// not a second hero — smaller, lighter weight, muted colour, clearly
-// subordinate in the type scale.
+// The units-held and average-cost figures are secondary stats paired with
+// the hero price, not a second hero — smaller, lighter weight, muted colour,
+// clearly subordinate in the type scale. Units held sits first (identity —
+// how many you hold), avg cost second (what you paid), both sharing the
+// same visual treatment so they read as one row of facts.
+.detail__units-held,
 .detail__avg-cost {
   margin: 0;
   display: flex;
@@ -49,10 +52,12 @@
   color: var(--ui-color-on-surface-muted);
 }
 
+.detail__units-held-label,
 .detail__avg-cost-label {
   font-weight: var(--ui-font-weight-regular);
 }
 
+.detail__units-held-value,
 .detail__avg-cost-value {
   font-weight: var(--ui-font-weight-medium);
   font-variant-numeric: var(--ui-font-numeric-variant);

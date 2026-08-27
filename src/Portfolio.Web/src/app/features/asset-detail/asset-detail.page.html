@@ -30,6 +30,10 @@
           <p class="detail__price detail__price--pending">Waiting for a live quote…</p>
         }
         @if (holding(); as h) {
+          <p class="detail__units-held">
+            <span class="detail__units-held-label">{{ isStock() ? 'Shares held' : 'Units held' }}</span>
+            <span class="detail__units-held-value">{{ h.quantityHeld | quantity }}</span>
+          </p>
           <p class="detail__avg-cost">
             <span class="detail__avg-cost-label">Avg cost{{ isUsdNative() ? '' : ' (USD)' }}</span>
             <span class="detail__avg-cost-value">{{ h.averageCostUsd | money }}</span>
