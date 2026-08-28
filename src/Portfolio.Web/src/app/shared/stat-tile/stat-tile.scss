@@ -32,6 +32,17 @@
   // element as `title` text and in the accessible text content, only the
   // *visual* rendering is ever truncated, and only in that rare case.
   font-size: clamp(var(--ui-font-size-lg), 9cqi, var(--ui-font-size-2xl));
+  // Measured in-browser (not assumed): at every font-size across the clamp
+  // range above, `--ui-line-height-tight` (1.2) sits below this font stack's
+  // actual glyph box, and `overflow: hidden` below then clips the bottom
+  // ~1-2px of the descenders (and the "$") — scrollHeight - clientHeight was
+  // 1-2px at every tile. Swept ratio -> overflow(px) at floor/24px/27.32px/
+  // ceiling: 1.2 -> 1/1/1/2, 1.25 -> 1/1/0/1, 1.3 -> 0/0/0/0. 1.3 is the
+  // first ratio that clips nothing anywhere in the range, hence the
+  // dedicated --ui-line-height-numeric-display token (not --ui-line-height-
+  // tight, which other things may still want at 1.2) rather than a
+  // hardcoded value here.
+  line-height: var(--ui-line-height-numeric-display);
   font-weight: var(--ui-font-weight-semibold);
   color: var(--ui-color-on-surface);
   // Proportional figures, never tabular-nums — a large standalone value

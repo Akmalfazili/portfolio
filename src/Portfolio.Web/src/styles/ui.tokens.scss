@@ -197,6 +197,11 @@
   --ui-line-height-tight: 1.2;
   --ui-line-height-normal: 1.5;
   --ui-line-height-relaxed: 1.6;
+  // For a large standalone numeric display only (e.g. .stat-tile__value),
+  // measured against this font stack's actual glyph box, not chosen a
+  // priori — see the line-height comment in stat-tile.scss for the swept
+  // measurements that ruled out --ui-line-height-tight (1.2) here.
+  --ui-line-height-numeric-display: 1.3;
 
   --ui-font-weight-regular: 400;
   --ui-font-weight-medium: 500;
