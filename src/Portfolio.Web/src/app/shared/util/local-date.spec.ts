@@ -1,4 +1,4 @@
-import { formatCloseDate, fromDateOnlyString, toDateOnlyString } from './local-date';
+import { formatCloseDate, formatDateOnly, fromDateOnlyString, toDateOnlyString } from './local-date';
 
 describe('local-date', () => {
   it('formats local date parts directly, never via toISOString (which would shift by the UTC offset)', () => {
@@ -19,6 +19,16 @@ describe('local-date', () => {
     expect(date.getFullYear()).toBe(2026);
     expect(date.getMonth()).toBe(11);
     expect(date.getDate()).toBe(31);
+  });
+
+  describe('formatDateOnly', () => {
+    it('formats a plain DateOnly "YYYY-MM-DD" string (e.g. a dividend exDate) as "Fri 24 Jul"', () => {
+      expect(formatDateOnly('2026-07-24')).toBe('Fri 24 Jul');
+    });
+
+    it('is what formatCloseDate delegates to after slicing the instant to its date portion', () => {
+      expect(formatCloseDate('2026-07-24T00:00:00+00:00')).toBe(formatDateOnly('2026-07-24'));
+    });
   });
 
   describe('formatCloseDate', () => {

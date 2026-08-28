@@ -83,6 +83,21 @@ export class PortfolioOverviewPage {
     return `${count} ${noun} no price yet — the totals below don't include ${count === 1 ? 'its' : 'their'} market value, not a loss.`;
   });
 
+  /**
+   * Same D17 shape applied to dividend income instead of market value:
+   * `dividendsUncoveredCount` is how many Stock holdings are NOT `Covered`
+   * (`NotYetFetched` or `FetchFailed`), so the dividend total tile below is
+   * understated for exactly that many stocks — never presented as complete.
+   * Always 0 for Crypto (the summary's field is `0`, not `null`, per contract).
+   */
+  readonly dividendsUncoveredCount = computed(() => this.summary()?.dividendsUncoveredCount ?? 0);
+  readonly hasUncoveredDividends = computed(() => this.isStock() && this.dividendsUncoveredCount() > 0);
+  readonly dividendsCaveat = computed(() => {
+    const count = this.dividendsUncoveredCount();
+    const noun = count === 1 ? 'stock has' : 'stocks have';
+    return `${count} ${noun} incomplete dividend data — the total below may understate income, not a real shortfall.`;
+  });
+
   readonly sectionLabel = computed(() => (this.assetClass() === 'Crypto' ? 'Crypto' : 'Stocks'));
   readonly basePath = computed(() => (this.assetClass() === 'Crypto' ? '/crypto' : '/stocks'));
   readonly isStock = computed(() => this.assetClass() === 'Stock');

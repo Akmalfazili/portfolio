@@ -12,6 +12,8 @@ export const API_ROUTES = {
   assets: '/api/assets',
   asset: (id: number) => `/api/assets/${id}`,
   assetPerformance: (id: number) => `/api/assets/${id}/performance`,
+  // Stocks only — 400 for a crypto asset id, 404 for an unknown one.
+  assetDividends: (id: number) => `/api/assets/${id}/dividends`,
   transactions: '/api/transactions',
   transaction: (id: number) => `/api/transactions/${id}`,
   transactionsByAsset: (assetId: number) => `/api/transactions?assetId=${assetId}`,

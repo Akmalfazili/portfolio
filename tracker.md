@@ -37,10 +37,22 @@ daily-vs-per-minute error, D36's "that state is unreachable"). Measure before yo
 **Defects D1–D39 are all closed except D6**, which is the measurement described below rather
 than a fault. The register is kept as history, not as a to-do list.
 
-**Test suites, re-run 2026-08-26:** backend `dotnet test portfolio.slnx` **227/227** (219 unit +
-8 integration), frontend `ng test` **211/211** across 29 files. Backend builds clean under
-`TreatWarningsAsErrors`; the Angular build carries one accepted bundle-budget warning (~10 kB over
-the 500 kB initial budget, from the chart libraries).
+**Test suites, re-run 2026-08-28 (dividend income tracking added, then D41/D42 fixed same day, then
+surfaced in the Angular app):** backend `dotnet test portfolio.slnx` **268/268** (258 unit + 10
+integration, up from 227/227 — the dividend work added 35 unit tests and 2 integration tests, the
+D41/D42 fixes added 6 more unit tests, and the existing delete-cascade test was extended in place).
+Frontend `ng test` **302/302** across 32 files (up from the last-verified 2026-08-26 baseline of
+211/211 across 29 files -- the dividend UI work added 3 new spec files' worth of cases across
+`local-date.spec.ts`, `holdings-table.spec.ts`, `portfolio-overview.page.spec.ts` and
+`asset-detail.page.spec.ts`, then a same-day two-round browser-verification follow-up added 4 to
+`money.pipe.spec.ts` for `MoneyPipe`'s new `'price'` mode and 2 more to
+`portfolio-overview.page.spec.ts` pinning the `.overview__tiles--five` modifier's presence/absence
+-- all personally re-run this session, not carried over from memory).
+Backend builds clean under `TreatWarningsAsErrors`; `ng build` carries the same two accepted
+warnings as before (the ~57 kB-over initial bundle budget from the chart libraries, and — new this
+entry — `asset-detail.page.scss` landing 131 bytes over its 4 kB per-component style budget, from
+the new Dividends panel's rules; both are warnings only, no error, per `angular.json`'s
+`anyComponentStyle` ceiling of 8 kB).
 
 ---
 
@@ -124,15 +136,16 @@ Dependencies point inward; `Portfolio.Domain` references nothing.
 
 ```
 src/Portfolio.Domain/          Asset, Transaction, PriceQuote, PriceHistory, FxRate,
-                               RefreshRun, SourceRefreshState, TwelveDataCreditLedger
+                               RefreshRun, SourceRefreshState, TwelveDataCreditLedger,
+                               DividendEvent, AssetDividendState
                                + AssetClass, TransactionType, QuoteProviderKind, RefreshTrigger
 src/Portfolio.Application/     services, DTOs, calculators, provider interfaces, background services
-src/Portfolio.Infrastructure/  PortfolioDbContext + 5 migrations, provider clients
+src/Portfolio.Infrastructure/  PortfolioDbContext + 6 migrations, provider clients
 src/Portfolio.Api/             4 endpoint groups, PricesHub, DI wiring
 src/Portfolio.Web/             Angular 22 workspace
 docker/db-init/                Portfolio.DbInit — the one-shot migration runner (NOT in the .slnx)
-tests/Portfolio.UnitTests/     215 tests
-tests/Portfolio.IntegrationTests/  7 tests — the only place decimal precision is genuinely proven
+tests/Portfolio.UnitTests/     252 tests
+tests/Portfolio.IntegrationTests/  10 tests — the only place decimal precision and the delete cascade are genuinely proven
 ```
 
 **Endpoints**
@@ -141,22 +154,26 @@ tests/Portfolio.IntegrationTests/  7 tests — the only place decimal precision 
 |---|---|
 | `GET/POST /api/assets`, `GET/PUT/DELETE /api/assets/{id}` | `PUT` is full-replace including `IsActive` — there is no separate deactivate route. `DELETE` is a hard, cascading delete: `204`, or `404` for an unknown id |
 | `GET/POST /api/transactions`, `PUT/DELETE /api/transactions/{id}` | filters: `assetClass`, `assetId` |
-| `GET /api/portfolio/{assetClass}/summary`, `/allocation` | both asset classes |
+| `GET /api/portfolio/{assetClass}/summary`, `/allocation` | both asset classes; `summary` now also carries `totalDividendsTrailing12MonthUsd` / `totalDividendsAllTimeUsd` / `dividendsUncoveredCount` (Stock only — null/0 for Crypto) |
 | `GET /api/portfolio/stock/annual-returns` | stocks only |
 | `GET /api/assets/{id}/performance` | stocks only — a crypto id returns a clean `400` |
+| `GET /api/assets/{id}/dividends` | stocks only — a crypto id returns a clean `400`; full payment history plus trailing-12-month/all-time totals and `coverageStatus` |
 | `GET /api/prices/status` | free by design: **never** spends a Twelve Data credit |
 | `POST /api/prices/refresh` | 30 s cooldown → `429` + `secondsRemaining`; a large paced batch is queued onto a background task and returns promptly |
 | `POST /api/prices/backfill` | bounded; detached onto a background task (HTTP 202) so an nginx 504 cannot cancel it |
+| `POST /api/dividends/backfill` | mirrors `/api/prices/backfill`'s own conventions (detached, its own in-flight gate, HTTP 202) — also how D41's zero-asset lockout is recovered by hand |
 | `/hubs/prices` | SignalR: `QuoteUpdated`, `RefreshStatus`, plus a status snapshot on connect |
 
 **Key services** — `PriceRefreshService` (+ background service), `PriceBackfillService` (+ daily
-background service), `PortfolioSummaryService`, `PortfolioPerformanceService`, `AverageCostCalculator`,
-`AnnualReturnCalculator`, `PerformanceSeriesBuilder`, `TwelveDataCreditThrottle` / `…CreditPolicy` /
-`…CadenceCalculator`, `PriceRefreshStatusStore`, `QuoteProviderRouter`.
+background service), `DividendBackfillService` (+ daily background service), `DividendService`,
+`PortfolioSummaryService`, `PortfolioPerformanceService`, `AverageCostCalculator`,
+`AnnualReturnCalculator`, `DividendIncomeCalculator`, `PerformanceSeriesBuilder`,
+`TwelveDataCreditThrottle` / `…CreditPolicy` / `…CadenceCalculator`, `PriceRefreshStatusStore`,
+`QuoteProviderRouter`.
 
 **Migrations** (one set, applied identically to SQLEXPRESS and to the container DB):
 `InitialCreate` → `AddAssetQuoteProviderKind` → `AddSourceRefreshState` → `AddAssetCreatedAt` →
-`AddTwelveDataCreditLedger`.
+`AddTwelveDataCreditLedger` → `AddDividendTracking`.
 
 ---
 
@@ -691,7 +708,144 @@ hidden.
 
 ---
 
-## Traps — the lessons that cost a session each
+### Dividend income tracking added (2026-08-28, backend only)
+
+Per-stock dividend income (trailing-12-month headline, all-time secondary) and a portfolio-level
+total, sourced from Yahoo Finance's chart endpoint (`events=div`) — free, keyless, zero Twelve Data
+credits. Crypto is excluded entirely, the same as every other reporting feature in this project.
+
+**New tables.** `DividendEvent` (`Id`, `AssetId`, `ExDate` `DateOnly`, `AmountPerShare`
+`decimal(28,10)`, `Currency`) — unique on `(AssetId, ExDate)`, mirroring `PriceHistory`'s
+`(AssetId, Date)` index — and `AssetDividendState` (`AssetId` PK, `LastAttemptedAt`,
+`LastSuccessAt`, `LastRunSuccess`, `LastError`), a **per-asset** mirror of `SourceRefreshState`.
+The second table is not incidental: Yahoo's dividend endpoint has no batch form and is called once
+per asset, so a genuinely non-dividend-paying stock (zero `DividendEvent` rows forever) is
+otherwise indistinguishable from "never fetched" or "last fetch failed" — exactly the
+D10/D26/D33/D35/D38 reporting-layer mistake, applied to a new feature before it could repeat it.
+`DividendCoverageStatus` (`Covered` / `NotYetFetched` / `FetchFailed`) is derived from this state
+and travels on the wire on both `HoldingDto` and the new detail-page DTO; the two USD income
+fields are `null` — never a bare `0` — whenever the status is `NotYetFetched`. Migration
+`AddDividendTracking`; both FKs are `DeleteBehavior.Restrict`, with the delete written out
+explicitly in `AssetService.DeleteAsync` (per the asset-deletion decision above) and
+`AssetDeleteCascadeTests` extended to seed one `DividendEvent` and one `AssetDividendState` row
+and assert both are gone after delete.
+
+**Routing is wider than the quote router, and that is written down explicitly, not inferred.**
+`YahooDividendSymbolResolver` (`Infrastructure/MarketData/Yahoo`) is a two-line static class, but
+its doc comment is the one place this project states that Yahoo is the dividend source for *every*
+stock — including Twelve Data-routed US equities — because Twelve Data's free tier gates
+fundamentals data. It does not switch on `QuoteProviderKind` at all: `AssetClass.Stock` →
+`asset.ProviderSymbol` unchanged (Twelve Data and Yahoo happen to agree on US ticker spelling, and
+a Yahoo-routed asset's `ProviderSymbol` is already Yahoo's own form, e.g. `Z74.SI`);
+`AssetClass.Crypto` → `null`. Per CLAUDE.md's "never infer routing" rule, this mapping had to be
+explicit somewhere rather than assumed at each call site.
+
+**`IDividendProvider` is implemented by `YahooQuoteProvider` itself**, not a second typed
+`HttpClient`. The task's instruction to "reuse the existing Yahoo HttpClient registration" is
+satisfied literally: `YahooQuoteProvider` now implements both `IQuoteProvider` and
+`IDividendProvider`, and `GetDividendHistoryAsync` reuses the exact same `HttpClient` (browser
+User-Agent, `RedactingLoggingHandler`) the quote/history methods already had, registered once via
+`services.AddScoped<IDividendProvider>(sp => sp.GetRequiredService<YahooQuoteProvider>())` —
+the same pattern already used for `IQuoteProvider`, `IFxRateProvider` and `ITwelveDataUsageProvider`
+in that file. No second `AddHttpClient<T>()` call, no drift risk between two configurations of the
+same host.
+
+**The calculator stays FX-agnostic, matching `ICostBasisCalculator`'s established split.**
+`IDividendIncomeCalculator.Calculate` takes raw `Transaction`s (for units-held arithmetic, which is
+currency-invariant) and a list of `DividendIncomeInput` records whose `AmountPerShareUsd` the
+*caller* (`DividendService`) has already resolved via `FxRateResolver` at the ex-date's own
+historical rate — never today's, the same rule CLAUDE.md states for every other historical figure
+in this codebase. This mirrors `CostBasisTransactionFactory.ToUsd` feeding `AverageCostCalculator`,
+and means the calculator's own unit tests need no FX fixtures at all to pin the one rule that
+actually matters here:
+
+- **The ex-date boundary is strict.** A buy dated *on* the ex-date earns nothing from that
+  event — real market convention, and the reason `DividendIncomeCalculatorTests` pins `<`, not
+  `<=`, with a dedicated test for a buy on the exact ex-date next to one the day before and one the
+  day after.
+- **A fully sold-down position still gets a payment-history row, at zero income** — not silently
+  dropped — so a caller can see the payment happened while the position was closed rather than the
+  event vanishing from the list entirely.
+- Rounding happens once, at the `DividendService` DTO boundary (`DisplayRounding.Money` for USD
+  totals, `DisplayRounding.Price` — 10 dp, not 4 — for the native per-share amount, the same
+  reasoning `HoldingDto.AverageCostUsd` already established for a per-unit figure), never inside
+  the calculator.
+
+**Wire shape.** `HoldingDto` gained three nullable fields — `dividendsTrailing12MonthUsd`,
+`dividendsAllTimeUsd`, `dividendCoverageStatus` — null for every `Crypto` holding (never `0`,
+preserving the asset-class segregation rule) and null for a `NotYetFetched` stock. `PortfolioSummaryDto`
+gained `totalDividendsTrailing12MonthUsd` / `totalDividendsAllTimeUsd` (null for a `Crypto` summary,
+a real summed total — zero-contribution from uncovered holdings — for a `Stock` one) and
+`dividendsUncoveredCount`, the same "zero-contribution total plus a separate caveat count" pattern
+`UnpricedHoldingsCount` already established for market value. The new detail-page endpoint,
+`GET /api/assets/{id}/dividends`, rejects a crypto asset id with a clean `400` at the service
+boundary (`DividendService.GetAssetDividendHistoryAsync`), the identical shape
+`IPortfolioPerformanceService.GetAssetPerformanceAsync` already uses — verified live against the
+running API (seeded dev DB): AAPL came back `"coverageStatus":"NotYetFetched"` with both USD
+totals `null` and an empty `payments` array (no backfill has run against this dev database yet),
+and ETH came back a clean `400` with the expected validation message.
+
+**Refresh cadence.** `DividendBackfillService` mirrors `PriceBackfillService`'s
+`RunAsync`/`RunIfDueAsync` split (unconditional entry point vs. a once-per-day gate for the
+background poller) but needed no Twelve-Data-style credit budget — Yahoo is unmetered here — so
+`DividendBackfillOptions.MaxAssetsPerRun` is a plain safety ceiling (default 500), and ordering is
+least-recently-attempted-first, the same D37 anti-starvation pattern `PriceBackfillService` uses,
+so a portfolio larger than the ceiling never permanently strands the same tail of assets. Fetches
+run from each asset's earliest transaction date forward, so an all-time total is genuinely complete
+rather than "since dividend tracking was switched on." `RefreshTrigger` gained
+`DividendBackfillScheduled`/`DividendBackfillManual`, sharing the one `RefreshRun` audit table with
+every other refresh kind in this project, per its own documented reasoning.
+
+**What was not verified.** The task's brief supplied Yahoo's `events=div` response shape
+(confirmed live by the user for AAPL/MSFT/Z74.SI, at zero Twelve Data credit cost) and explicitly
+said not to re-verify it — so `YahooQuoteProvider.GetDividendHistoryAsync`'s parsing was written
+against that description and exercised only by mocked-provider unit/integration tests, never a
+real live call to Yahoo's dividend endpoint by this session. The background `DividendBackfillBackgroundService`
+was wired into DI and the app was confirmed to start cleanly with it registered (a brief local run
+against the real dev SQLEXPRESS database, `GET /api/assets/{id}/dividends` and
+`GET /api/portfolio/stock/summary` both checked live), but the server was stopped within seconds —
+a real scheduled dividend-backfill cycle actually reaching Yahoo and inserting `DividendEvent` rows
+has not been observed. Nothing in the frontend was touched by this change — see "Dividend income
+surfaced in the Angular app" below for that follow-up.
+
+**D41/D42, found the same day by live verification against that same dev database (2026-08-28).**
+The coordinator ran the isolated Yahoo-parser probe this section says was never done by this
+session — confirming `YahooQuoteProvider.GetDividendHistoryAsync` and
+`YahooDividendSymbolResolver` against the real endpoint (AAPL 15 points, MSFT 15 points, Z74.SI 6
+points, Z74 correctly carrying **SGD** from `meta.currency`) — and separately found two real
+defects by reading the live `RefreshRuns`/`DividendEvents`/`AssetDividendStates` tables:
+
+- **D41 — a run that did nothing still consumed the day.** `RunAsync` wrote its `RefreshRun`
+  unconditionally, even when the stock asset list was empty (no stock had a transaction yet), and
+  `RunIfDueAsync`'s gate only checked "any scheduled run today" — so that empty run still locked
+  the real backfill out for up to 24 hours. Verified live: a `Trigger=4` (`DividendBackfillScheduled`)
+  row existed from that day with `SymbolsRefreshed=0, Success=1`, while `DividendEvents` and
+  `AssetDividendStates` were both completely empty. This is the D10/D26/D33/D35/D38 family again,
+  in a new place: a healthy-looking successful run that accomplished nothing, indistinguishable from
+  one that did the work. Fixed by gating on the most recent scheduled run with `SymbolsRefreshed > 0`
+  instead of any scheduled run — a zero-asset run (or one where every asset failed, which also
+  yields `SymbolsRefreshed == 0`) no longer consumes the day, and retrying it on the next poll costs
+  nothing because Yahoo is free and keyless, unlike Twelve Data's credit-limited price backfill
+  where a retry has a real budget cost.
+- **D42 — `RefreshTrigger.DividendBackfillManual` was dead.** The enum member existed but nothing
+  ever wrote it, and there was no way to trigger a dividend backfill on demand — which also meant
+  D41's lockout, before it was fixed, could only be waited out, never recovered by hand. Fixed by
+  `POST /api/dividends/backfill` (`DividendsEndpoints`), mirroring `POST /api/prices/backfill`'s
+  conventions exactly: detached onto a background task so an aborted HTTP connection can never
+  misreport a still-running fetch as a provider failure, guarded by its own
+  `ManualDividendBackfillInFlightGate` (deliberately a separate type from the price backfill's own
+  gate, so the two can run concurrently without tripping each other), `202 Accepted` with
+  `DividendBackfillQueuedResult`.
+
+Regression-tested at the service level (`DividendBackfillServiceTests`): a zero-asset `RunIfDueAsync`
+no longer returns `AlreadyRanToday` and does not call the provider a second time in the same day;
+a run that genuinely processes an asset still correctly locks out the rest of the day; and
+`RunAsync(RefreshTrigger.DividendBackfillManual, ...)` writes a `RefreshRun` tagged accordingly —
+plus a small dedicated `ManualDividendBackfillInFlightGateTests` for the new gate's TryEnter/Exit
+semantics and its independence from the price backfill's gate. Not endpoint-tested via
+`WebApplicationFactory`: no such test exists for the sibling `/api/prices/backfill` route either,
+and hitting the real endpoint here would fire a real (if free) Yahoo call from the test suite —
+service-level coverage of the same detach/gate/trigger logic was judged the safer equivalent.
 
 These are general, and every one of them was learned the expensive way here.
 
@@ -799,6 +953,199 @@ These are general, and every one of them was learned the expensive way here.
 
 ---
 
+### Dividend income surfaced in the Angular app (2026-08-28, frontend)
+
+The three new wire fields from the backend section above — `HoldingDto`'s
+`dividendsTrailing12MonthUsd`/`dividendsAllTimeUsd`/`dividendCoverageStatus`,
+`PortfolioSummaryDto`'s totals/`dividendsUncoveredCount`, and the new
+`GET /api/assets/{id}/dividends` endpoint — now render in three places: a stocks-only overview
+tile, a sortable holdings-table column, and a detail-page panel. Added to `core/api/models.ts`
+mirroring the backend DTOs exactly, and `assetDividends(id)` to `core/api/api-routes.ts`.
+
+**Same D17 shape, applied to income instead of market value.** `dividendsUncoveredCount` (how many
+`Stock` holdings are `NotYetFetched`/`FetchFailed`, never `null`, always `0` for `Crypto`) drives a
+second `overview__caveat` line on `PortfolioOverviewPage`, reusing the exact same amber-banner
+markup `hasUnpricedHoldings()` already established rather than inventing a second visual idiom for
+the same underlying "this total is honestly incomplete" fact.
+
+**Three states, not two, wherever a dividend figure could appear** — `Covered` (a real number,
+including a legitimate `$0.00` for a genuinely non-dividend-paying stock), `NotYetFetched` (never
+attempted — the muted-italic "Awaiting ..." idiom, matching D20/D27's existing "Awaiting price"
+treatment), and `FetchFailed` (attempted and failed — its own colour and icon, deliberately **not**
+the same muted-italic treatment as `NotYetFetched`, since "we tried and it broke" and "we haven't
+asked yet" are different facts a reader needs told apart). `holdings-table.ts`'s new `dividends`
+sort column follows the exact `unrealized` column precedent: the sort accessor returns `null`
+(sorts last, both directions) for anything that isn't `Covered`, never the field's raw value,
+matching what the row actually displays rather than a number nobody sees.
+
+**The column is opt-in, not inferred.** `HoldingsTable` is shared unmodified with the crypto
+overview, so it gained a `showDividends` input that `PortfolioOverviewPage` sets to `isStock()` —
+the same "the parent decides, the shared component never sniffs `assetClass` off its own rows"
+rule the crypto-scope decision already established elsewhere in this file. Crypto's dividend
+fields are `null` throughout and are simply never read, because the column never renders for it.
+
+**The detail-page panel mirrors the Transactions panel's own machinery** (`createTableState` +
+`app-table-pager`) rather than inventing new sort/page plumbing, sorted by ex-date descending by
+default (matching the backend's own ordering). It was deliberately **not** given the transactions
+panel's CDK-virtualized "All" view — dividend payment histories are small (a handful a year per
+stock), so the complexity of a second virtualized ARIA grid bought nothing here; the plain
+`<table>` + pager is the honest scope. The panel itself only ever renders inside `@if (isStock())`,
+never even mounted for crypto, and its `httpResource` url is `undefined` for a crypto asset for the
+same reason `performanceResource` already is — the endpoint 400s for crypto, so it must never be
+called, not called-and-discarded. Four distinct panel states, matching the honesty requirement:
+loading, `FetchFailed`-or-a-genuine-HTTP-error (one shared retryable error state, since both mean
+"we don't have reliable data right now" from the reader's point of view — retrying just re-GETs
+the current, possibly since-recovered, state; it does not force a new Yahoo call itself),
+`NotYetFetched`, and — once `Covered` — either the payment table or an honest "No dividends paid"
+`app-state-message` for a real `Covered`-with-zero-payments stock, never the same wording as
+`NotYetFetched`.
+
+**The required estimate caveat** ("Estimated from units held on each ex-date — excludes
+withholding tax, DRIP and scrip handling") sits as a plain caption under the payment table, reusing
+the page's existing muted-caption idiom rather than an alarming banner — these are computed
+figures, never a broker statement, and the wording says so without being alarming about it.
+
+**`exDate` renders as the raw `"YYYY-MM-DD"` string**, deliberately the same choice
+`transactions.page.html`/`asset-detail.page.html`'s existing `tradeDate` cells already make, rather
+than reaching for a formatter — this sidesteps the `toISOString()` day-shift bug (CLAUDE.md) simply
+by never touching `Date` at all, and it was the simpler-is-safer call given a `DateOnly` value is
+already unambiguous as printed. `amountPerShareNative` renders through `MoneyPipe` with the
+payment's **own** `currency` (`payment.amountPerShareNative | money: payment.currency`) — never the
+USD default — since Z74 pays in SGD and rendering "S$0.103" as if it were a USD figure would be
+exactly the D4/D20 silent-unit-mismatch mistake applied to a new field. Verified with a dedicated
+spec case using a real SGD payment fixture; note `Intl.NumberFormat` separates an ISO currency code
+from the amount with a **non-breaking space** (U+00A0), not a plain one — already documented in
+`money.pipe.spec.ts`'s own SGD case, and worth restating here because it silently broke a
+`toContain('SGD 0.10')` assertion with a plain space until switched to a regex tolerant of either.
+
+**`shared/util/local-date.ts` gained `formatDateOnly`**, a generic `"YYYY-MM-DD"` → `"Fri 24 Jul"`
+formatter that `formatCloseDate` (the existing D20 close-date formatter) now delegates to after its
+own instant-to-date-portion slicing — extracted rather than duplicated, and covered by both the
+existing `formatCloseDate` tests (unchanged behaviour, still passing) and two new ones pinning
+`formatDateOnly` directly. It ended up unused by the dividend payment table itself (see the
+`exDate`-as-raw-string decision above), but is not dead code: `formatCloseDate` calls it.
+
+**A genuine test-file text collision, caught by the suite, not missed by it.** The dividend
+payment table's "units held" column very nearly kept that literal name, which would have made
+`fixture.nativeElement.textContent` contain the substring `"Units held"` on every stock detail page
+— colliding with the *existing*, unrelated "Shares held"/"Units held" toggle text in the page
+header that an existing D-something-era test already asserted the exact absence of on a stock page
+(`expect(text).not.toContain('Units held')`). Renamed the column header to "Units at ex-date" (no
+literal "held") rather than loosening the pre-existing test, since the two facts really are
+different things that happen to share a word — the header text is a coincidental collision, not a
+duplicated concept worth merging.
+
+**A second, structural table collision, same root cause.** Both the dividends panel and the
+transactions panel render a plain `<table>` on the same detail page, and the dividend table
+originally carried the same `.detail__transactions` class the real transactions table uses (for
+free styling reuse) — which made several pre-existing, page-wide-scoped test selectors
+(`'tbody tr'`, `'tbody td:first-child'`, `'table.detail__transactions'`) ambiguous the moment the
+dividends panel had any rows on screen, since `querySelector`/`querySelectorAll` no longer had
+exactly one table to find. Fixed by giving the dividends table its own `.detail__dividends-table`
+class (not `.detail__transactions` at all — the two share their visual rules via a combined SCSS
+selector, `.detail__transactions, .detail__dividends-table { ... }`, so there is one styling
+source, not two drifting stylesheets) and re-scoping every affected transactions-panel test
+selector to `table.detail__transactions ...` explicitly. Worth restating for whoever adds the next
+per-asset table to this page: a shared style class and a test-selector scope are two different
+concerns, and reusing one for the other is exactly how this kind of collision hides until a test
+actually exercises both tables' content at once.
+
+**Browser-verified against the real running stack (2026-08-28, same day).** The coordinator
+checked this work against the live API on :5100 and the dev server on :4200 with real AAPL/MSFT/Z74
+data: the overview tile ($431.04 / "All-time $904.85"), the holdings column (AAPL $106.00, MSFT
+$182.00, Z74 $143.04), the detail panel, the payment table, the caveat caption, dark theme, and a
+760px viewport all matched the live API and rendered correctly. Two defects surfaced by that check
+are fixed below; everything else in this section stands as originally verified only by `ng
+build`/`ng test`, not superseded by this pass.
+
+### Two defects found by browser verification, fixed same day
+
+**Defect 1 (the real one) -- `MoneyPipe` rounded a per-share dividend rate like a monetary total,
+making two different numbers render identically.** Z74's real payments are 0.103, 0.082, 0.100 and
+0.089 SGD/share; `MoneyPipe` capped every value at or above one cent to 2dp (its sub-cent escape
+hatch only ever fires below $0.01), so 0.103 and 0.100 both rendered `SGD 0.10` -- two rows a
+reader could not tell apart, against identical 1,000-unit holdings and genuinely different income
+figures ($80.32 vs $77.07). This is the exact CLAUDE.md rule ("no ... display pipe may assume
+integers or two decimal places") landing on a column this session added, not a pre-existing gap --
+the backend already draws the same distinction between `DisplayRounding.Money` (totals, 4dp) and
+`DisplayRounding.Price` (per-unit values, 10dp), and the frontend needed the equivalent split.
+
+Fixed by giving `MoneyPipe` an optional third `mode: 'total' | 'price'` parameter (default
+`'total'`, so every existing call site -- the TTM/all-time tiles, the holdings column, the
+`incomeUsd` column, every other money value in the app -- is untouched and still renders at 2dp).
+`'price'` mode always extends `maximumFractionDigits` to 10 (matching the backend's own per-unit
+precision) rather than only below one cent, so `0.103` renders as `"0.103"` and `0.1` still
+renders as `"0.10"` -- trimmed of trailing-zero noise, never padded out to `"0.1000000000"`. Only
+the dividend payment table's "Amount / share" cell passes `'price'`
+(`payment.amountPerShareNative | money: payment.currency : 'price'`); `currentPriceNative`,
+`averageCostUsd` and the like were left calling the pipe exactly as before -- they already read
+correctly via the pre-existing sub-cent branch at the magnitudes this app's real data uses, and
+auditing every other price display for the same latent gap was outside what this fix was asked to
+cover. Added `money.pipe.spec.ts` cases pinning `0.103`/`0.082`/`0.1` in `'price'` mode (including
+the exact SGD non-breaking-space detail already documented there) and confirming `'total'` mode's
+behaviour is bit-for-bit unchanged.
+
+**Defect 2, round one -- the flexbox fix shipped in the previous entry was itself wrong, caught
+live by the coordinator.** `.overview__tiles` had been reworked from Grid to Flexbox
+(`flex: 1 0 var(--ui-layout-tile-min-width)`) to stop the fifth tile orphaning -- that DID stop
+the orphan, but replaced it with something worse: measured live, the four regular tiles rendered
+231px wide and the fifth (Dividends) rendered 960px wide -- four times the width of every sibling,
+since flexbox's per-line free-space redistribution gives a LONE wrapped item ALL of that line's
+free space, not a proportionate share. Confirmed live: `[231, 231, 231, 231, 960]`. Reverted.
+
+**Defect 2, round two -- the actual fix, verified with real rendered measurements, not CSS
+arithmetic.** `.overview__tiles` now uses CSS Grid with an EXPLICIT column count instead of
+`auto-fit` guessing one from `minmax(...)` -- `auto-fit` is what produced BOTH broken states,
+because it sizes a row by "however many tiles fit," which is four at this container's 960px cap
+(`--ui-layout-content-max-wide`), never five, regardless of how the leftover fifth tile is then
+handled. An explicit `repeat(5, 1fr)` (stock, via a `.overview__tiles--five` modifier class that
+`isStock()` sets — never inferred from tile count) / `repeat(4, 1fr)` (crypto, the base rule) has
+no leftover to handle: every tile is always an equal 1/N share of one row, so none can ever carry
+more visual weight than another. The explicit column count only applies at/above the `md`
+breakpoint (the closest existing token to this container's own 960px cap, reused rather than
+inventing a new one — SCSS breakpoints are the one place a raw px value is allowed at all, per
+ui.mixins.scss's own header comment); below `md`, the original `auto-fit, minmax(...)` governs,
+the same pattern `.gain-loss-card` already uses at its own narrower container, where a partial
+last row is an ordinary responsive reflow, not evidence of the same defect.
+
+Five 1fr columns in a 960px container measure ~182px each after gaps — narrower than the 200px
+`--ui-layout-tile-min-width` floor auto-fit had enforced — which surfaced a SECOND, real defect:
+the Unrealized gain/loss tile's `app-gain-loss` delta ("+$17,494.91 · +41.29%") overflowed its
+tile rather than wrapping, measured live at `scrollWidth 170` inside `clientWidth 149`. Root
+cause: the amount/separator/percent spans carry no literal whitespace between them in the
+rendered template, so there was no text-level line-break opportunity anywhere in that string,
+regardless of container width — plain inline wrapping could never have saved this. Fixed in
+`gain-loss.scss` by making `.gain-loss__value` itself a `flex-wrap: wrap` flex container (with
+`min-width: 0`), which gives three real break points between the amount/separator/percent
+independent of any text whitespace, so they wrap onto a second line when the tile is narrow and
+stay on one line exactly as before whenever there's room. `.gain-loss__icon-wrap` got an explicit
+`flex: none` so the icon itself never shrinks or wraps away.
+
+**Verified with real rendered measurements via a headless Playwright browser against the live
+dev server (:4200) and API (:5100)** — not CSS arithmetic, per the coordinator's explicit
+instruction, and not the claude-in-chrome skill, which this agent context does not have access
+to. `[...document.querySelector('.overview__tiles').children].map(c => [width, top])` plus a
+page-wide `scrollWidth > clientWidth + 1` scan, at both 1600px and 760px viewports:
+
+| Page | Viewport | Tile widths | Rows | Any `.stat-tile`/`.gain-loss` overflow? |
+|---|---|---|---|---|
+| /stocks (5 tiles) | 1600px | `[182, 182, 182, 182, 182]` | 1 | No |
+| /crypto (4 tiles) | 1600px | `[231, 231, 231, 231]` | 1 | No |
+| /stocks (5 tiles) | 760px | `[229, 229, 229, 229, 229]` | 2 (3+2) | No |
+| /crypto (4 tiles) | 760px | `[229, 229, 229, 229]` | 2 (3+1) | No |
+
+The crypto dev database had zero transactions recorded (a genuinely empty portfolio, not a bug),
+so the /crypto measurement required a temporary real transaction — `POST /api/transactions` for 1
+ETH tagged `notes: "temp-layout-verification-delete-me"`, measured, then removed with
+`DELETE /api/transactions/{id}` immediately after, confirmed by re-fetching
+`GET /api/portfolio/Crypto/summary` and seeing `holdings: []` again. The 760px 3+2/3+1 splits are
+the same ordinary responsive reflow `.gain-loss-card` already exhibits at its own container width
+— a shorter final row, never a stretched or shrunk single tile — and were not flagged as a defect.
+`ng build`/`ng test` re-run clean after every change in this round (302/302 frontend tests, two
+new ones pinning the `.overview__tiles--five` modifier's presence/absence).
+
+---
+
 ## Known gaps, deliberately accepted
 
 Not defects — decisions. Each was considered and left as-is.
@@ -826,6 +1173,10 @@ Not defects — decisions. Each was considered and left as-is.
   application code, or committed. Recorded so it is not re-litigated — **do not raise it again
   unless the user does.** If the key ever starts 429ing or behaving as though someone else is
   spending it, this note is the first thing to reread.
+- **Dividend income is estimated from ex-date holdings, never recorded cash actually received**
+  (2026-08-28). No withholding tax, no DRIP/scrip reinvestment, and no brokerage-reported payment
+  date is modelled — only the buy/sell ledger's ex-date entitlement. Stated in the XML docs on
+  `IDividendIncomeCalculator` and the DTOs so the caveat propagates to whatever UI reads them.
 
 ---
 
@@ -878,6 +1229,8 @@ and it is a measurement on hold, not a defect** — see the top of this file.
 | D38 | **The live stock quote call could never succeed.** One `/quote` batch of all 21 symbols spends 21 credits against an **8-credit-per-minute** ceiling, so it 429'd every cycle — measured three times, with zero stock rows ever written. Every price ever seen on `/stocks` was the D20 close fallback | 2026-08-21 — chunking to ≤8 symbols behind the shared credit throttle, a runtime-derived cadence, and a persisted ledger. **All 21 stocks then read `priceSource: Live`**, including five that had never held a price. `CLAUDE.md`'s own "8 req/min" line was the origin of the design error and was corrected |
 | D39 | The daily credit ledger under-counted real spend by **200** — the mechanism meant to prevent D38-style overspending was itself miscalibrated | 2026-08-24 — made **self-correcting** rather than chasing each drift source: seed a new day's row from Twelve Data's real counter, reconcile hourly. The ledger only ever counted what *this process* granted, so anything else drifted it low permanently |
 | D40 | The allocation pie drew a leader line to **nothing** — slices under 8% share had their label formatter return `''` while the series-level `labelLine.show` stayed `true`, so a thin slice got a line pointing at empty space | 2026-08-27 — user-reported from a screenshot. ECharts treats "label shown" and "label line shown" as independent settings; the fix ties them to the same per-item decision, and the decision is now *always show*. Every slice carries its ticker and percent. Browser-verified by reading the rendered SVG geometry, not by screenshot alone — see the timeline entry for what that turned up |
+| D41 | A scheduled dividend backfill that processed **zero** assets still wrote a `RefreshRun` unconditionally, and `RunIfDueAsync` gated on *any* scheduled run today rather than one that accomplished something — so a fresh portfolio's first stock transaction was locked out of dividend data for up to 24 hours with nothing indicating why | 2026-08-28 — found by the coordinator live against the dev database (`RefreshRuns` had a `Trigger=4`, `SymbolsRefreshed=0` row from that day while `DividendEvents`/`AssetDividendStates` were both empty). Fixed by gating on the most recent scheduled run with `SymbolsRefreshed > 0`; a zero-asset (or all-failed) run costs nothing to retry since Yahoo is free and keyless, so it no longer consumes the day |
+| D42 | `RefreshTrigger.DividendBackfillManual` existed but nothing ever wrote it — there was no way to trigger a dividend backfill on demand, and no way to recover D41's lockout by hand | 2026-08-28 — `POST /api/dividends/backfill` added (`DividendsEndpoints`), mirroring `POST /api/prices/backfill`'s own conventions exactly: detached onto a background task, guarded by its own `ManualDividendBackfillInFlightGate` (deliberately independent of the price backfill's gate — the two must be able to run concurrently), `202 Accepted` with `DividendBackfillQueuedResult` |
 
 ---
 

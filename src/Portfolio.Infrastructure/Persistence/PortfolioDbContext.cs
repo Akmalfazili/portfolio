@@ -32,6 +32,10 @@ public class PortfolioDbContext(DbContextOptions<PortfolioDbContext> options) : 
 
     public DbSet<TwelveDataCreditLedgerEntry> TwelveDataCreditLedgerEntries => Set<TwelveDataCreditLedgerEntry>();
 
+    public DbSet<DividendEvent> DividendEvents => Set<DividendEvent>();
+
+    public DbSet<AssetDividendState> AssetDividendStates => Set<AssetDividendState>();
+
     IQueryable<Asset> IPortfolioDbContext.Assets => Assets;
 
     IQueryable<Transaction> IPortfolioDbContext.Transactions => Transactions;
@@ -48,6 +52,10 @@ public class PortfolioDbContext(DbContextOptions<PortfolioDbContext> options) : 
 
     IQueryable<TwelveDataCreditLedgerEntry> IPortfolioDbContext.TwelveDataCreditLedgerEntries => TwelveDataCreditLedgerEntries;
 
+    IQueryable<DividendEvent> IPortfolioDbContext.DividendEvents => DividendEvents;
+
+    IQueryable<AssetDividendState> IPortfolioDbContext.AssetDividendStates => AssetDividendStates;
+
     public void AddAsset(Asset asset) => Assets.Add(asset);
 
     public void RemoveAsset(Asset asset) => Assets.Remove(asset);
@@ -62,7 +70,15 @@ public class PortfolioDbContext(DbContextOptions<PortfolioDbContext> options) : 
 
     public void RemovePriceQuotes(IEnumerable<PriceQuote> priceQuotes) => PriceQuotes.RemoveRange(priceQuotes);
 
+    public void RemoveDividendEvents(IEnumerable<DividendEvent> dividendEvents) => DividendEvents.RemoveRange(dividendEvents);
+
+    public void RemoveAssetDividendStates(IEnumerable<AssetDividendState> states) => AssetDividendStates.RemoveRange(states);
+
     public void AddPriceHistory(PriceHistory priceHistory) => PriceHistories.Add(priceHistory);
+
+    public void AddDividendEvent(DividendEvent dividendEvent) => DividendEvents.Add(dividendEvent);
+
+    public void AddAssetDividendState(AssetDividendState state) => AssetDividendStates.Add(state);
 
     public void AddFxRate(FxRate fxRate) => FxRates.Add(fxRate);
 

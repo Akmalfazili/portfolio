@@ -95,6 +95,20 @@ public sealed class AssetDeleteCascadeTests : IAsyncLifetime
                 Currency = "USD",
                 AsOf = Now,
             });
+            seed.DividendEvents.Add(new DividendEvent
+            {
+                AssetId = assetId,
+                ExDate = new DateOnly(2026, 3, 1),
+                AmountPerShare = 0.25m,
+                Currency = "USD",
+            });
+            seed.AssetDividendStates.Add(new AssetDividendState
+            {
+                AssetId = assetId,
+                LastAttemptedAt = Now,
+                LastSuccessAt = Now,
+                LastRunSuccess = true,
+            });
             await seed.SaveChangesAsync();
         }
 
@@ -110,5 +124,7 @@ public sealed class AssetDeleteCascadeTests : IAsyncLifetime
         (await verify.Transactions.AnyAsync(t => t.AssetId == assetId)).Should().BeFalse();
         (await verify.PriceHistories.AnyAsync(p => p.AssetId == assetId)).Should().BeFalse();
         (await verify.PriceQuotes.AnyAsync(q => q.AssetId == assetId)).Should().BeFalse();
+        (await verify.DividendEvents.AnyAsync(d => d.AssetId == assetId)).Should().BeFalse();
+        (await verify.AssetDividendStates.AnyAsync(s => s.AssetId == assetId)).Should().BeFalse();
     }
 }

@@ -73,6 +73,76 @@
           <h2 class="detail__panel-title">Cost vs market value</h2>
           <app-cost-vs-market-chart [points]="performancePoints()" />
         </section>
+
+        <section class="detail__panel">
+          <h2 class="detail__panel-title">Dividends</h2>
+
+          @if (isDividendsLoading()) {
+            <app-state-message variant="loading" title="Loading dividend history…" />
+          } @else if (dividendsUnavailable()) {
+            <app-state-message
+              variant="error"
+              title="Couldn't load dividend data"
+              description="The last attempt to fetch this stock's dividend history failed. It's retried automatically in the background — or try again now."
+              actionLabel="Retry"
+              (action)="retryDividends()"
+            />
+          } @else if (dividendCoverageStatus() === 'NotYetFetched') {
+            <app-state-message
+              variant="empty"
+              title="Dividend data not yet fetched"
+              description="This stock's dividend history hasn't been checked yet — it will appear automatically once the next background fetch runs."
+            />
+          } @else {
+            <div class="detail__dividend-tiles">
+              <app-stat-tile label="Trailing 12 months" [value]="dividendHistory()?.trailing12MonthIncomeUsd | money"></app-stat-tile>
+              <app-stat-tile label="All-time" [value]="dividendHistory()?.allTimeIncomeUsd | money"></app-stat-tile>
+            </div>
+
+            @if (!hasDividendPayments()) {
+              <app-state-message
+                variant="empty"
+                title="No dividends paid"
+                description="This stock hasn't distributed a dividend since it was added."
+              />
+            } @else {
+              <div
+                class="detail__sort-scope"
+                matSort
+                matSortDisableClear
+                [matSortActive]="dividendTableState.sort().active"
+                [matSortDirection]="dividendTableState.sort().direction"
+                (matSortChange)="onDividendSortChange($event)"
+              >
+                <table class="detail__dividends-table">
+                  <caption class="detail__caption">Dividend payments for {{ symbol() }}</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col" mat-sort-header="exDate">Ex-date</th>
+                      <th scope="col" mat-sort-header="amount" class="detail__num">Amount / share</th>
+                      <th scope="col" mat-sort-header="units" class="detail__num">Units at ex-date</th>
+                      <th scope="col" mat-sort-header="income" class="detail__num">Income (USD)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (payment of dividendTableState.paged(); track payment.exDate) {
+                      <tr>
+                        <td>{{ payment.exDate }}</td>
+                        <td class="detail__num">{{ payment.amountPerShareNative | money: payment.currency : 'price' }}</td>
+                        <td class="detail__num">{{ payment.unitsHeldAtExDate | quantity }}</td>
+                        <td class="detail__num">{{ payment.incomeUsd | money }}</td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+                <app-table-pager [pager]="dividendTableState" itemLabel="Payments" />
+              </div>
+              <p class="detail__dividend-caveat">
+                Estimated from units held on each ex-date — excludes withholding tax, DRIP and scrip handling.
+              </p>
+            }
+          }
+        </section>
       }
 
       <section class="detail__panel">

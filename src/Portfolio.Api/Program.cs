@@ -31,6 +31,7 @@ app.MapGet("/", () => Results.Ok(new { service = "Portfolio.Api", status = "ok" 
 app.MapAssetEndpoints();
 app.MapTransactionEndpoints();
 app.MapPricesEndpoints();
+app.MapDividendEndpoints();
 app.MapPortfolioEndpoints();
 
 app.MapHub<PricesHub>("/hubs/prices");

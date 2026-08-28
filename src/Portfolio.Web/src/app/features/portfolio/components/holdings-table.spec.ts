@@ -22,8 +22,13 @@ const AAPL_NO_PRICE: HoldingDto = {
   unrealizedPnlUsd: -3864,
   unrealizedPnlPercent: -100,
   realizedPnlUsd: 23,
+  dividendsTrailing12MonthUsd: null,
+  dividendsAllTimeUsd: null,
+  dividendCoverageStatus: 'NotYetFetched',
 };
 
+// Crypto — every dividend field is `null`, and `showDividends` is never set
+// `true` for this table on the crypto page, so these values are never read.
 const ANVL_SUBCENT: HoldingDto = {
   assetId: 6,
   symbol: 'ANVL',
@@ -41,6 +46,9 @@ const ANVL_SUBCENT: HoldingDto = {
   unrealizedPnlUsd: 104.38,
   unrealizedPnlPercent: 26.0885,
   realizedPnlUsd: 0,
+  dividendsTrailing12MonthUsd: null,
+  dividendsAllTimeUsd: null,
+  dividendCoverageStatus: null,
 };
 
 // D20/D17 — a stock priced from the last stored CLOSE rather than a live
@@ -63,6 +71,57 @@ const MSFT_CLOSE: HoldingDto = {
   unrealizedPnlUsd: 145.1,
   unrealizedPnlPercent: 14.51,
   realizedPnlUsd: 0,
+  dividendsTrailing12MonthUsd: 2.72,
+  dividendsAllTimeUsd: 8.16,
+  dividendCoverageStatus: 'Covered',
+};
+
+// A stock whose last dividend fetch attempt errored — distinct from both
+// "genuinely pays nothing" (a real $0.00) and "not asked yet".
+const TSLA_DIVIDEND_FETCH_FAILED: HoldingDto = {
+  assetId: 5,
+  symbol: 'TSLA',
+  name: 'Tesla, Inc.',
+  assetClass: 'Stock',
+  currency: 'USD',
+  quantityHeld: 2,
+  costBasisUsd: 500,
+  averageCostUsd: 250,
+  currentPriceNative: 260,
+  currentPriceUsd: 260,
+  priceAsOf: '2026-08-01T10:48:50+00:00',
+  priceSource: 'Live',
+  marketValueUsd: 520,
+  unrealizedPnlUsd: 20,
+  unrealizedPnlPercent: 4,
+  realizedPnlUsd: 0,
+  dividendsTrailing12MonthUsd: null,
+  dividendsAllTimeUsd: null,
+  dividendCoverageStatus: 'FetchFailed',
+};
+
+// A stock that genuinely pays no dividend — Covered, with a real $0.00, not
+// a blank or a pending state.
+const NFLX_NO_DIVIDEND: HoldingDto = {
+  assetId: 7,
+  symbol: 'NFLX',
+  name: 'Netflix, Inc.',
+  assetClass: 'Stock',
+  currency: 'USD',
+  quantityHeld: 4,
+  costBasisUsd: 2000,
+  averageCostUsd: 500,
+  currentPriceNative: 550,
+  currentPriceUsd: 550,
+  priceAsOf: '2026-08-01T10:48:50+00:00',
+  priceSource: 'Live',
+  marketValueUsd: 2200,
+  unrealizedPnlUsd: 200,
+  unrealizedPnlPercent: 10,
+  realizedPnlUsd: 0,
+  dividendsTrailing12MonthUsd: 0,
+  dividendsAllTimeUsd: 0,
+  dividendCoverageStatus: 'Covered',
 };
 
 // A fully sold-down position: quantityHeld 0 means "no average cost", not
@@ -85,6 +144,9 @@ const GOOGL_SOLD_DOWN: HoldingDto = {
   unrealizedPnlUsd: 0,
   unrealizedPnlPercent: null,
   realizedPnlUsd: 612.4,
+  dividendsTrailing12MonthUsd: null,
+  dividendsAllTimeUsd: null,
+  dividendCoverageStatus: 'NotYetFetched',
 };
 
 describe('HoldingsTable', () => {
@@ -163,6 +225,74 @@ describe('HoldingsTable', () => {
     const cells = fixture.nativeElement.querySelectorAll('td.holdings-table__num') as NodeListOf<HTMLElement>;
     // Column order: quantity, cost basis, avg cost, current price, ...
     expect(cells[2].textContent?.trim()).toBe('—');
+  });
+
+  describe('the "Dividends (12m)" column', () => {
+    it('never renders when the parent does not set showDividends (the crypto overview)', () => {
+      fixture.componentRef.setInput('holdings', [MSFT_CLOSE]);
+      fixture.detectChanges();
+
+      expect(fixture.nativeElement.textContent).not.toContain('Dividends (12m)');
+      expect(fixture.nativeElement.querySelector('th[mat-sort-header="dividends"]')).toBeNull();
+    });
+
+    it('renders the real USD figure, including a legitimate $0.00, for a Covered holding', () => {
+      fixture.componentRef.setInput('holdings', [MSFT_CLOSE, NFLX_NO_DIVIDEND]);
+      fixture.componentRef.setInput('showDividends', true);
+      fixture.detectChanges();
+
+      const text = fixture.nativeElement.textContent as string;
+      expect(text).toContain('Dividends (12m)');
+      expect(text).toContain('$2.72');
+      expect(text).toContain('$0.00');
+    });
+
+    it('shows a distinct pending idiom, not a number, for a NotYetFetched holding', () => {
+      fixture.componentRef.setInput('holdings', [AAPL_NO_PRICE]);
+      fixture.componentRef.setInput('showDividends', true);
+      fixture.detectChanges();
+
+      expect(fixture.nativeElement.textContent).toContain('Awaiting dividend data');
+    });
+
+    it('shows a distinct failure treatment — not italic-pending, not a number — for a FetchFailed holding', () => {
+      fixture.componentRef.setInput('holdings', [TSLA_DIVIDEND_FETCH_FAILED]);
+      fixture.componentRef.setInput('showDividends', true);
+      fixture.detectChanges();
+
+      const failedCell = fixture.nativeElement.querySelector(
+        '.holdings-table__dividend-failed',
+      ) as HTMLElement | null;
+      expect(failedCell).not.toBeNull();
+      expect(failedCell!.textContent).toContain('Fetch failed');
+      // Not the same element/class as the "never attempted" idiom.
+      const pendingCells = Array.from(
+        fixture.nativeElement.querySelectorAll('.holdings-table__pending') as NodeListOf<HTMLElement>,
+      );
+      expect(pendingCells.some((el) => el.textContent?.includes('Fetch failed'))).toBe(false);
+    });
+
+    it('sorts NotYetFetched/FetchFailed rows last (null), never as a fabricated zero, in either direction', () => {
+      fixture.componentRef.setInput('holdings', [MSFT_CLOSE, AAPL_NO_PRICE, TSLA_DIVIDEND_FETCH_FAILED]);
+      fixture.componentRef.setInput('showDividends', true);
+      fixture.detectChanges();
+
+      fixture.componentInstance.onSortChange({ active: 'dividends', direction: 'asc' });
+      fixture.detectChanges();
+      const symbolsAsc = Array.from(
+        fixture.nativeElement.querySelectorAll('a.holdings-table__symbol') as NodeListOf<HTMLElement>,
+      ).map((el) => el.textContent?.trim());
+      // MSFT is the only Covered row (2.72) — it must sort BEFORE the two
+      // uncovered rows even ascending, since null always sorts last.
+      expect(symbolsAsc[0]).toBe('MSFT');
+
+      fixture.componentInstance.onSortChange({ active: 'dividends', direction: 'desc' });
+      fixture.detectChanges();
+      const symbolsDesc = Array.from(
+        fixture.nativeElement.querySelectorAll('a.holdings-table__symbol') as NodeListOf<HTMLElement>,
+      ).map((el) => el.textContent?.trim());
+      expect(symbolsDesc[0]).toBe('MSFT');
+    });
   });
 
   describe('sorting and pagination', () => {

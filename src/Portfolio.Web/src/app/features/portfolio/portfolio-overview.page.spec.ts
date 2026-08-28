@@ -18,6 +18,9 @@ const STOCK_SUMMARY: PortfolioSummaryDto = {
   totalUnrealizedPnlPercent: -100,
   totalRealizedPnlUsd: 23,
   unpricedHoldingsCount: 1,
+  totalDividendsTrailing12MonthUsd: 45.6,
+  totalDividendsAllTimeUsd: 120.4,
+  dividendsUncoveredCount: 0,
   holdings: [
     {
       assetId: 1,
@@ -36,6 +39,9 @@ const STOCK_SUMMARY: PortfolioSummaryDto = {
       unrealizedPnlUsd: -3864,
       unrealizedPnlPercent: -100,
       realizedPnlUsd: 23,
+      dividendsTrailing12MonthUsd: 45.6,
+      dividendsAllTimeUsd: 120.4,
+      dividendCoverageStatus: 'Covered',
     },
   ],
 };
@@ -166,6 +172,69 @@ describe('PortfolioOverviewPage', () => {
     fixture.detectChanges();
 
     expect(fixture.nativeElement.textContent).not.toContain('no price yet');
+  });
+
+  it('shows a dividend tile headlining the trailing-12-month total, with all-time as supporting detail, for stocks', async () => {
+    flushInitial();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('Dividends (12m)');
+    expect(text).toContain('$45.60');
+    expect(text).toContain('All-time $120.40');
+  });
+
+  it('does not render a dividend tile for crypto', async () => {
+    fixture.componentRef.setInput('assetClass', 'Crypto');
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Crypto')).flush({ ...STOCK_SUMMARY, assetClass: 'Crypto' });
+    httpMock.expectOne(API_ROUTES.portfolioAllocation('Crypto')).flush({ ...STOCK_ALLOCATION, assetClass: 'Crypto' });
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).not.toContain('Dividends (12m)');
+  });
+
+  it('applies the five-tile row modifier class for stocks (five tiles: cost basis, market value, unrealized, realized, dividends), never for crypto (four)', async () => {
+    flushInitial();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const stockTiles = fixture.nativeElement.querySelector('.overview__tiles');
+    expect(stockTiles.classList.contains('overview__tiles--five')).toBe(true);
+    expect(stockTiles.querySelectorAll('app-stat-tile').length).toBe(5);
+  });
+
+  it('does not apply the five-tile row modifier class for crypto', async () => {
+    fixture.componentRef.setInput('assetClass', 'Crypto');
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Crypto')).flush({ ...STOCK_SUMMARY, assetClass: 'Crypto' });
+    httpMock.expectOne(API_ROUTES.portfolioAllocation('Crypto')).flush({ ...STOCK_ALLOCATION, assetClass: 'Crypto' });
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const cryptoTiles = fixture.nativeElement.querySelector('.overview__tiles');
+    expect(cryptoTiles.classList.contains('overview__tiles--five')).toBe(false);
+    expect(cryptoTiles.querySelectorAll('app-stat-tile').length).toBe(4);
+  });
+
+  it('D17-shaped — caveats the dividend total, rather than presenting it as complete, when a stock is not Covered', async () => {
+    flushInitial({ ...STOCK_SUMMARY, dividendsUncoveredCount: 2 });
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('2 stocks have incomplete dividend data');
+    expect(text).toContain('may understate income, not a real shortfall');
+  });
+
+  it('shows no dividend caveat once every stock is Covered', async () => {
+    flushInitial({ ...STOCK_SUMMARY, dividendsUncoveredCount: 0 });
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).not.toContain('incomplete dividend data');
   });
 
   it('does not render the annual-return chart for crypto', async () => {

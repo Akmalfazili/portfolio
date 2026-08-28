@@ -66,3 +66,23 @@ public sealed record FxHistoryFetchResult(
 
     public static FxHistoryFetchResult Failed(string error) => new([], false, error);
 }
+
+/// <summary>One dividend ex-date event, in the asset's native currency.</summary>
+public sealed record DividendPoint(DateOnly ExDate, decimal AmountPerShare, string Currency);
+
+/// <summary>
+/// Outcome of one <c>IDividendProvider.GetDividendHistoryAsync</c> call. Mirrors
+/// <see cref="HistoryFetchResult"/>/<see cref="FxHistoryFetchResult"/>'s <see cref="Success"/>/
+/// <see cref="Error"/> split for the same reason: a transient Yahoo failure must not collapse into
+/// the same empty list as "this stock genuinely paid no dividends in the requested range" — the
+/// exact ambiguity that would make a stock look real-zero when the fetch simply never landed.
+/// </summary>
+public sealed record DividendHistoryFetchResult(
+    IReadOnlyList<DividendPoint> Points,
+    bool Success,
+    string? Error)
+{
+    public static DividendHistoryFetchResult Ok(IReadOnlyList<DividendPoint> points) => new(points, true, null);
+
+    public static DividendHistoryFetchResult Failed(string error) => new([], false, error);
+}

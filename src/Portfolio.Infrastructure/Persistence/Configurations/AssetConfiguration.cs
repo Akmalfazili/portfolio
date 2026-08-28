@@ -33,5 +33,20 @@ public class AssetConfiguration : IEntityTypeConfiguration<Asset>
             .WithOne(q => q.Asset)
             .HasForeignKey<PriceQuote>(q => q.AssetId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        // Restrict, matching the Transaction FK — the delete is written out explicitly in
+        // AssetService.DeleteAsync, never delegated to the database. See DividendEvent's own doc
+        // comment and tracker.md's asset-deletion decision for why: the EF Core InMemory provider
+        // the unit tests run on has no foreign keys at all, so a DB-level cascade would make the
+        // tests pass while proving nothing about SQL Server.
+        builder.HasMany(a => a.DividendEvents)
+            .WithOne(d => d.Asset)
+            .HasForeignKey(d => d.AssetId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne(a => a.DividendState)
+            .WithOne(s => s.Asset)
+            .HasForeignKey<AssetDividendState>(s => s.AssetId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

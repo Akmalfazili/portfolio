@@ -20,6 +20,9 @@ const PRICED: HoldingDto = {
   unrealizedPnlUsd: 27.625,
   unrealizedPnlPercent: 3.0525,
   realizedPnlUsd: 0,
+  dividendsTrailing12MonthUsd: null,
+  dividendsAllTimeUsd: null,
+  dividendCoverageStatus: null,
 };
 
 const UNPRICED: HoldingDto = {

@@ -171,10 +171,14 @@ public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvid
         var transactions = await db.Transactions.Where(t => t.AssetId == id).ToListAsync(cancellationToken);
         var priceHistories = await db.PriceHistories.Where(p => p.AssetId == id).ToListAsync(cancellationToken);
         var priceQuotes = await db.PriceQuotes.Where(q => q.AssetId == id).ToListAsync(cancellationToken);
+        var dividendEvents = await db.DividendEvents.Where(d => d.AssetId == id).ToListAsync(cancellationToken);
+        var dividendStates = await db.AssetDividendStates.Where(s => s.AssetId == id).ToListAsync(cancellationToken);
 
         db.RemoveTransactions(transactions);
         db.RemovePriceHistories(priceHistories);
         db.RemovePriceQuotes(priceQuotes);
+        db.RemoveDividendEvents(dividendEvents);
+        db.RemoveAssetDividendStates(dividendStates);
         db.RemoveAsset(asset);
 
         await db.SaveChangesAsync(cancellationToken);

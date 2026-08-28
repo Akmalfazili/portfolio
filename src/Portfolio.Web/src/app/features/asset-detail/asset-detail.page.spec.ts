@@ -6,7 +6,14 @@ import { provideEchartsCore } from 'ngx-echarts';
 
 import { AssetDetailPage } from './asset-detail.page';
 import { API_ROUTES } from '../../core/api/api-routes';
-import { AssetDto, AssetPerformanceDto, HoldingDto, PortfolioSummaryDto, TransactionDto } from '../../core/api/models';
+import {
+  AssetDividendHistoryDto,
+  AssetDto,
+  AssetPerformanceDto,
+  HoldingDto,
+  PortfolioSummaryDto,
+  TransactionDto,
+} from '../../core/api/models';
 import { PRICES_HUB_CONNECTION_FACTORY } from '../../core/prices/price-store';
 import { FakeHubConnection } from '../../core/prices/testing/fake-hub-connection';
 
@@ -43,6 +50,9 @@ const AAPL_HOLDING: HoldingDto = {
   unrealizedPnlUsd: -3864,
   unrealizedPnlPercent: -100,
   realizedPnlUsd: 23,
+  dividendsTrailing12MonthUsd: 4.5,
+  dividendsAllTimeUsd: 12.75,
+  dividendCoverageStatus: 'Covered',
 };
 
 const STOCK_SUMMARY_WITH_HOLDING: PortfolioSummaryDto = {
@@ -53,6 +63,9 @@ const STOCK_SUMMARY_WITH_HOLDING: PortfolioSummaryDto = {
   totalUnrealizedPnlPercent: -100,
   totalRealizedPnlUsd: 23,
   unpricedHoldingsCount: 1,
+  totalDividendsTrailing12MonthUsd: 4.5,
+  totalDividendsAllTimeUsd: 12.75,
+  dividendsUncoveredCount: 0,
   holdings: [AAPL_HOLDING],
 };
 
@@ -64,6 +77,9 @@ const EMPTY_STOCK_SUMMARY: PortfolioSummaryDto = {
   totalUnrealizedPnlPercent: null,
   totalRealizedPnlUsd: 0,
   unpricedHoldingsCount: 0,
+  totalDividendsTrailing12MonthUsd: null,
+  totalDividendsAllTimeUsd: null,
+  dividendsUncoveredCount: 0,
   holdings: [],
 };
 
@@ -75,6 +91,20 @@ const PERFORMANCE: AssetPerformanceDto = {
   points: [
     { date: '2026-07-20', costBasisUsd: 3201, marketValueUsd: 3265.9 },
     { date: '2026-07-24', costBasisUsd: 3864, marketValueUsd: 3996.24 },
+  ],
+};
+
+const DIVIDEND_HISTORY: AssetDividendHistoryDto = {
+  assetId: 1,
+  symbol: 'AAPL',
+  name: 'Apple Inc.',
+  currency: 'USD',
+  trailing12MonthIncomeUsd: 4.5,
+  allTimeIncomeUsd: 12.75,
+  coverageStatus: 'Covered',
+  payments: [
+    { exDate: '2026-05-09', amountPerShareNative: 0.26, currency: 'USD', unitsHeldAtExDate: 10, incomeUsd: 2.6 },
+    { exDate: '2026-02-09', amountPerShareNative: 0.24, currency: 'USD', unitsHeldAtExDate: 8, incomeUsd: 1.92 },
   ],
 };
 
@@ -147,15 +177,17 @@ describe('AssetDetailPage', () => {
 
   afterEach(() => httpMock.verify());
 
-  /** Flushes the two requests that fire as soon as `asset()` resolves to a
+  /** Flushes the three requests that fire as soon as `asset()` resolves to a
    *  found Stock asset — every scenario below hits this once AAPL is found,
    *  regardless of whether a holding exists. */
   async function flushStockAssetRequests(
     performance: AssetPerformanceDto = PERFORMANCE,
     transactions: TransactionDto[] = TRANSACTIONS,
+    dividends: AssetDividendHistoryDto = DIVIDEND_HISTORY,
   ) {
     (await waitForRequest(httpMock, API_ROUTES.assetPerformance(1))).flush(performance);
     (await waitForRequest(httpMock, API_ROUTES.transactionsByAsset(1))).flush(transactions);
+    (await waitForRequest(httpMock, API_ROUTES.assetDividends(1))).flush(dividends);
   }
 
   it('shows a not-found state for a symbol that belongs to the other asset class', async () => {
@@ -336,9 +368,13 @@ describe('AssetDetailPage', () => {
       .flush({ ...EMPTY_STOCK_SUMMARY, assetClass: 'Crypto', holdings: [ethHolding] });
     (await waitForRequest(httpMock, API_ROUTES.transactionsByAsset(4))).flush([]);
     httpMock.expectNone(API_ROUTES.assetPerformance(4));
+    // The dividends endpoint 400s for a crypto asset id — it must never even
+    // be called, the same "undefined httpResource url" treatment as performance.
+    httpMock.expectNone(API_ROUTES.assetDividends(4));
     fixture.detectChanges();
 
     expect(fixture.nativeElement.textContent).not.toContain('Cost vs market value');
+    expect(fixture.nativeElement.textContent).not.toContain('Dividends');
   });
 
   it('shows average cost beside the hero price for a holding, with no redundant unit label on a USD-native asset', async () => {
@@ -501,9 +537,180 @@ describe('AssetDetailPage', () => {
       .flush({ ...STOCK_SUMMARY_WITH_HOLDING, holdings: [z74Holding] });
     (await waitForRequest(httpMock, API_ROUTES.assetPerformance(9))).flush({ ...PERFORMANCE, assetId: 9 });
     (await waitForRequest(httpMock, API_ROUTES.transactionsByAsset(9))).flush([]);
+    (await waitForRequest(httpMock, API_ROUTES.assetDividends(9))).flush({
+      ...DIVIDEND_HISTORY,
+      assetId: 9,
+      symbol: 'Z74',
+      currency: 'SGD',
+      payments: [{ exDate: '2026-05-09', amountPerShareNative: 0.103, currency: 'SGD', unitsHeldAtExDate: 100, incomeUsd: 7.65 }],
+    });
     fixture.detectChanges();
 
     expect(fixture.nativeElement.textContent).toContain('Avg cost (USD)');
+  });
+
+  it("renders a dividend payment's amount-per-share in the asset's own native currency, not USD, for a non-USD stock", async () => {
+    const z74: AssetDto = {
+      ...AAPL,
+      id: 9,
+      symbol: 'Z74',
+      name: 'Singtel',
+      exchange: 'XSES',
+      currency: 'SGD',
+      quoteProviderKind: 'Yahoo',
+    };
+    const z74Holding: HoldingDto = {
+      ...AAPL_HOLDING,
+      assetId: 9,
+      symbol: 'Z74',
+      currency: 'SGD',
+      currentPriceNative: 2.5,
+      currentPriceUsd: 1.85,
+      priceAsOf: '2026-08-07T11:15:00+00:00',
+      priceSource: 'Live',
+    };
+
+    fixture.componentRef.setInput('symbol', 'Z74');
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([z74]);
+    httpMock
+      .expectOne(API_ROUTES.portfolioSummary('Stock'))
+      .flush({ ...STOCK_SUMMARY_WITH_HOLDING, holdings: [z74Holding] });
+    (await waitForRequest(httpMock, API_ROUTES.assetPerformance(9))).flush({ ...PERFORMANCE, assetId: 9 });
+    (await waitForRequest(httpMock, API_ROUTES.transactionsByAsset(9))).flush([]);
+    (await waitForRequest(httpMock, API_ROUTES.assetDividends(9))).flush({
+      ...DIVIDEND_HISTORY,
+      assetId: 9,
+      symbol: 'Z74',
+      currency: 'SGD',
+      payments: [{ exDate: '2026-05-09', amountPerShareNative: 0.103, currency: 'SGD', unitsHeldAtExDate: 100, incomeUsd: 7.65 }],
+    });
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    // Rendered in SGD (the asset's own currency), never USD-formatted —
+    // beside the already-converted USD income figure. Intl.NumberFormat
+    // separates the ISO code from the amount with a non-breaking space
+    // (U+00A0), same as money.pipe.spec.ts's own SGD case.
+    expect(/SGD\s*0\.10/.test(text)).toBe(true);
+    expect(text).toContain('$7.65');
+  });
+
+  describe('the dividends panel', () => {
+    it('shows the trailing-12-month/all-time totals and the payment history table for a Covered stock', async () => {
+      fixture.detectChanges();
+      httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+      httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY_WITH_HOLDING);
+      await flushStockAssetRequests();
+      fixture.detectChanges();
+
+      const text = fixture.nativeElement.textContent as string;
+      expect(text).toContain('Dividends');
+      expect(text).toContain('Trailing 12 months');
+      expect(text).toContain('$4.50');
+      expect(text).toContain('All-time');
+      expect(text).toContain('$12.75');
+      expect(text).toContain('2026-05-09');
+      expect(text).toContain('2026-02-09');
+      // The required estimate caveat.
+      expect(text).toContain('Estimated from units held on each ex-date');
+      expect(text).toContain('excludes withholding tax, DRIP and scrip handling');
+    });
+
+    it('reads differently for NotYetFetched than for a Covered-but-no-payments (genuinely non-dividend-paying) stock', async () => {
+      fixture.detectChanges();
+      httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+      httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY_WITH_HOLDING);
+      await flushStockAssetRequests(PERFORMANCE, TRANSACTIONS, { ...DIVIDEND_HISTORY, coverageStatus: 'NotYetFetched', trailing12MonthIncomeUsd: null, allTimeIncomeUsd: null, payments: [] });
+      fixture.detectChanges();
+
+      const text = fixture.nativeElement.textContent as string;
+      expect(text).toContain('Dividend data not yet fetched');
+      expect(text).not.toContain('No dividends paid');
+    });
+
+    it('shows an honest "no dividends paid" state for a Covered stock with an empty payment history — not the same as NotYetFetched', async () => {
+      fixture.detectChanges();
+      httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+      httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY_WITH_HOLDING);
+      await flushStockAssetRequests(PERFORMANCE, TRANSACTIONS, {
+        ...DIVIDEND_HISTORY,
+        coverageStatus: 'Covered',
+        trailing12MonthIncomeUsd: 0,
+        allTimeIncomeUsd: 0,
+        payments: [],
+      });
+      fixture.detectChanges();
+
+      const text = fixture.nativeElement.textContent as string;
+      expect(text).toContain('No dividends paid');
+      expect(text).not.toContain('Dividend data not yet fetched');
+      // The headline totals still show a real, honest zero.
+      expect(text).toContain('$0.00');
+    });
+
+    it('shows a distinct, retryable failure state for FetchFailed, never the same as "no dividends"', async () => {
+      fixture.detectChanges();
+      httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+      httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY_WITH_HOLDING);
+      await flushStockAssetRequests(PERFORMANCE, TRANSACTIONS, {
+        ...DIVIDEND_HISTORY,
+        coverageStatus: 'FetchFailed',
+        trailing12MonthIncomeUsd: null,
+        allTimeIncomeUsd: null,
+        payments: [],
+      });
+      fixture.detectChanges();
+
+      const text = fixture.nativeElement.textContent as string;
+      expect(text).toContain("Couldn't load dividend data");
+      expect(fixture.nativeElement.querySelector('button')).toBeTruthy();
+
+      // Retrying re-requests the same endpoint.
+      fixture.componentInstance.retryDividends();
+      fixture.detectChanges();
+      (await waitForRequest(httpMock, API_ROUTES.assetDividends(1))).flush(DIVIDEND_HISTORY);
+    });
+
+    it('never renders the dividends panel for crypto', async () => {
+      fixture.componentRef.setInput('assetClass', 'Crypto');
+      fixture.componentRef.setInput('symbol', 'ETH');
+      const eth: AssetDto = { ...AAPL, id: 4, symbol: 'ETH', name: 'Ethereum', assetClass: 'Crypto' };
+      const ethHolding: HoldingDto = { ...AAPL_HOLDING, assetId: 4, symbol: 'ETH', assetClass: 'Crypto' };
+
+      fixture.detectChanges();
+      httpMock.expectOne(API_ROUTES.assets).flush([eth]);
+      httpMock
+        .expectOne(API_ROUTES.portfolioSummary('Crypto'))
+        .flush({ ...EMPTY_STOCK_SUMMARY, assetClass: 'Crypto', holdings: [ethHolding] });
+      (await waitForRequest(httpMock, API_ROUTES.transactionsByAsset(4))).flush([]);
+      httpMock.expectNone(API_ROUTES.assetDividends(4));
+      fixture.detectChanges();
+
+      expect(fixture.nativeElement.textContent).not.toContain('Dividends');
+    });
+
+    it('sorts by ex-date descending by default, and reaches the <th> with mat-sort-header', async () => {
+      fixture.detectChanges();
+      httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+      httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY_WITH_HOLDING);
+      await flushStockAssetRequests();
+      fixture.detectChanges();
+
+      const exDateHeader = fixture.nativeElement.querySelector('th[mat-sort-header="exDate"]') as HTMLElement;
+      expect(exDateHeader.getAttribute('aria-sort')).toBe('descending');
+      expect(exDateHeader.getAttribute('scope')).toBe('col');
+
+      fixture.componentInstance.onDividendSortChange({ active: 'exDate', direction: 'asc' });
+      fixture.detectChanges();
+      const dates = Array.from(
+        fixture.nativeElement.querySelectorAll(
+          '.detail__dividends-table tbody tr td:first-child',
+        ) as NodeListOf<HTMLElement>,
+      ).map((el) => el.textContent?.trim());
+      expect(dates).toEqual(['2026-02-09', '2026-05-09']);
+    });
   });
 
   describe('the transactions panel — sorting, pagination and virtualization', () => {
@@ -524,7 +731,9 @@ describe('AssetDetailPage', () => {
       fixture.detectChanges();
 
       const dates = Array.from(
-        fixture.nativeElement.querySelectorAll('tbody td:first-child') as NodeListOf<HTMLElement>,
+        fixture.nativeElement.querySelectorAll(
+          'table.detail__transactions tbody td:first-child',
+        ) as NodeListOf<HTMLElement>,
       ).map((el) => el.textContent?.trim());
       expect(dates).toEqual(['2026-08-01', '2026-07-20']);
     });
@@ -561,7 +770,7 @@ describe('AssetDetailPage', () => {
         fixture.detectChanges();
 
         expect(fixture.nativeElement.querySelector('app-table-pager .table-pager')).not.toBeNull();
-        expect(fixture.nativeElement.querySelectorAll('tbody tr').length).toBe(25);
+        expect(fixture.nativeElement.querySelectorAll('table.detail__transactions tbody tr').length).toBe(25);
       },
       // 30 rows plus flushStockAssetRequests's own multi-tick polling is
       // genuinely more work than this file's other cases — see the identical

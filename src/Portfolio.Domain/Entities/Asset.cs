@@ -60,4 +60,10 @@ public class Asset
     public ICollection<PriceHistory> PriceHistories { get; set; } = new List<PriceHistory>();
 
     public PriceQuote? PriceQuote { get; set; }
+
+    /// <summary>Dividend payment history — stocks only, never populated for crypto.</summary>
+    public ICollection<DividendEvent> DividendEvents { get; set; } = new List<DividendEvent>();
+
+    /// <summary>Dividend backfill state — stocks only, never populated for crypto.</summary>
+    public AssetDividendState? DividendState { get; set; }
 }

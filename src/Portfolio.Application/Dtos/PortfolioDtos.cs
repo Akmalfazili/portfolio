@@ -66,7 +66,25 @@ public sealed record HoldingDto(
     decimal MarketValueUsd,
     decimal UnrealizedPnlUsd,
     decimal? UnrealizedPnlPercent,
-    decimal RealizedPnlUsd);
+    decimal RealizedPnlUsd,
+
+    /// <summary>
+    /// Trailing-12-month dividend income, in USD, estimated from ex-date holdings (see
+    /// <c>IDividendIncomeCalculator</c>) — never recorded cash actually received. Null for
+    /// <see cref="Domain.Enums.AssetClass.Crypto"/> (which pays no dividends and is out of scope
+    /// entirely — this DTO is shared across both asset classes, and crypto reports null here,
+    /// never <c>0</c>) and null for a stock whose <see cref="DividendCoverageStatus"/> is
+    /// <see cref="DividendCoverageStatus.NotYetFetched"/>, so ignorance is never mistaken for
+    /// a real zero.
+    /// </summary>
+    decimal? DividendsTrailing12MonthUsd,
+
+    /// <summary>All-time dividend income, in USD. Same null rules as <see cref="DividendsTrailing12MonthUsd"/>.</summary>
+    decimal? DividendsAllTimeUsd,
+
+    /// <summary>Null for crypto (the concept does not apply); always set for a stock — see
+    /// <see cref="DividendCoverageStatus"/> for what each value means.</summary>
+    DividendCoverageStatus? DividendCoverageStatus);
 
 /// <summary>
 /// Portfolio-level totals for one <see cref="Domain.Enums.AssetClass"/> — stocks and crypto never
@@ -87,6 +105,25 @@ public sealed record PortfolioSummaryDto(
     decimal? TotalUnrealizedPnlPercent,
     decimal TotalRealizedPnlUsd,
     int UnpricedHoldingsCount,
+
+    /// <summary>Portfolio-level trailing-12-month dividend income, in USD. Null for
+    /// <see cref="AssetClass.Crypto"/> (the concept does not apply there); for
+    /// <see cref="AssetClass.Stock"/> it is a real, summed total (holdings with no figure yet
+    /// contribute zero to it — the same "zero contribution, separate caveat count" pattern
+    /// <see cref="UnpricedHoldingsCount"/> already uses for market value) — see
+    /// <see cref="DividendsUncoveredCount"/> for the caveat.</summary>
+    decimal? TotalDividendsTrailing12MonthUsd,
+
+    /// <summary>Portfolio-level all-time dividend income, in USD. Same null rule as
+    /// <see cref="TotalDividendsTrailing12MonthUsd"/>.</summary>
+    decimal? TotalDividendsAllTimeUsd,
+
+    /// <summary>How many <see cref="AssetClass.Stock"/> holdings do not have
+    /// <see cref="DividendCoverageStatus.Covered"/> dividend data — mirrors
+    /// <see cref="UnpricedHoldingsCount"/>'s role: lets a caller caveat the dividend totals rather
+    /// than presenting them as complete when some assets have never been fetched or last failed.
+    /// Always <c>0</c> for a <see cref="AssetClass.Crypto"/> summary.</summary>
+    int DividendsUncoveredCount,
     IReadOnlyList<HoldingDto> Holdings);
 
 /// <summary>One slice of the allocation pie. Only currently-held (quantity &gt; 0) assets appear —

@@ -19,7 +19,7 @@ namespace Portfolio.Infrastructure.MarketData.Yahoo;
 public sealed class YahooQuoteProvider(
     HttpClient httpClient,
     TimeProvider timeProvider,
-    ILogger<YahooQuoteProvider> logger) : IQuoteProvider
+    ILogger<YahooQuoteProvider> logger) : IQuoteProvider, IDividendProvider
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -160,6 +160,75 @@ public sealed class YahooQuoteProvider(
         {
             logger.LogWarning(ex, "Yahoo chart history for {Symbol} threw", asset.ProviderSymbol);
             return HistoryFetchResult.Failed(from, "Yahoo request failed.");
+        }
+    }
+
+    /// <summary>
+    /// See <see cref="IDividendProvider"/> — this is called for <b>every</b> stock, not just the
+    /// assets this class is routed to as an <see cref="IQuoteProvider"/>, so the symbol it uses
+    /// comes from <see cref="YahooDividendSymbolResolver"/> rather than the routing-gated
+    /// <see cref="Asset.ProviderSymbol"/> check the quote/history methods above use. Reuses this
+    /// same <c>HttpClient</c> registration (browser User-Agent, <c>RedactingLoggingHandler</c>) —
+    /// deliberately not a separate typed client.
+    /// </summary>
+    public async Task<DividendHistoryFetchResult> GetDividendHistoryAsync(
+        Asset asset, DateOnly from, DateOnly to, CancellationToken cancellationToken)
+    {
+        var yahooSymbol = YahooDividendSymbolResolver.Resolve(asset);
+        if (yahooSymbol is null)
+        {
+            throw new InvalidOperationException(
+                $"Asset {asset.Id} ({asset.Symbol}) has no Yahoo dividend symbol — only Stock assets pay dividends.");
+        }
+
+        var period1 = new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero).ToUnixTimeSeconds();
+        var period2 = new DateTimeOffset(to.ToDateTime(TimeOnly.MaxValue), TimeSpan.Zero).ToUnixTimeSeconds();
+
+        try
+        {
+            var requestUri =
+                $"v8/finance/chart/{Uri.EscapeDataString(yahooSymbol)}" +
+                $"?period1={period1}&period2={period2}&interval=1d&events=div";
+            using var response = await httpClient.GetAsync(requestUri, cancellationToken);
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                logger.LogWarning(
+                    "Yahoo chart dividends for {Symbol} failed with status {StatusCode}",
+                    yahooSymbol,
+                    (int)response.StatusCode);
+                return DividendHistoryFetchResult.Failed($"Yahoo returned HTTP {(int)response.StatusCode}.");
+            }
+
+            var payload = JsonSerializer.Deserialize<YahooChartResponse>(json, JsonOptions);
+            var result = payload?.Chart?.Result?.FirstOrDefault();
+
+            if (payload?.Chart?.Error is not null || result is null)
+            {
+                logger.LogWarning("Yahoo chart dividends for {Symbol} returned no result", yahooSymbol);
+                return DividendHistoryFetchResult.Failed("Yahoo chart response had no result.");
+            }
+
+            var currency = result.Meta?.Currency ?? asset.Currency;
+            var events = result.Events?.Dividends?.Values is { } dividendValues
+                ? (IEnumerable<YahooDividendEvent>)dividendValues
+                : [];
+
+            var points = events
+                .Select(e => new DividendPoint(
+                    DateOnly.FromDateTime(DateTimeOffset.FromUnixTimeSeconds(e.Date).UtcDateTime),
+                    e.Amount,
+                    currency))
+                .OrderBy(p => p.ExDate)
+                .ToList();
+
+            return DividendHistoryFetchResult.Ok(points);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Yahoo chart dividends for {Symbol} threw", yahooSymbol);
+            return DividendHistoryFetchResult.Failed("Yahoo request failed.");
         }
     }
 }

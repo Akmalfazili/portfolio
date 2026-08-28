@@ -101,6 +101,24 @@ public static class AssetsEndpoints
                 : TypedResults.ValidationProblem(result.Error.ValidationErrors!);
         });
 
+        // Stocks only, same shape as /performance above — a crypto asset id returns a clean 400
+        // rather than an empty payment history that would render as "no dividends ever paid".
+        group.MapGet("/{id:int}/dividends", async Task<Results<Ok<AssetDividendHistoryDto>, NotFound, ValidationProblem>> (
+            int id,
+            IDividendService dividendService,
+            CancellationToken cancellationToken) =>
+        {
+            var result = await dividendService.GetAssetDividendHistoryAsync(id, cancellationToken);
+            if (result.IsSuccess)
+            {
+                return TypedResults.Ok(result.Value!);
+            }
+
+            return result.Error!.Kind == ServiceErrorKind.NotFound
+                ? TypedResults.NotFound()
+                : TypedResults.ValidationProblem(result.Error.ValidationErrors!);
+        });
+
         return app;
     }
 }

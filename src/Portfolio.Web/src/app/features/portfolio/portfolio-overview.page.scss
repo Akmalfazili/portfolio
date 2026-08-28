@@ -1,3 +1,5 @@
+@use '../../../styles/ui.mixins' as ui;
+
 .overview {
   max-width: var(--ui-layout-content-max-wide);
   margin: 0 auto;
@@ -33,11 +35,54 @@
   }
 }
 
+// The dividend tile's supporting all-time figure, projected into
+// app-stat-tile's `.stat-tile__delta` slot — muted since it is secondary to
+// the trailing-12-month headline, same subordination as the units-held/
+// avg-cost pairing on the asset-detail header.
+.overview__dividends-alltime {
+  color: var(--ui-color-on-surface-muted);
+}
+
+// The flexbox attempt that shipped earlier the same day fixed the orphan
+// but replaced it with something worse, confirmed live: four 231px tiles
+// plus one stretched to 960px -- four times the width of every sibling,
+// giving Dividends the most visual weight on the page. Reverted to CSS
+// Grid with an EXPLICIT column count instead of `auto-fit` guessing one
+// from `minmax(...)`: `auto-fit` is exactly what produced both broken
+// states, because it sizes a row by "however many tiles fit," which is
+// four at this container's 960px cap (--ui-layout-content-max-wide) --
+// never five, regardless of how the leftover fifth tile is then handled.
+// An explicit `repeat(5, 1fr)` (stock) / `repeat(4, 1fr)` (crypto) has no
+// leftover to handle: every tile is always an equal share of one row, so
+// none can ever carry more visual weight than another.
+//
+// The explicit column count only applies at/above the `md` breakpoint --
+// the closest existing token to this container's own 960px cap, reused
+// rather than inventing a new one (SCSS breakpoints are the one place a
+// raw px value is allowed at all, per ui.mixins.scss's own header comment).
+// Below `md`, `auto-fit, minmax(--ui-layout-tile-min-width, 1fr)` governs,
+// the same proven pattern `.gain-loss-card` already uses at its own
+// (narrower) container width -- a partial last row there reads as an
+// ordinary responsive reflow, not as one tile carrying the whole row's
+// weight, which is the actual defect this replaces.
 .overview__tiles {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(var(--ui-layout-tile-min-width), 1fr));
   gap: var(--ui-space-3);
   margin-bottom: var(--ui-space-6);
+
+  @include ui.ui-breakpoint-up(md) {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+// Stock overview only (isStock() sets this modifier class explicitly --
+// never inferred from tile count, matching the app's existing rule that a
+// shared template never sniffs its own data to decide layout).
+.overview__tiles--five {
+  @include ui.ui-breakpoint-up(md) {
+    grid-template-columns: repeat(5, 1fr);
+  }
 }
 
 .overview__panel {

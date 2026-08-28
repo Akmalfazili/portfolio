@@ -261,6 +261,19 @@ export interface HoldingDto {
   unrealizedPnlUsd: number;
   unrealizedPnlPercent: number | null;
   realizedPnlUsd: number;
+
+  /**
+   * Dividend income tracking (2026-08-28) — `null` for every `Crypto` holding
+   * (crypto pays no dividends and keeps no such data at all), and the two USD
+   * amounts are `null` (never `0`) for a `Stock` holding whose
+   * `dividendCoverageStatus` is `NotYetFetched` — a real `0` means "fetched
+   * and genuinely pays nothing," which is a different fact from "not fetched
+   * yet." See `AssetDividendHistoryDto` for the per-payment detail behind
+   * these totals.
+   */
+  dividendsTrailing12MonthUsd: number | null;
+  dividendsAllTimeUsd: number | null;
+  dividendCoverageStatus: DividendCoverageStatus | null;
 }
 
 /**
@@ -280,6 +293,19 @@ export interface PortfolioSummaryDto {
   totalRealizedPnlUsd: number;
   unpricedHoldingsCount: number;
   holdings: HoldingDto[];
+
+  /**
+   * Portfolio-level dividend totals — `null` for a `Crypto` summary (crypto
+   * pays no dividends). `dividendsUncoveredCount` is how many `Stock`
+   * holdings are NOT `Covered` (`NotYetFetched` or `FetchFailed`); when it is
+   * greater than zero the two totals above are partial and must be captioned
+   * as such — the same "zero-contribution total plus a separate caveat
+   * count" shape as `unpricedHoldingsCount` (D17), applied to dividend
+   * income instead of market value.
+   */
+  totalDividendsTrailing12MonthUsd: number | null;
+  totalDividendsAllTimeUsd: number | null;
+  dividendsUncoveredCount: number;
 }
 
 /** One slice of the allocation pie. Only currently-held (quantity > 0) assets appear. */
@@ -347,4 +373,51 @@ export interface AnnualReturnDto {
 /** Stocks only, across the whole stock portfolio — not per asset. */
 export interface AnnualReturnsDto {
   years: AnnualReturnDto[];
+}
+
+// -----------------------------------------------------------------------------
+// Dividend income tracking (2026-08-28). Stocks only — `GET
+// /api/assets/{id}/dividends` rejects a crypto asset id with a 400 before any
+// DTO is built, and every dividend field on `HoldingDto`/`PortfolioSummaryDto`
+// is `null` for `Crypto`. These figures are COMPUTED from units held on each
+// ex-date, never recorded cash actually received — they exclude withholding
+// tax, DRIP and scrip handling, so the UI must caption them as an estimate,
+// never present them as a broker statement.
+// -----------------------------------------------------------------------------
+
+/**
+ * `NotYetFetched` and a real `Covered` zero (a stock that pays no dividend)
+ * must never look the same — `NotYetFetched`'s two USD totals are `null`,
+ * `Covered`'s are real numbers (including a legitimate `0`). `FetchFailed`
+ * means the last attempt errored, distinct from both.
+ */
+export type DividendCoverageStatus = 'Covered' | 'NotYetFetched' | 'FetchFailed';
+
+/**
+ * One dividend payment, newest ex-date first in `AssetDividendHistoryDto.payments`.
+ * `amountPerShareNative` is in the asset's OWN `currency` (Z74 pays in SGD) —
+ * never render it with `MoneyPipe`'s USD default. `incomeUsd` is the already-
+ * converted USD figure (`amountPerShareNative * unitsHeldAtExDate`, FX-converted
+ * at the ex-date's own rate) — the frontend does no FX math itself.
+ */
+export interface DividendPaymentDto {
+  /** A C# `DateOnly`, serialised as a plain "YYYY-MM-DD" string — never round-tripped through `toISOString()`. */
+  exDate: string;
+  amountPerShareNative: number;
+  currency: string;
+  unitsHeldAtExDate: number;
+  incomeUsd: number;
+}
+
+/** Stocks only — requesting this for a crypto asset id is rejected with a 400 before this DTO is built; an unknown id is a 404. */
+export interface AssetDividendHistoryDto {
+  assetId: number;
+  symbol: string;
+  name: string;
+  currency: string;
+  trailing12MonthIncomeUsd: number | null;
+  allTimeIncomeUsd: number | null;
+  coverageStatus: DividendCoverageStatus;
+  /** Newest ex-date first. */
+  payments: DividendPaymentDto[];
 }

@@ -4,6 +4,13 @@
   gap: var(--ui-space-1);
   font-weight: var(--ui-font-weight-medium);
   color: var(--ui-color-on-surface-secondary);
+  // Lets the whole inline-flex box shrink to fit a narrow tile instead of
+  // overflowing it — the shrink-to-fit box was already bounded by its
+  // container's width in principle, but had no valid place to break onto a
+  // second line without .gain-loss__value's own flex-wrap below, so it
+  // overflowed rather than shrinking. This is the ceiling; that's the break
+  // point.
+  max-width: 100%;
 }
 
 .gain-loss--gain {
@@ -17,6 +24,9 @@
 .gain-loss__icon-wrap {
   display: inline-flex;
   align-items: center;
+  // Never shrinks or wraps away — the icon is the one fixed-size element
+  // here, everything else yields to it.
+  flex: none;
 }
 
 /* D18 — an <svg>, no longer a font glyph, so it needs no font-size and it
@@ -27,7 +37,26 @@
   display: block;
 }
 
+// A narrow stat tile (five equal tiles in a 960px row, see
+// portfolio-overview.page.scss) can be too narrow for "+$17,494.91 · +41.29%"
+// on one line. The three children (amount / separator / percent) carry no
+// literal whitespace between them in the rendered template, so the browser
+// has no text-level line-break opportunity between them at all — plain
+// inline wrapping could never save this regardless of the container's own
+// width, which is why the failure mode was an outright overflow
+// (scrollWidth > clientWidth) rather than a graceful wrap. Making this box
+// itself a flex container with flex-wrap: wrap gives three real, deliberate
+// break points (between the flex items, independent of any text
+// whitespace), so the amount and "· percent" can land on separate lines
+// when the tile is narrow, and stay on one line exactly as before whenever
+// there's room. min-width: 0 lets it actually shrink smaller than its
+// unwrapped content width rather than being held at that width by the
+// default flex-item automatic minimum size.
 .gain-loss__value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  min-width: 0;
   font-variant-numeric: var(--ui-font-numeric-variant);
 }
 

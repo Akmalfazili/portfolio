@@ -65,6 +65,7 @@ public static class DependencyInjection
         // Phase 3 decision to keep it thin) while Portfolio.Infrastructure already does.
         services.Configure<PriceBackfillOptions>(configuration.GetSection(PriceBackfillOptions.SectionName));
         services.Configure<PriceRefreshOptions>(configuration.GetSection(PriceRefreshOptions.SectionName));
+        services.Configure<DividendBackfillOptions>(configuration.GetSection(DividendBackfillOptions.SectionName));
 
         services.AddTransient<RedactingLoggingHandler>();
 
@@ -144,6 +145,12 @@ public static class DependencyInjection
         services.AddScoped<IQuoteProvider>(sp => sp.GetRequiredService<YahooQuoteProvider>());
         services.AddScoped<IFxRateProvider>(sp => sp.GetRequiredService<TwelveDataFxProvider>());
         services.AddScoped<ITwelveDataUsageProvider>(sp => sp.GetRequiredService<TwelveDataUsageProvider>());
+
+        // Dividend history is Yahoo-only for every stock (see YahooDividendSymbolResolver's own
+        // remarks — this is a wider reach than the QuoteProviderKind routing above, since Twelve
+        // Data's free tier gates fundamentals data). Reuses YahooQuoteProvider's own HttpClient
+        // registration above rather than a second typed client for the same host.
+        services.AddScoped<IDividendProvider>(sp => sp.GetRequiredService<YahooQuoteProvider>());
 
         services.AddScoped<IQuoteProviderRouter, QuoteProviderRouter>();
 

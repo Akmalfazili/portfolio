@@ -106,13 +106,34 @@
   @include ui.ui-visually-hidden;
 }
 
-.detail__transactions {
+.detail__dividend-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--ui-layout-tile-min-width), 1fr));
+  gap: var(--ui-space-3);
+  margin-bottom: var(--ui-space-4);
+}
+
+// The dividend-estimate caveat — required reading alongside the payment
+// table so the figures are never mistaken for a broker statement. Short and
+// non-alarming: a caption, not a warning banner.
+.detail__dividend-caveat {
+  margin: var(--ui-space-2) 0 0;
+  font-size: var(--ui-font-size-xs);
+  color: var(--ui-color-on-surface-muted);
+}
+
+// `.detail__dividends-table` shares this exact styling (never `.detail__transactions`
+// itself, kept deliberately distinct so a test/selector scoped to one table never
+// accidentally matches the other's rows — see asset-detail.page.spec.ts).
+.detail__transactions,
+.detail__dividends-table {
   width: 100%;
   border-collapse: collapse;
   font-size: var(--ui-font-size-sm);
 }
 
-.detail__transactions th {
+.detail__transactions th,
+.detail__dividends-table th {
   text-align: left;
   color: var(--ui-color-on-surface-muted);
   font-weight: var(--ui-font-weight-medium);
@@ -121,7 +142,8 @@
   height: auto;
 }
 
-.detail__transactions td {
+.detail__transactions td,
+.detail__dividends-table td {
   padding: var(--ui-space-2) var(--ui-space-3);
   border-bottom: 1px solid var(--ui-color-gridline);
   color: var(--ui-color-on-surface);

@@ -51,8 +51,16 @@ public sealed class QuoteStalenessTests : IDisposable
 
     public void Dispose() => _db.Dispose();
 
-    private PortfolioSummaryService SutAt(DateTimeOffset now) =>
-        new(_db, new FixedTimeProvider(now), new AverageCostCalculator(), new MarketCalendar());
+    private PortfolioSummaryService SutAt(DateTimeOffset now)
+    {
+        var timeProvider = new FixedTimeProvider(now);
+        return new(
+            _db,
+            timeProvider,
+            new AverageCostCalculator(),
+            new MarketCalendar(),
+            new DividendService(_db, new DividendIncomeCalculator(), timeProvider));
+    }
 
     private Asset AddAsset(int id, string symbol, AssetClass assetClass, string currency, QuoteProviderKind provider)
     {

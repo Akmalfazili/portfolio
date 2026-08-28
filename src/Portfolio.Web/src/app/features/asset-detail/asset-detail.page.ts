@@ -4,12 +4,21 @@ import { Router, RouterLink } from '@angular/router';
 import { MatSortModule, Sort } from '@angular/material/sort';
 import { ScrollingModule } from '@angular/cdk/scrolling';
 
-import { AssetClass, AssetDto, AssetPerformanceDto, PortfolioSummaryDto, TransactionDto } from '../../core/api/models';
+import {
+  AssetClass,
+  AssetDividendHistoryDto,
+  AssetDto,
+  AssetPerformanceDto,
+  DividendPaymentDto,
+  PortfolioSummaryDto,
+  TransactionDto,
+} from '../../core/api/models';
 import { API_ROUTES } from '../../core/api/api-routes';
 import { PriceStore } from '../../core/prices/price-store';
 import { MoneyPipe } from '../../shared/pipes/money.pipe';
 import { QuantityPipe } from '../../shared/pipes/quantity.pipe';
 import { StateMessage } from '../../shared/state-message/state-message';
+import { StatTile } from '../../shared/stat-tile/stat-tile';
 import { formatCloseDate } from '../../shared/util/local-date';
 import { TablePager } from '../../shared/table/table-pager/table-pager';
 import { ALL_ROWS, TableSort, createTableState } from '../../shared/table/table-state';
@@ -19,6 +28,7 @@ import { GainLossCard } from './components/gain-loss-card';
 import { CostVsMarketChart } from './components/cost-vs-market-chart';
 
 type TransactionColumn = 'date' | 'type' | 'quantity' | 'price' | 'fees';
+type DividendColumn = 'exDate' | 'amount' | 'units' | 'income';
 
 /**
  * Shared by /stocks/:symbol and /crypto/:symbol. `symbol` and `assetClass`
@@ -39,6 +49,7 @@ type TransactionColumn = 'date' | 'type' | 'quantity' | 'price' | 'fees';
     MoneyPipe,
     QuantityPipe,
     StateMessage,
+    StatTile,
     GainLossCard,
     CostVsMarketChart,
     MatSortModule,
@@ -104,6 +115,55 @@ export class AssetDetailPage {
   });
 
   readonly performancePoints = computed(() => this.performanceResource.value()?.points ?? []);
+
+  /**
+   * Dividend income tracking (2026-08-28) — stocks only, same
+   * asset-must-resolve-first shape as `performanceResource`: the endpoint
+   * 400s for a crypto asset id, so this is never even requested for one (an
+   * `undefined` httpResource url), not called and discarded.
+   */
+  private readonly dividendsResource = httpResource<AssetDividendHistoryDto | undefined>(() => {
+    const asset = this.asset();
+    return asset && this.isStock() ? API_ROUTES.assetDividends(asset.id) : undefined;
+  });
+
+  readonly isDividendsLoading = computed(() => this.dividendsResource.isLoading());
+  readonly dividendHistory = computed(() => this.dividendsResource.value());
+  readonly dividendCoverageStatus = computed(() => this.dividendHistory()?.coverageStatus ?? null);
+  readonly dividendPayments = computed(() => this.dividendHistory()?.payments ?? []);
+  readonly hasDividendPayments = computed(() => this.dividendPayments().length > 0);
+
+  /**
+   * `FetchFailed` (the backend's own honest classification of the last
+   * background attempt) and a genuine HTTP failure on THIS request are both
+   * "we don't have reliable dividend data right now" from the reader's point
+   * of view, so they share one error treatment with a retry — retrying just
+   * re-fetches the current (possibly since-recovered) state, it does not
+   * force a new Yahoo call itself.
+   */
+  readonly dividendsUnavailable = computed(
+    () => this.dividendsResource.error() != null || this.dividendCoverageStatus() === 'FetchFailed',
+  );
+
+  readonly dividendTableState = createTableState<DividendPaymentDto, DividendColumn>({
+    rows: this.dividendPayments,
+    columns: {
+      exDate: (p) => p.exDate,
+      amount: (p) => p.amountPerShareNative,
+      units: (p) => p.unitsHeldAtExDate,
+      income: (p) => p.incomeUsd,
+    },
+    // Newest ex-date first, matching the backend's own ordering.
+    defaultSort: { active: 'exDate', direction: 'desc' },
+  });
+
+  onDividendSortChange(sort: Sort): void {
+    this.dividendTableState.setSort(sort as TableSort<DividendColumn>);
+  }
+
+  retryDividends(): void {
+    this.dividendsResource.reload();
+  }
 
   private readonly transactionsResource = httpResource<TransactionDto[] | undefined>(() => {
     const asset = this.asset();

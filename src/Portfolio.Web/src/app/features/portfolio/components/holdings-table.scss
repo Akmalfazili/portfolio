@@ -61,6 +61,26 @@
   font-style: normal;
 }
 
+// Dividend fetch failure — deliberately NOT the same muted-italic treatment
+// as `&__pending` ("not attempted yet"): a failed attempt is a different fact
+// from "never asked", so it gets its own colour (status-serious, distinct
+// from the amber status-warning already used for the Close caption above)
+// plus an icon, never colour alone.
+.holdings-table__dividend-failed {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-space-1);
+  color: var(--ui-color-status-serious);
+  font-weight: var(--ui-font-weight-medium);
+  font-style: normal;
+
+  mat-icon {
+    width: var(--ui-size-icon-sm);
+    height: var(--ui-size-icon-sm);
+    font-size: var(--ui-size-icon-sm);
+  }
+}
+
 // Accessible name for the table as a whole (rule: every table needs one) —
 // visually hidden, not a second visible title (the panel above it already
 // has "Holdings" as an <h2>).

@@ -37,6 +37,17 @@ const MONTH_ABBR = [
 ];
 
 /**
+ * Formats a plain `DateOnly` "YYYY-MM-DD" string (e.g. a transaction's
+ * `tradeDate` or a dividend payment's `exDate`) as `"Fri 24 Jul"`. Built on
+ * `fromDateOnlyString`, so it reads local date parts directly and never
+ * round-trips through `toISOString()` — see this file's header comment.
+ */
+export function formatDateOnly(value: string): string {
+  const date = fromDateOnlyString(value);
+  return `${WEEKDAY_ABBR[date.getDay()]} ${date.getDate()} ${MONTH_ABBR[date.getMonth()]}`;
+}
+
+/**
  * Formats a D20 `priceAsOf` CLOSE timestamp — e.g. `"2026-07-24T00:00:00+00:00"`
  * — as `"Fri 24 Jul"`. Used only for `priceSource: "Close"`, never for a
  * genuinely live quote; a stale close must never be labelled as if it were
@@ -59,6 +70,5 @@ const MONTH_ABBR = [
  * machine happens to run at.
  */
 export function formatCloseDate(priceAsOf: string): string {
-  const date = fromDateOnlyString(priceAsOf.slice(0, 10));
-  return `${WEEKDAY_ABBR[date.getDay()]} ${date.getDate()} ${MONTH_ABBR[date.getMonth()]}`;
+  return formatDateOnly(priceAsOf.slice(0, 10));
 }

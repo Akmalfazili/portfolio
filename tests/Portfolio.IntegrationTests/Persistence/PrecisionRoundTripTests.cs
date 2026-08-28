@@ -113,6 +113,63 @@ public sealed class PrecisionRoundTripTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DividendAmountPerShare_SurvivesRoundTrip_ForASmallSgdPayout()
+    {
+        // Z74-style sub-dollar SGD payout — decimal(18,2) would round S$0.103 to S$0.10, silently
+        // understating the position's dividend income.
+        const decimal amountPerShare = 0.103m;
+
+        int dividendEventId;
+        await using (var context = CreateContext())
+        {
+            var dividendEvent = new DividendEvent
+            {
+                AssetId = 3, // Z74, seeded
+                ExDate = new DateOnly(2026, 7, 31),
+                AmountPerShare = amountPerShare,
+                Currency = "SGD",
+            };
+            context.DividendEvents.Add(dividendEvent);
+            await context.SaveChangesAsync();
+            dividendEventId = dividendEvent.Id;
+        }
+
+        await using var readContext = CreateContext();
+        var reloaded = await readContext.DividendEvents.AsNoTracking()
+            .SingleAsync(d => d.Id == dividendEventId);
+
+        reloaded.AmountPerShare.Should().Be(amountPerShare);
+    }
+
+    [Fact]
+    public async Task DividendAmountPerShare_SurvivesRoundTrip_ForAFineGrainedFractionalAmount()
+    {
+        // Pins the same fine-grained round trip CLAUDE.md calls out explicitly for this column.
+        const decimal amountPerShare = 0.000123456m;
+
+        int dividendEventId;
+        await using (var context = CreateContext())
+        {
+            var dividendEvent = new DividendEvent
+            {
+                AssetId = 1, // AAPL, seeded
+                ExDate = new DateOnly(2026, 8, 10),
+                AmountPerShare = amountPerShare,
+                Currency = "USD",
+            };
+            context.DividendEvents.Add(dividendEvent);
+            await context.SaveChangesAsync();
+            dividendEventId = dividendEvent.Id;
+        }
+
+        await using var readContext = CreateContext();
+        var reloaded = await readContext.DividendEvents.AsNoTracking()
+            .SingleAsync(d => d.Id == dividendEventId);
+
+        reloaded.AmountPerShare.Should().Be(amountPerShare);
+    }
+
+    [Fact]
     public async Task FxRate_SurvivesRoundTrip()
     {
         const decimal rate = 1.34567891m; // 8 decimal places, per decimal(18,8)

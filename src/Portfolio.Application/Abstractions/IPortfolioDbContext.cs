@@ -27,6 +27,10 @@ public interface IPortfolioDbContext
 
     IQueryable<TwelveDataCreditLedgerEntry> TwelveDataCreditLedgerEntries { get; }
 
+    IQueryable<DividendEvent> DividendEvents { get; }
+
+    IQueryable<AssetDividendState> AssetDividendStates { get; }
+
     void AddAsset(Asset asset);
 
     /// <summary>
@@ -49,7 +53,22 @@ public interface IPortfolioDbContext
 
     void RemovePriceQuotes(IEnumerable<PriceQuote> priceQuotes);
 
+    /// <summary>
+    /// Removes an asset's dividend payment history. Not delegated to the database's cascade —
+    /// see <see cref="RemoveAsset"/>'s remarks, which apply identically here: the Asset →
+    /// DividendEvent foreign key is <c>DeleteBehavior.Restrict</c> on purpose.
+    /// </summary>
+    void RemoveDividendEvents(IEnumerable<DividendEvent> dividendEvents);
+
+    /// <summary>Removes an asset's dividend backfill state row, if it has one. Same explicit-delete
+    /// reasoning as <see cref="RemoveDividendEvents"/>.</summary>
+    void RemoveAssetDividendStates(IEnumerable<AssetDividendState> states);
+
     void AddPriceHistory(PriceHistory priceHistory);
+
+    void AddDividendEvent(DividendEvent dividendEvent);
+
+    void AddAssetDividendState(AssetDividendState state);
 
     void AddFxRate(FxRate fxRate);
 

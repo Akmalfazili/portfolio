@@ -26,8 +26,14 @@
         {{ unpricedCaveat() }}
       </p>
     }
+    @if (hasUncoveredDividends()) {
+      <p class="overview__caveat">
+        <mat-icon aria-hidden="true">warning</mat-icon>
+        {{ dividendsCaveat() }}
+      </p>
+    }
 
-    <div class="overview__tiles">
+    <div class="overview__tiles" [class.overview__tiles--five]="isStock()">
       <app-stat-tile label="Total cost basis" [value]="s.totalCostBasisUsd | money"></app-stat-tile>
       <app-stat-tile label="Total market value" [value]="s.totalMarketValueUsd | money"></app-stat-tile>
       <app-stat-tile label="Unrealized gain/loss" [value]="s.totalUnrealizedPnlUsd | money">
@@ -36,6 +42,11 @@
       <app-stat-tile label="Realized gain/loss" [value]="s.totalRealizedPnlUsd | money">
         <app-gain-loss [amountUsd]="s.totalRealizedPnlUsd" />
       </app-stat-tile>
+      @if (isStock()) {
+        <app-stat-tile label="Dividends (12m)" [value]="s.totalDividendsTrailing12MonthUsd | money">
+          <span class="overview__dividends-alltime">All-time {{ s.totalDividendsAllTimeUsd | money }}</span>
+        </app-stat-tile>
+      }
     </div>
 
     <section class="overview__panel">
@@ -62,7 +73,7 @@
 
     <section class="overview__panel">
       <h2 class="overview__panel-title">Holdings</h2>
-      <app-holdings-table [holdings]="holdings()" [basePath]="basePath()" />
+      <app-holdings-table [holdings]="holdings()" [basePath]="basePath()" [showDividends]="isStock()" />
     </section>
   }
 </section>

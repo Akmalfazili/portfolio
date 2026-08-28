@@ -13,7 +13,8 @@ public sealed class PortfolioSummaryService(
     IPortfolioDbContext db,
     TimeProvider timeProvider,
     ICostBasisCalculator costBasisCalculator,
-    IMarketCalendar calendar)
+    IMarketCalendar calendar,
+    IDividendService dividendService)
     : IPortfolioSummaryService
 {
     private const string ReportingCurrency = CostBasisTransactionFactory.ReportingCurrency;
@@ -33,6 +34,18 @@ public sealed class PortfolioSummaryService(
         // zero market value by construction and nothing to caveat.
         var unpricedHoldingsCount = holdings.Count(h => h.QuantityHeld > 0m && h.PriceSource is null);
 
+        // Dividends are Stock-only — a Crypto summary reports null totals (the concept does not
+        // apply) and a DividendsUncoveredCount of zero, which falls out naturally below since no
+        // holding in a Crypto summary has AssetClass.Stock.
+        decimal? totalDividends12m = assetClass == AssetClass.Stock
+            ? holdings.Sum(h => h.DividendsTrailing12MonthUsd ?? 0m)
+            : null;
+        decimal? totalDividendsAllTime = assetClass == AssetClass.Stock
+            ? holdings.Sum(h => h.DividendsAllTimeUsd ?? 0m)
+            : null;
+        var dividendsUncoveredCount = holdings.Count(
+            h => h.AssetClass == AssetClass.Stock && h.DividendCoverageStatus != DividendCoverageStatus.Covered);
+
         return new PortfolioSummaryDto(
             assetClass,
             totalCostBasis,
@@ -41,6 +54,9 @@ public sealed class PortfolioSummaryService(
             totalCostBasis > 0m ? DisplayRounding.Percent(totalUnrealized / totalCostBasis * 100m) : null,
             totalRealized,
             unpricedHoldingsCount,
+            totalDividends12m,
+            totalDividendsAllTime,
+            dividendsUncoveredCount,
             holdings);
     }
 
@@ -104,6 +120,13 @@ public sealed class PortfolioSummaryService(
             .ToDictionary(g => g.Key, g => g.First());
 
         var fxRatesByCurrency = await LoadFxRatesAsync(assets, transactionsByAsset.Keys, cancellationToken);
+
+        // Dividends are Stock-only — never even queried for a Crypto call, so every HoldingDto
+        // built below simply gets the null triple for AssetClass.Crypto (see the ?? fallback
+        // where each HoldingDto is constructed).
+        var dividendsByAsset = assetClass == AssetClass.Stock
+            ? await dividendService.GetSummariesAsync(transactionsByAsset.Keys.ToList(), cancellationToken)
+            : new Dictionary<int, AssetDividendSummary>();
 
         var holdings = new List<HoldingDto>();
 
@@ -217,6 +240,8 @@ public sealed class PortfolioSummaryService(
                 ? DisplayRounding.Percent(unrealizedPnlUsd / costBasisUsd * 100m)
                 : (decimal?)null;
 
+            dividendsByAsset.TryGetValue(asset.Id, out var dividends);
+
             holdings.Add(new HoldingDto(
                 asset.Id,
                 asset.Symbol,
@@ -233,7 +258,10 @@ public sealed class PortfolioSummaryService(
                 marketValueUsd,
                 unrealizedPnlUsd,
                 unrealizedPnlPercent,
-                DisplayRounding.Money(finalStep.RealizedPnlUsd)));
+                DisplayRounding.Money(finalStep.RealizedPnlUsd),
+                dividends?.Trailing12MonthIncomeUsd,
+                dividends?.AllTimeIncomeUsd,
+                dividends?.CoverageStatus));
         }
 
         return holdings;

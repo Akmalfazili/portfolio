@@ -14,14 +14,18 @@ public static class DependencyInjection
         services.AddScoped<ITransactionService, TransactionService>();
         services.AddScoped<IPriceBackfillService, PriceBackfillService>();
         services.AddHostedService<PriceBackfillBackgroundService>();
+        services.AddScoped<IDividendBackfillService, DividendBackfillService>();
+        services.AddHostedService<DividendBackfillBackgroundService>();
 
         // Pure, stateless calculators — no DB dependency, so singletons rather than scoped.
         services.AddSingleton<ICostBasisCalculator, AverageCostCalculator>();
         services.AddSingleton<IPerformanceSeriesBuilder, PerformanceSeriesBuilder>();
         services.AddSingleton<IAnnualReturnCalculator, AnnualReturnCalculator>();
+        services.AddSingleton<IDividendIncomeCalculator, DividendIncomeCalculator>();
 
         services.AddScoped<IPortfolioSummaryService, PortfolioSummaryService>();
         services.AddScoped<IPortfolioPerformanceService, PortfolioPerformanceService>();
+        services.AddScoped<IDividendService, DividendService>();
 
         services.AddSingleton<IMarketCalendar, MarketCalendar>();
 
@@ -32,6 +36,7 @@ public static class DependencyInjection
         services.AddSingleton<ITwelveDataCreditThrottle, TwelveDataCreditThrottle>();
         services.AddSingleton<ManualRefreshInFlightGate>();
         services.AddSingleton<ManualBackfillInFlightGate>();
+        services.AddSingleton<ManualDividendBackfillInFlightGate>();
 
         // Scoped, not singleton: the status store now reads and writes SourceRefreshState through
         // the scoped IPortfolioDbContext, so it must share the ambient scope's DbContext rather

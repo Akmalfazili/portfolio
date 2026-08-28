@@ -44,8 +44,16 @@ public sealed class PortfolioSummaryServiceTests : IDisposable
         _timeProvider = new FixedTimeProvider(NyseSessionNow);
         // The real calendar, not a stub: D4's classification depends on genuine exchange-local
         // date arithmetic and real session hours, and a stub would only assert this test's own
-        // assumptions back at it.
-        _sut = new PortfolioSummaryService(_db, _timeProvider, new AverageCostCalculator(), new MarketCalendar());
+        // assumptions back at it. DividendService is real too (backed by the same in-memory _db)
+        // rather than a stub — with no DividendEvent/AssetDividendState rows seeded, every stock
+        // holding in these tests simply comes back NotYetFetched/null, which none of the existing
+        // assertions below check.
+        _sut = new PortfolioSummaryService(
+            _db,
+            _timeProvider,
+            new AverageCostCalculator(),
+            new MarketCalendar(),
+            new DividendService(_db, new DividendIncomeCalculator(), _timeProvider));
     }
 
     public void Dispose() => _db.Dispose();

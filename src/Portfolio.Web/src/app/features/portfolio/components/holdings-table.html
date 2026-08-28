@@ -18,6 +18,9 @@
         <th scope="col" mat-sort-header="marketValue" class="holdings-table__num">Market value</th>
         <th scope="col" mat-sort-header="unrealized" class="holdings-table__num">Unrealized</th>
         <th scope="col" mat-sort-header="realized" class="holdings-table__num">Realized</th>
+        @if (showDividends()) {
+          <th scope="col" mat-sort-header="dividends" class="holdings-table__num">Dividends (12m)</th>
+        }
       </tr>
     </thead>
     <tbody>
@@ -50,6 +53,27 @@
           <td class="holdings-table__num">
             <app-gain-loss [amountUsd]="holding.realizedPnlUsd" />
           </td>
+          @if (showDividends()) {
+            <td class="holdings-table__num">
+              @switch (dividendCoverage(holding)) {
+                @case ('Covered') {
+                  {{ holding.dividendsTrailing12MonthUsd | money }}
+                }
+                @case ('NotYetFetched') {
+                  <span class="holdings-table__pending">Awaiting dividend data</span>
+                }
+                @case ('FetchFailed') {
+                  <span class="holdings-table__dividend-failed">
+                    <mat-icon aria-hidden="true" inline>error_outline</mat-icon>
+                    Fetch failed
+                  </span>
+                }
+                @default {
+                  <span class="holdings-table__pending">&mdash;</span>
+                }
+              }
+            </td>
+          }
         </tr>
       }
     </tbody>
