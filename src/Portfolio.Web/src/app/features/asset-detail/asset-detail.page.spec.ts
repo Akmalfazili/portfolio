@@ -216,6 +216,88 @@ describe('AssetDetailPage', () => {
     expect(fixture.nativeElement.textContent).toContain("Couldn't load this asset");
   });
 
+  /**
+   * THE regression test for the D40-shaped defect: `httpResource.reload()`
+   * preserves the previous value while flipping `isLoading()` back to `true`
+   * (Angular's own `_resource-chunk.mjs`), so gating the whole page's
+   * content on `isLoading()` alone unmounted and rebuilt the page every time
+   * `PriceStore` completed a refresh cycle. This test fails against the
+   * pre-fix template (which checks `isLoading()` before `asset()`) because
+   * the reload puts `isLoading()` back to `true` and the whole
+   * `@else if (asset(); as found)` branch — and "AAPL" with it — disappears
+   * behind "Loading asset…" while the reload requests are still in flight.
+   */
+  it('keeps the page mounted during a background reload triggered by a refresh cycle — a reload must not blank an asset that already has data', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY_WITH_HOLDING);
+    await flushStockAssetRequests();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain('AAPL');
+
+    fakeHub.emit('RefreshStatus', {
+      lastRefreshedAt: '2026-08-01T10:00:00Z',
+      nyseOpen: false,
+      sgxOpen: false,
+      nextScheduledRunAt: null,
+      sources: [],
+    });
+    fixture.detectChanges();
+    fakeHub.emit('RefreshStatus', {
+      lastRefreshedAt: '2026-08-01T10:05:00Z',
+      nyseOpen: false,
+      sgxOpen: false,
+      nextScheduledRunAt: null,
+      sources: [],
+    });
+    fixture.detectChanges();
+
+    // summaryResource and performanceResource are both reloading now (in
+    // flight, isLoading() true on each) but their previous values are still
+    // there, so the page must keep showing them rather than unmounting.
+    const midReloadText = fixture.nativeElement.textContent as string;
+    expect(midReloadText).not.toContain('Loading asset');
+    expect(midReloadText).toContain('AAPL');
+
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY_WITH_HOLDING);
+    (await waitForRequest(httpMock, API_ROUTES.assetPerformance(1))).flush(PERFORMANCE);
+  });
+
+  it('does not blank the page on a failed background reload — the toolbar refresh indicator surfaces refresh health, not a full-page error', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY_WITH_HOLDING);
+    await flushStockAssetRequests();
+    fixture.detectChanges();
+
+    fakeHub.emit('RefreshStatus', {
+      lastRefreshedAt: '2026-08-01T10:00:00Z',
+      nyseOpen: false,
+      sgxOpen: false,
+      nextScheduledRunAt: null,
+      sources: [],
+    });
+    fixture.detectChanges();
+    fakeHub.emit('RefreshStatus', {
+      lastRefreshedAt: '2026-08-01T10:05:00Z',
+      nyseOpen: false,
+      sgxOpen: false,
+      nextScheduledRunAt: null,
+      sources: [],
+    });
+    fixture.detectChanges();
+
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush('boom', { status: 500, statusText: 'Server Error' });
+    (await waitForRequest(httpMock, API_ROUTES.assetPerformance(1))).flush(PERFORMANCE);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).not.toContain("Couldn't load this asset");
+    expect(text).toContain('AAPL');
+  });
+
   it('shows a "no transactions yet" state when the asset exists but has no holding', async () => {
     fixture.detectChanges();
     httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
@@ -670,6 +752,28 @@ describe('AssetDetailPage', () => {
       // Retrying re-requests the same endpoint.
       fixture.componentInstance.retryDividends();
       fixture.detectChanges();
+      (await waitForRequest(httpMock, API_ROUTES.assetDividends(1))).flush(DIVIDEND_HISTORY);
+    });
+
+    it('keeps the dividends panel mounted during a manual retry reload — a reload must not blank a payment table already on screen', async () => {
+      fixture.detectChanges();
+      httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+      httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY_WITH_HOLDING);
+      await flushStockAssetRequests();
+      fixture.detectChanges();
+
+      expect(fixture.nativeElement.textContent).toContain('2026-05-09');
+
+      fixture.componentInstance.retryDividends();
+      fixture.detectChanges();
+
+      // The reload is in flight (dividendsResource.isLoading() is true) but
+      // the previous payment history is still there, so the panel must keep
+      // showing it rather than swapping in "Loading dividend history…".
+      const midReloadText = fixture.nativeElement.textContent as string;
+      expect(midReloadText).not.toContain('Loading dividend history');
+      expect(midReloadText).toContain('2026-05-09');
+
       (await waitForRequest(httpMock, API_ROUTES.assetDividends(1))).flush(DIVIDEND_HISTORY);
     });
 

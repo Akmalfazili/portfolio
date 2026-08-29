@@ -296,4 +296,105 @@ describe('PortfolioOverviewPage', () => {
     httpMock.expectOne(API_ROUTES.portfolioAllocation('Stock')).flush(STOCK_ALLOCATION);
     httpMock.expectOne(API_ROUTES.stockAnnualReturns).flush(ANNUAL_RETURNS);
   });
+
+  /**
+   * THE regression test for the D40-shaped defect: `httpResource.reload()`
+   * preserves the previous value while flipping `isLoading()` back to `true`
+   * (verified against Angular's own `_resource-chunk.mjs`), so gating the
+   * whole page's content on `isLoading()` alone unmounted and rebuilt 340-670
+   * DOM nodes, both ECharts instances, and the holdings table's sort/page
+   * state on every 2-minute crypto-cadence refresh cycle. This test fails
+   * against the pre-fix template (which checks `isLoading()` before
+   * `summary()`) because the reload puts `isLoading()` back to `true` and the
+   * whole `@else if (summary(); as s)` branch — and "AAPL" with it —
+   * disappears behind the loading spinner while the reload requests are
+   * still in flight.
+   */
+  it('keeps holdings content mounted during a background reload — a reload must not blank a page that already has data', async () => {
+    flushInitial();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain('AAPL');
+
+    fakeHub.emit('RefreshStatus', {
+      lastRefreshedAt: '2026-08-01T10:00:00Z',
+      nyseOpen: false,
+      sgxOpen: false,
+      nextScheduledRunAt: null,
+      sources: [],
+    });
+    fixture.detectChanges();
+
+    fakeHub.emit('RefreshStatus', {
+      lastRefreshedAt: '2026-08-01T10:05:00Z',
+      nyseOpen: false,
+      sgxOpen: false,
+      nextScheduledRunAt: null,
+      sources: [],
+    });
+    fixture.detectChanges();
+
+    // The reload requests are now in flight — each resource's isLoading() is
+    // true — but the previous value is still there, so the page must keep
+    // showing it rather than unmounting the content behind a spinner.
+    const midReloadText = fixture.nativeElement.textContent as string;
+    expect(midReloadText).not.toContain('Loading your holdings');
+    expect(midReloadText).toContain('AAPL');
+
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY);
+    httpMock.expectOne(API_ROUTES.portfolioAllocation('Stock')).flush(STOCK_ALLOCATION);
+    httpMock.expectOne(API_ROUTES.stockAnnualReturns).flush(ANNUAL_RETURNS);
+  });
+
+  it('does not blank the page on a failed background reload — the toolbar refresh indicator surfaces refresh health, not a full-page error', async () => {
+    flushInitial();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    fakeHub.emit('RefreshStatus', {
+      lastRefreshedAt: '2026-08-01T10:00:00Z',
+      nyseOpen: false,
+      sgxOpen: false,
+      nextScheduledRunAt: null,
+      sources: [],
+    });
+    fixture.detectChanges();
+    fakeHub.emit('RefreshStatus', {
+      lastRefreshedAt: '2026-08-01T10:05:00Z',
+      nyseOpen: false,
+      sgxOpen: false,
+      nextScheduledRunAt: null,
+      sources: [],
+    });
+    fixture.detectChanges();
+
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush('boom', { status: 500, statusText: 'Server Error' });
+    httpMock.expectOne(API_ROUTES.portfolioAllocation('Stock')).flush(STOCK_ALLOCATION);
+    httpMock.expectOne(API_ROUTES.stockAnnualReturns).flush(ANNUAL_RETURNS);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).not.toContain("Couldn't load your holdings");
+    expect(text).toContain('AAPL');
+  });
+
+  it("shows the allocation panel's own loading state without blanking the already-loaded summary tiles", async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY);
+    // Allocation request deliberately left unflushed — still in flight, so
+    // `whenStable()` cannot be used here (it would hang on that same open
+    // request); a microtask flush is enough for the summary response alone.
+    await Promise.resolve();
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).not.toContain('Loading your holdings');
+    expect(text).toContain('AAPL');
+    expect(text).toContain('Loading allocation');
+
+    httpMock.expectOne(API_ROUTES.portfolioAllocation('Stock')).flush(STOCK_ALLOCATION);
+    httpMock.expectOne(API_ROUTES.stockAnnualReturns).flush(ANNUAL_RETURNS);
+  });
 });

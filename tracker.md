@@ -34,7 +34,7 @@ daily-vs-per-minute error, D36's "that state is unreachable"). Measure before yo
 | 12 | Asset management + theme toggle | ✅ Done — browser-verified |
 | 11 | End-to-end verification | 🟨 **5 of 6 — the last box is D6, on hold** |
 
-**Defects D1–D43 are all closed except D6**, which is the measurement described below rather
+**Defects D1–D44 are all closed except D6**, which is the measurement described below rather
 than a fault. The register is kept as history, not as a to-do list.
 
 **Test suites, re-run 2026-08-28 (dividend income tracking added, then D41/D42 fixed same day, then
@@ -53,6 +53,12 @@ warnings as before (the ~57 kB-over initial bundle budget from the chart librari
 entry — `asset-detail.page.scss` landing 131 bytes over its 4 kB per-component style budget, from
 the new Dividends panel's rules; both are warnings only, no error, per `angular.json`'s
 `anyComponentStyle` ceiling of 8 kB).
+
+**Frontend re-run 2026-08-29 (D44 — reload-blanking fix):** `ng test` **308/308** across 32 files
+(up from 302/302 — 6 new tests, 3 each in `portfolio-overview.page.spec.ts` and
+`asset-detail.page.spec.ts`, pinning that a background reload — in flight or failed — never
+unmounts already-rendered content). `ng build` unchanged: same two pre-existing budget warnings,
+no new one from the small `shared/util/last-good-value.ts` addition.
 
 ---
 
@@ -1146,6 +1152,101 @@ new ones pinning the `.overview__tiles--five` modifier's presence/absence).
 
 ---
 
+### D44 — a background reload blanked and rebuilt the whole `/stocks` page every 2 minutes (2026-08-29)
+
+**Symptom, confirmed by live browser inspection.** Every 2 minutes the `/stocks` page's entire
+content block was replaced by the "Loading your holdings…" spinner for ~250ms–1.5s, then rebuilt:
+340–670 DOM nodes replaced per cycle, both ECharts instances destroyed and recreated with new
+instance ids, page height collapsing 3107px → viewport height (losing scroll position), and the
+holdings table's sort/pagination state reset. The same pattern existed on the asset-detail page,
+plus its own nested dividend-history loading block.
+
+**Root cause: `httpResource.reload()`'s asymmetric preserve-on-loading /
+discard-on-error behaviour, combined with a template that checked `isLoading()` before checking
+whether there was anything to show.** `PriceStore.lastRefreshedAt()` bumps every 2 minutes because
+CoinGecko's crypto cadence is unconditional (see the cadence description under *Market data*
+above); `PortfolioOverviewPage`'s constructor effect reacts to every completed refresh cycle by
+calling `summaryResource.reload()`, `allocationResource.reload()`, `annualReturnsResource.reload()`
+— structurally correct per rule #2 (react to `PriceStore`, never poll independently). The bug was
+downstream, in how the templates read the resulting state:
+
+- `@if (isLoading()) { <spinner> } @else if (hasError()) { … } @else if (summary(); as s) { <the
+  entire page> }` — `isLoading()` was `summaryResource.isLoading() || allocationResource.isLoading()`,
+  which goes `true` on *every* reload, in-flight or not. Since the loading branch was checked
+  first, the whole `summary()`-gated subtree — tiles, both charts, the holdings table — was
+  destroyed and rebuilt on every cycle, even though `summary()` still held the exact same data the
+  whole time.
+- Read from Angular's own source (`node_modules/@angular/core/fesm2022/_resource-chunk.mjs`),
+  `httpResource.reload()` behaves **asymmetrically**, and both halves of that asymmetry mattered
+  here:
+  1. A reload that is merely **in flight** preserves the previous value — the `state` `linkedSignal`
+     carries the prior `stream` forward when the request URL is unchanged (`status = 'loading'` but
+     `stream = previous.value.stream`), so `hasValue()` stays `true` throughout. This is *why* the
+     unmounting was pure waste: nothing was ever actually missing.
+  2. A reload that **fails** does NOT preserve the previous value. `loadEffect`'s `catch` block
+     replaces the resolved stream wholesale with `signal({ error })`, so `hasValue()`/`value()` both
+     go empty even though good data was on screen a moment before the failed reload. This means
+     `!resource.hasValue()` is the right "loading" guard but the wrong "error" guard — checking it
+     for both would still blank the page on a background reload that happens to fail.
+
+**The fix, and the rule going forward: a loading (or error) branch guarding already-rendered
+content must mean "no value has ever arrived", never "a request is in flight" or "the last request
+failed".** Concretely:
+
+- **Guard per-resource, not blanket.** `PortfolioOverviewPage` no longer has one `isLoading` for
+  the whole page. Only `summaryResource` gates the page shell (tiles + holdings table depend on
+  it); the allocation pie and the annual-return chart reload independently on the *same* trigger
+  but now own their own `allocationIsLoading`/`allocationHasError` and
+  `annualReturnsIsLoading`/`annualReturnsHasError`, each with its own `app-state-message` and its
+  own `retryAllocation()`/`retryAnnualReturns()`. A slow or failed allocation call can no longer
+  mask summary data that already loaded, and a genuinely-empty allocation can still render its own
+  empty state without the summary having to agree.
+- **A small shared helper, `shared/util/last-good-value.ts` (`lastGoodValue`), covers both halves
+  of the asymmetry**, because `hasValue()` alone only covers the in-flight case. It wraps a
+  resource in a `linkedSignal` that keeps returning the last value the resource successfully
+  resolved to, and only updates when `hasValue()` is `true` — so it rides straight through both "in
+  flight, value preserved" and "errored, value discarded" without a extra `signal`/`effect` pair
+  per resource. Every render-affecting read (`summary()`, the allocation slices, `annualReturns()`,
+  `holding()`, `dividendHistory()`) goes through this cache now, never the resource's raw
+  `.value()`, once that resource is reload-driven.
+- **A failed background reload does NOT blow away good data with a full-page error — this was a
+  deliberate choice, not the only valid one.** `PriceStore`'s toolbar refresh indicator (rule #3)
+  already surfaces refresh health; a reload failing silently retries on the next cycle instead of
+  replacing working content with an error state the user did not ask for. `hasError`/
+  `dividendsUnavailable`/etc. now gate on `<resource>.error() != null && <cache>() === undefined` —
+  i.e. only when there is *no* value that has *ever* loaded. The alternative (always show the error,
+  even over stale-but-good data) was considered and rejected: the refresh indicator is a better
+  place for "refresh is unhealthy" than replacing a working page.
+- Applied to **both** pages named in the report: `PortfolioOverviewPage` (page shell + allocation
+  pie + annual-return chart, each decoupled) and `AssetDetailPage` (page shell, covering
+  `assetsResource` and `summaryResource` together since both feed `asset()`/`holding()`, **and**
+  the nested dividend-history `app-state-message` block, which had the identical defect on its own
+  smaller scale via `retryDividends()`).
+
+**The regression test is the point of this fix**, per instruction, and was confirmed to fail
+against the pre-fix code before the fix was applied (temporarily `git stash`ed the `.ts`/`.html`
+changes, kept the new spec assertions, ran them, watched them fail with the exact "still showing
+the spinner" text, then restored the fix and reran green): `portfolio-overview.page.spec.ts` —
+*"keeps holdings content mounted during a background reload — a reload must not blank a page that
+already has data"* and *"does not blank the page on a failed background reload"*; equivalent pairs
+added to `asset-detail.page.spec.ts` for the page shell and the dividends panel. Frontend
+`ng test`: **308/308** across 32 files (up from 302/302 — 6 new tests, 3 in each spec file; `ng
+build` clean, same two pre-existing budget warnings, unaffected by this change).
+
+**Deliberately NOT done: narrowing the reload trigger to per-asset-class sources.** The trigger is
+genuinely over-broad — crypto's 2-minute CoinGecko cadence drives a reload of the `/stocks` page
+even on a cycle where Twelve Data itself last succeeded 4 days ago and nothing stock-side changed.
+Narrowing `PortfolioOverviewPage`'s effect to only reload when *its own* asset class's prices
+actually moved was considered and rejected: the trigger as written is structurally **incapable of
+missing** a refresh (it fires on every completed cycle, full stop), and narrowing it would
+reintroduce this project's single most-repeated defect family — a skip list or a narrowed trigger
+whose name asserts a reason, quietly hiding a staleness bug behind a healthy-looking report (D10,
+D26, D33, D35, D38). The cost of the over-broad trigger is three extra local HTTP requests every 2
+minutes in a single-user app — not worth trading away a category of bug this project has paid for
+five times already.
+
+---
+
 ## Known gaps, deliberately accepted
 
 Not defects — decisions. Each was considered and left as-is.
@@ -1180,7 +1281,7 @@ Not defects — decisions. Each was considered and left as-is.
 
 ---
 
-## Defect register — D1 to D43
+## Defect register — D1 to D44
 
 Kept as a record of what broke and why, so it is not rediscovered. **D6 is the only row not closed,
 and it is a measurement on hold, not a defect** — see the top of this file.
@@ -1232,6 +1333,7 @@ and it is a measurement on hold, not a defect** — see the top of this file.
 | D43 | Every `.stat-tile__value` clipped the bottom 1–2px off its own digits — the Dividends tiles on the asset detail page most visibly, but the overview summary tiles too | 2026-08-28 — user-reported from a screenshot. The element rendered at line-height **1.2**, which sits below this font stack’s actual glyph box, and the `overflow: hidden` that D21’s ellipsis needs then cropped the descenders and the `$`. Fixed with a dedicated `--ui-line-height-numeric-display: 1.3` token. **The first fix attempt was a no-op that passed 302 tests**: it set `line-height: var(--ui-line-height-tight)`, and that token *is* 1.2 — the value already computing. Caught only by measuring `scrollHeight - clientHeight` in the live browser |
 | D41 | A scheduled dividend backfill that processed **zero** assets still wrote a `RefreshRun` unconditionally, and `RunIfDueAsync` gated on *any* scheduled run today rather than one that accomplished something — so a fresh portfolio's first stock transaction was locked out of dividend data for up to 24 hours with nothing indicating why | 2026-08-28 — found by the coordinator live against the dev database (`RefreshRuns` had a `Trigger=4`, `SymbolsRefreshed=0` row from that day while `DividendEvents`/`AssetDividendStates` were both empty). Fixed by gating on the most recent scheduled run with `SymbolsRefreshed > 0`; a zero-asset (or all-failed) run costs nothing to retry since Yahoo is free and keyless, so it no longer consumes the day |
 | D42 | `RefreshTrigger.DividendBackfillManual` existed but nothing ever wrote it — there was no way to trigger a dividend backfill on demand, and no way to recover D41's lockout by hand | 2026-08-28 — `POST /api/dividends/backfill` added (`DividendsEndpoints`), mirroring `POST /api/prices/backfill`'s own conventions exactly: detached onto a background task, guarded by its own `ManualDividendBackfillInFlightGate` (deliberately independent of the price backfill's gate — the two must be able to run concurrently), `202 Accepted` with `DividendBackfillQueuedResult` |
+| D44 | `/stocks` blanked and rebuilt its entire content (340–670 DOM nodes, both ECharts instances, table sort/page state, scroll position) every 2 minutes | 2026-08-29 — `httpResource.reload()` preserves the value while `isLoading()` flips true, but the template checked `isLoading()` before checking whether there was anything to show. Fixed with per-resource loading/error guards keyed on `hasValue()`/a new `lastGoodValue` cache (`shared/util/last-good-value.ts`), never on `isLoading()`/`error()` alone — see the dedicated writeup above |
 
 ---
 
@@ -1253,6 +1355,7 @@ and it is a measurement on hold, not a defect** — see the top of this file.
 | 2026-08-26 | Snackbar action feedback added — `NotificationService` + `AppSnackbar`, replacing the transient inline warning banners on the assets and transactions pages, positioned below the toolbar. Trap 10 recurred on the Dismiss button, caught in review by tracing the token cascade in Material's compiled source rather than by a test. **Not browser-verified** — the Chrome extension is still unavailable (trap 8), so nothing here has been seen rendered in either theme |
 | 2026-08-27 | D40 — allocation pie labelling reworked so every slice carries a leader line and its ticker. **The first browser-verified change in this project**: the Chrome extension connected, so trap 8 did not bite. Four rounds, each one caught by looking at the real render — a threshold that hid small labels, a two-tier leader-line length that starved a mid-size slice of room, text sitting above the line instead of beside it, and a generic `moveOverlap` pass that moved labels without their lines. The last two rounds were settled by measuring the rendered SVG with `getBoundingClientRect()` rather than eyeballing screenshots, which both found a defect screenshots had hidden **and** showed that an earlier "2px overlap" reading from the same method had overstated its own severity. The /crypto cost-basis corner (two $0-cost-basis holdings beside one at 100%) is improved, not clean, and is documented as an accepted limit in the component |
 | 2026-08-28 | D43 — stat-tile value clipping fixed via a new line-height token. The lesson is the **no-op fix that verifies clean**: the first attempt reasoned out a plausible cause (inheriting body’s fixed 20px line-height), wrote a confident comment asserting it, changed the line-height to a token holding the value the element already had, and then passed a full build and 302 tests. Both the diagnosis and the fix were wrong and nothing in the suite could tell. What settled it was measuring the real element: computed line-height was *already* 1.2× before the change, and a swept ratio → overflow table across the component’s whole `clamp()` range (1.2 → 1–2px clipped everywhere, 1.25 → still clipped at floor and ceiling, 1.3 → clean) picked the value. Second browser-verified change in the project |
+| 2026-08-29 | D44 — `/stocks` self-blanking every 2 minutes fixed. `httpResource.reload()` preserves its value while `isLoading()` goes true (in-flight) but discards it entirely on a failed reload (verified by reading `_resource-chunk.mjs` directly), and the overview/asset-detail templates checked `isLoading()` before checking whether there was anything to show. Fixed with per-resource loading/error state (decoupling the allocation pie and annual-return chart from the summary's own state) and a new `lastGoodValue` helper covering both halves of the resource's asymmetric behaviour. The regression test was confirmed failing against the pre-fix code (`git stash` of the `.ts`/`.html` changes only, spec kept) before the fix was restored and reverified green — 308/308 frontend tests, `ng build` clean |
 
 ---
 

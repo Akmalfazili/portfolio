@@ -61,13 +61,37 @@
           <mat-button-toggle value="cost">Cost basis</mat-button-toggle>
         </mat-button-toggle-group>
       </header>
-      <app-allocation-pie-chart [slices]="allocationSlices()" [valueLabel]="allocationValueLabel()" />
+      @if (allocationIsLoading()) {
+        <app-state-message variant="loading" title="Loading allocation…" />
+      } @else if (allocationHasError()) {
+        <app-state-message
+          variant="error"
+          title="Couldn't load allocation"
+          description="Check that the API is running, then try again."
+          actionLabel="Retry"
+          (action)="retryAllocation()"
+        />
+      } @else {
+        <app-allocation-pie-chart [slices]="allocationSlices()" [valueLabel]="allocationValueLabel()" />
+      }
     </section>
 
     @if (isStock()) {
       <section class="overview__panel">
         <h2 class="overview__panel-title">Annual return</h2>
-        <app-annual-return-chart [years]="annualReturns()" />
+        @if (annualReturnsIsLoading()) {
+          <app-state-message variant="loading" title="Loading annual return…" />
+        } @else if (annualReturnsHasError()) {
+          <app-state-message
+            variant="error"
+            title="Couldn't load annual return"
+            description="Check that the API is running, then try again."
+            actionLabel="Retry"
+            (action)="retryAnnualReturns()"
+          />
+        } @else {
+          <app-annual-return-chart [years]="annualReturns()" />
+        }
       </section>
     }
 

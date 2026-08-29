@@ -20,6 +20,7 @@ import { QuantityPipe } from '../../shared/pipes/quantity.pipe';
 import { StateMessage } from '../../shared/state-message/state-message';
 import { StatTile } from '../../shared/stat-tile/stat-tile';
 import { formatCloseDate } from '../../shared/util/local-date';
+import { lastGoodValue } from '../../shared/util/last-good-value';
 import { TablePager } from '../../shared/table/table-pager/table-pager';
 import { ALL_ROWS, TableSort, createTableState } from '../../shared/table/table-state';
 import { TRANSACTION_ROW_HEIGHT_PX } from '../../shared/table/table-row-height';
@@ -73,11 +74,46 @@ export class AssetDetailPage {
     API_ROUTES.portfolioSummary(this.assetClass()),
   );
 
-  readonly isLoading = computed(() => this.assetsResource.isLoading() || this.summaryResource.isLoading());
-  readonly hasError = computed(() => this.assetsResource.error() != null || this.summaryResource.error() != null);
+  /**
+   * `lastGoodValue` (`shared/util/last-good-value.ts`) — NOT the resource's
+   * own `.value()` — is what the page renders from. Two distinct reasons,
+   * both from `httpResource.reload()`'s behaviour (fired every time
+   * `PriceStore` completes a refresh cycle — see the constructor effect
+   * below, and `retry()`, which reloads `assetsResource` too):
+   *
+   * 1. A reload that is merely IN FLIGHT preserves the previous value while
+   *    `isLoading()` flips back to `true`. Gating content on `isLoading()`
+   *    alone unmounted and rebuilt the whole page every 2 minutes even
+   *    though nothing was actually missing.
+   * 2. A reload that FAILS does NOT preserve the previous value — the
+   *    resolved stream is replaced wholesale with `{ error }`, so
+   *    `hasValue()` alone is not enough to keep showing good data across a
+   *    failed background reload.
+   *
+   * See tracker.md's "reload must not blank the page" entry.
+   */
+  private readonly assetsCache = lastGoodValue(this.assetsResource);
+  private readonly summaryCache = lastGoodValue(this.summaryResource);
+
+  readonly isLoading = computed(
+    () =>
+      (this.assetsResource.isLoading() && this.assetsCache() === undefined) ||
+      (this.summaryResource.isLoading() && this.summaryCache() === undefined),
+  );
+  /**
+   * A *reload* that fails while good data is already on screen must not
+   * blow the page away — `PriceStore`'s toolbar refresh indicator already
+   * surfaces refresh health (rule #3). Only a failure with no value EVER
+   * loaded blocks the page — a deliberate choice, not an oversight.
+   */
+  readonly hasError = computed(
+    () =>
+      (this.assetsResource.error() != null && this.assetsCache() === undefined) ||
+      (this.summaryResource.error() != null && this.summaryCache() === undefined),
+  );
 
   readonly asset = computed(() =>
-    (this.assetsResource.value() ?? []).find(
+    (this.assetsCache() ?? []).find(
       (candidate) => candidate.symbol === this.symbol() && candidate.assetClass === this.assetClass(),
     ),
   );
@@ -102,7 +138,7 @@ export class AssetDetailPage {
     if (!asset) {
       return undefined;
     }
-    return this.summaryResource.value()?.holdings.find((h) => h.assetId === asset.id);
+    return this.summaryCache()?.holdings.find((h) => h.assetId === asset.id);
   });
 
   readonly hasNoTransactions = computed(
@@ -127,8 +163,17 @@ export class AssetDetailPage {
     return asset && this.isStock() ? API_ROUTES.assetDividends(asset.id) : undefined;
   });
 
-  readonly isDividendsLoading = computed(() => this.dividendsResource.isLoading());
-  readonly dividendHistory = computed(() => this.dividendsResource.value());
+  /** Same `lastGoodValue` rule as the page-level `isLoading`/`hasError`
+   *  above — `retryDividends()` reloads this resource, and neither an
+   *  in-flight reload nor a FAILED one may blank a payment table that's
+   *  already on screen (see the long comment on `assetsCache` for why a
+   *  failed reload needs the cache and `hasValue()` alone isn't enough). */
+  private readonly dividendsCache = lastGoodValue(this.dividendsResource);
+
+  readonly isDividendsLoading = computed(
+    () => this.dividendsResource.isLoading() && this.dividendsCache() === undefined,
+  );
+  readonly dividendHistory = computed(() => this.dividendsCache());
   readonly dividendCoverageStatus = computed(() => this.dividendHistory()?.coverageStatus ?? null);
   readonly dividendPayments = computed(() => this.dividendHistory()?.payments ?? []);
   readonly hasDividendPayments = computed(() => this.dividendPayments().length > 0);
@@ -142,7 +187,9 @@ export class AssetDetailPage {
    * force a new Yahoo call itself.
    */
   readonly dividendsUnavailable = computed(
-    () => this.dividendsResource.error() != null || this.dividendCoverageStatus() === 'FetchFailed',
+    () =>
+      (this.dividendsResource.error() != null && this.dividendsCache() === undefined) ||
+      this.dividendCoverageStatus() === 'FetchFailed',
   );
 
   readonly dividendTableState = createTableState<DividendPaymentDto, DividendColumn>({
