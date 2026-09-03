@@ -134,7 +134,9 @@ as. Totals carry an unpriced-holdings caveat rather than being quietly wrong.
 
 Outcome lists must distinguish **"not attempted"** from **"attempted and failed"**. A skip list
 whose name asserts a reason is how a silent data-staleness bug hides behind a healthy report —
-this is the most repeated defect family in this project (D10, D26, D33, D35, D38).
+this is the most repeated defect family in this project (D10, D26, D33, D35, D38, D45). D45 is the
+reminder that it applies to *internal* bookkeeping too, not just outward-facing DTOs: an `int?`
+that means both "no call was made" and "a call was made and told us nothing" will lose spend.
 
 ### Design tokens
 
@@ -162,6 +164,13 @@ a new UTC day's row is seeded from `GET /api_usage` instead of zero, and reconci
 Reconciliation is periodic, never per call — `/api_usage` costs a credit itself. `GET
 /api/prices/status` is deliberately outside that path and can **never** cost a credit, which
 makes it the safe thing to poll.
+
+**Every** request to Twelve Data must pass through the throttle's per-minute window, including the
+ones the throttle makes on its own behalf. `/api_usage` costs a credit *and a request slot*, and
+for a long time it took the slot without reserving it — the window then read one short of reality
+and the throttle authorised a 9th request into an 8-request minute (D45). Note the asymmetry that
+hid it: the daily ledger self-corrects at the next reconcile, so it can be perfectly accurate while
+the per-minute pacing is silently wrong. Nothing reconciles the window.
 
 ## Market data
 

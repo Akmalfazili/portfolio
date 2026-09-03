@@ -34,7 +34,7 @@ daily-vs-per-minute error, D36's "that state is unreachable"). Measure before yo
 | 12 | Asset management + theme toggle | ✅ Done — browser-verified |
 | 11 | End-to-end verification | 🟨 **5 of 6 — the last box is D6, on hold** |
 
-**Defects D1–D44 are all closed except D6**, which is the measurement described below rather
+**Defects D1–D45 are all closed except D6**, which is the measurement described below rather
 than a fault. The register is kept as history, not as a to-do list.
 
 **Test suites, re-run 2026-08-28 (dividend income tracking added, then D41/D42 fixed same day, then
@@ -1247,6 +1247,80 @@ five times already.
 
 ---
 
+### D45 — the credit throttle spent a per-minute slot it never reserved (2026-09-03)
+
+User-reported, from the running app: *"why is the last retrieved price for FSLY 28 Aug but for the
+rest last night 2 Sep?"* Two different answers, and only one of them was a defect.
+
+**ARVLF was not a defect.** It was processed successfully in the same run; Twelve Data simply has no
+2026-09-02 close for it. Asked directly for 08-24 → 09-03, the provider returns six points and omits
+09-02 and 08-25 — the only two sessions ARVLF is missing in `PriceHistories` since June. It is a
+$0.0002 OTC shell that does not print a close every session. Worth recording because the *shape* of
+"one asset behind the others" looked identical to the real bug next to it.
+
+**FSLY was.** The mechanism, from `TwelveDataCreditThrottle`:
+
+- The daily ledger and the rolling per-minute window are two independent accounts.
+- The daily one is self-correcting by D39's design — `SeedOrReconcileAsync` overwrites it wholesale
+  from Twelve Data's own counter, so any unrecorded spend is absorbed at the next reconcile.
+- The per-minute `_window` had no equivalent. Exactly one line wrote to it, inside `TryAcquireAsync`.
+- `GET /api_usage` is a real request that costs a real credit, but it is issued from inside
+  `SeedOrReconcileAsync` — *before* `WaitForPerMinuteRoomAsync`, and it never asked permission. It
+  left no trace in `_window`.
+- So in any minute where a seed or reconcile fired, the throttle believed it had 8 free slots when
+  it had 7, and let a 9th request out. Twelve Data 429'd it.
+
+**Reconstructing the victim.** With the backfill's stale-first ordering (D37) collapsing to an
+Id tie-break once every asset shares a last-close date, and Z74 costing nothing because it routes to
+Yahoo, the requests in that first minute are: `/api_usage` (unreserved), FX USD/SGD, AAPL, MSFT,
+AMZN, ARVLF, AVGO, ERIC, **FSLY** — the 9th. The model predicts every run in `RefreshRuns`,
+including the one that does not name FSLY:
+
+| Run | Stalest-first order put… | 429'd |
+|---|---|---|
+| 08-25 | all tied, Id order | FSLY |
+| 08-26 | FSLY first (it failed 08-25), everyone shifts up one | **ERIC** |
+| 08-27 | ERIC first, FSLY back in the 8th slot | FSLY |
+| 08-28 | FSLY first | none, 22/22 |
+| 08-29 | all tied again | FSLY |
+| 08-31 | FSLY first | none, 22/22 |
+| 09-03 | all tied | FSLY |
+
+FSLY was the repeat victim only because Id 11 lands it in that slot whenever the queue is level; it
+self-healed every *other* run, which is why it sat 3 days behind rather than 3 weeks. 09-01 and
+09-02 had no run at all — the stack was down, and `TwelveDataCreditLedgerEntries` has no rows for
+those dates.
+
+**Why nothing caught it.** Every signal that exists read healthy: `creditsUsedToday: 23` was exactly
+right, `GET /api/prices/status` showed all three sources green, and the backfill's own audit row
+named the failure honestly (`1 failed: FSLY (Twelve Data returned HTTP 429.)`) — it just was not
+somewhere anyone looks daily. The frontend showed the gap only as a `priceSource: "Close"` date one
+column over from twenty-one others, which is exactly what D20's honest fallback is *supposed* to
+look like. The defect was invisible to all 268 tests because no test asserted anything about spend
+the throttle did not itself grant.
+
+**The fix.** `ProbeRealUsageAsync` reserves the probe's slot through the same
+`WaitForPerMinuteRoomAsync` path as every other call, before the request goes out, and never
+releases it — a 429'd call is billed in full (D38), so a failed probe has still consumed the
+minute's capacity. `UsageProbe(bool Attempted, int? DailyUsage)` replaces the bare `int?` that
+conflated **no probe was made** (no provider wired — no credit) with **a probe was made and
+failed** (billed) — this project's most-repeated defect family (D10, D26, D33, D35, D38), turned
+inward on the throttle's own accounting. A failed seed now starts the day at that one credit rather
+than zero, a failed reconcile adds it, and `_lastReconciledAt` is stamped on *any* attempt so a sick
+`/api_usage` backs off for the full interval instead of being re-probed — and re-billed, and now
+re-slotted — on every single acquire.
+
+**The regression test was confirmed to fail against the pre-fix code before being accepted**, the
+same discipline as D44: the two lines that reserve the slot were removed, `dotnet test` run, and
+`TryAcquireAsync_TheUsageProbe_ConsumesAPerMinuteSlotOfItsOwn` watched fail (it completes instantly
+without them — 9 requests into an 8-request minute), then restored and rerun green. Backend
+**270/270** (260 unit + 10 integration, up from 268 — three tests added, one renamed and re-pointed
+from `…FallsBackToZero` to `…StillCountsTheProbesOwnCredit`). Then verified against the running
+container stack rather than tests alone: `POST /api/prices/backfill` on a restarted API, which
+forces a reconcile probe on the first acquire — the exact condition that broke.
+
+---
+
 ## Known gaps, deliberately accepted
 
 Not defects — decisions. Each was considered and left as-is.
@@ -1281,7 +1355,7 @@ Not defects — decisions. Each was considered and left as-is.
 
 ---
 
-## Defect register — D1 to D44
+## Defect register — D1 to D45
 
 Kept as a record of what broke and why, so it is not rediscovered. **D6 is the only row not closed,
 and it is a measurement on hold, not a defect** — see the top of this file.
@@ -1333,6 +1407,7 @@ and it is a measurement on hold, not a defect** — see the top of this file.
 | D43 | Every `.stat-tile__value` clipped the bottom 1–2px off its own digits — the Dividends tiles on the asset detail page most visibly, but the overview summary tiles too | 2026-08-28 — user-reported from a screenshot. The element rendered at line-height **1.2**, which sits below this font stack’s actual glyph box, and the `overflow: hidden` that D21’s ellipsis needs then cropped the descenders and the `$`. Fixed with a dedicated `--ui-line-height-numeric-display: 1.3` token. **The first fix attempt was a no-op that passed 302 tests**: it set `line-height: var(--ui-line-height-tight)`, and that token *is* 1.2 — the value already computing. Caught only by measuring `scrollHeight - clientHeight` in the live browser |
 | D41 | A scheduled dividend backfill that processed **zero** assets still wrote a `RefreshRun` unconditionally, and `RunIfDueAsync` gated on *any* scheduled run today rather than one that accomplished something — so a fresh portfolio's first stock transaction was locked out of dividend data for up to 24 hours with nothing indicating why | 2026-08-28 — found by the coordinator live against the dev database (`RefreshRuns` had a `Trigger=4`, `SymbolsRefreshed=0` row from that day while `DividendEvents`/`AssetDividendStates` were both empty). Fixed by gating on the most recent scheduled run with `SymbolsRefreshed > 0`; a zero-asset (or all-failed) run costs nothing to retry since Yahoo is free and keyless, so it no longer consumes the day |
 | D42 | `RefreshTrigger.DividendBackfillManual` existed but nothing ever wrote it — there was no way to trigger a dividend backfill on demand, and no way to recover D41's lockout by hand | 2026-08-28 — `POST /api/dividends/backfill` added (`DividendsEndpoints`), mirroring `POST /api/prices/backfill`'s own conventions exactly: detached onto a background task, guarded by its own `ManualDividendBackfillInFlightGate` (deliberately independent of the price backfill's gate — the two must be able to run concurrently), `202 Accepted` with `DividendBackfillQueuedResult` |
+| D45 | **The throttle's own `GET /api_usage` probe spent a per-minute request slot it never reserved**, so the rolling window read one short of what had left the process and the throttle granted a full 8 credits on top of it — 9 requests into an 8-request minute, and the 9th 429'd. The victim was whichever asset sat 8th in the backfill's Twelve Data order, which held its `PriceHistory` days behind every other holding | 2026-09-03 — user-reported as *"why is FSLY's last price 28 Aug when everything else is 2 Sep?"*. `_window` was only ever written from `TryAcquireAsync`, so the one call the throttle makes on its own behalf was the one call it never recorded. The probe now reserves its slot through the same `WaitForPerMinuteRoomAsync` path as everything else, and `UsageProbe` splits "a billed request left the process" from "it came back with a number" — a failed probe is billed too, and `_lastReconciledAt` is now stamped on any attempt so a sick `/api_usage` can't be re-probed on every acquire. **The daily ledger was never wrong** — D39 made it self-correcting, so `creditsUsedToday` and `GET /api/prices/status` both read perfectly healthy throughout. See the dedicated writeup above |
 | D44 | `/stocks` blanked and rebuilt its entire content (340–670 DOM nodes, both ECharts instances, table sort/page state, scroll position) every 2 minutes | 2026-08-29 — `httpResource.reload()` preserves the value while `isLoading()` flips true, but the template checked `isLoading()` before checking whether there was anything to show. Fixed with per-resource loading/error guards keyed on `hasValue()`/a new `lastGoodValue` cache (`shared/util/last-good-value.ts`), never on `isLoading()`/`error()` alone — see the dedicated writeup above |
 
 ---

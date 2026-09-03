@@ -187,10 +187,16 @@ public sealed class TwelveDataCreditThrottleTests
         status.CreditsUsedToday.Should().Be(5);
     }
 
-    /// <summary>Same reproduction, but the real counter is unreachable (transient failure) — the
-    /// seed must degrade to zero rather than fail the credit request outright.</summary>
+    /// <summary>
+    /// Same reproduction, but the real counter is unreachable (transient failure) — the seed must
+    /// degrade rather than fail the credit request outright. D45 changed what it degrades *to*: the
+    /// probe still went over the wire and Twelve Data still billed it, so the day starts at that
+    /// one credit rather than at zero. Contrast
+    /// <see cref="TryAcquireAsync_FirstWriteOfANewDay_WithNoUsageProviderWired_FallsBackToZero"/>,
+    /// where no request is made at all and zero is the honest answer.
+    /// </summary>
     [Fact]
-    public async Task TryAcquireAsync_FirstWriteOfANewDay_WhenRealUsageUnavailable_FallsBackToZero()
+    public async Task TryAcquireAsync_FirstWriteOfANewDay_WhenRealUsageUnavailable_StillCountsTheProbesOwnCredit()
     {
         var usageProvider = Substitute.For<ITwelveDataUsageProvider>();
         usageProvider.GetDailyUsageAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<int?>(null));
@@ -199,7 +205,75 @@ public sealed class TwelveDataCreditThrottleTests
         (await sut.TryAcquireAsync(5, CancellationToken.None)).Should().BeTrue();
 
         var status = await sut.GetStatusAsync(CancellationToken.None);
-        status.CreditsUsedToday.Should().Be(5);
+        status.CreditsUsedToday.Should().Be(6, "the failed /api_usage probe was billed too — 1 for it, 5 for this request");
+    }
+
+    /// <summary>
+    /// D45's core reproduction, at the throttle level. <c>GET /api_usage</c> is a real Twelve Data
+    /// request that spends a real credit, but the pre-fix code issued it from inside
+    /// <c>SeedOrReconcileAsync</c> and never recorded it in the rolling per-minute window — that
+    /// window was written from <c>TryAcquireAsync</c> alone. So the window read one short of what
+    /// had actually left the process, and the throttle would grant a further full 8 credits on top
+    /// of the probe: 9 requests into an 8-request minute, and Twelve Data 429s the 9th.
+    ///
+    /// Measured live 2026-09-03 against the running stack: the scheduled backfill's 8th Twelve Data
+    /// asset 429'd on every run whose day-seed landed in the same minute (FSLY on 2026-08-25/27/29
+    /// and 09-03, ERIC on 08-26 when the stale-first ordering shuffled FSLY to the front), holding
+    /// that asset's price history days behind every other holding.
+    ///
+    /// Pre-fix this test fails by completing instantly — the point is that it must not.
+    /// </summary>
+    [Fact]
+    public async Task TryAcquireAsync_TheUsageProbe_ConsumesAPerMinuteSlotOfItsOwn()
+    {
+        var usageProvider = Substitute.For<ITwelveDataUsageProvider>();
+        usageProvider.GetDailyUsageAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<int?>(1));
+        var (sut, time) = CreateSut(perMinuteLimit: 8, usageProvider: usageProvider);
+
+        // Seeds the day, which fires the probe: 1 slot for the probe + 1 for this grant = 2 of 8.
+        (await sut.TryAcquireAsync(1, CancellationToken.None)).Should().BeTrue();
+
+        // Only 6 slots are genuinely left, so a 7-credit request cannot be served this minute.
+        var next = sut.TryAcquireAsync(7, CancellationToken.None);
+
+        await Task.Delay(50);
+        next.IsCompleted.Should().BeFalse(
+            "the /api_usage probe occupied one of the eight per-minute slots; granting 7 more would put 9 requests into one minute");
+
+        (await AdvanceUntilCompletedAsync(time, next, TimeSpan.FromSeconds(5))).Should().BeTrue();
+    }
+
+    /// <summary>
+    /// The failure-mode half of D45. A probe that throws or 429s tells the throttle nothing, and the
+    /// pre-fix <c>_lastReconciledAt</c> was only stamped on success — so a persistently unhappy
+    /// <c>/api_usage</c> would be re-probed on *every* acquire, each attempt billed in full and (once
+    /// the probe claims a slot) each one eating the per-minute capacity the caller needs. Backing off
+    /// for the whole interval on any attempt is what keeps a bad hour from compounding.
+    /// </summary>
+    [Fact]
+    public async Task TryAcquireAsync_AfterAFailedProbe_DoesNotProbeAgainUntilTheIntervalElapses()
+    {
+        var usageProvider = Substitute.For<ITwelveDataUsageProvider>();
+        usageProvider.GetDailyUsageAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<int?>(null));
+        var (sut, time) = CreateSut(usageProvider: usageProvider, reconciliationIntervalMinutes: 60);
+
+        (await sut.TryAcquireAsync(1, CancellationToken.None)).Should().BeTrue(); // seed attempt — 1 probe
+        time.Advance(TimeSpan.FromMinutes(30));
+        (await sut.TryAcquireAsync(1, CancellationToken.None)).Should().BeTrue();
+        (await sut.TryAcquireAsync(1, CancellationToken.None)).Should().BeTrue();
+
+        await usageProvider.Received(1).GetDailyUsageAsync(Arg.Any<CancellationToken>());
+
+        time.Advance(TimeSpan.FromMinutes(31)); // now past the interval
+
+        (await sut.TryAcquireAsync(1, CancellationToken.None)).Should().BeTrue();
+
+        await usageProvider.Received(2).GetDailyUsageAsync(Arg.Any<CancellationToken>());
+
+        var status = await sut.GetStatusAsync(CancellationToken.None);
+        status.CreditsUsedToday.Should().Be(
+            6,
+            "2 failed probes were billed alongside the 4 granted credits, and neither probe may go unrecorded");
     }
 
     /// <summary>

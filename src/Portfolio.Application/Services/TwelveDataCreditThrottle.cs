@@ -42,6 +42,23 @@ namespace Portfolio.Application.Services;
 /// Both are best-effort: if the usage call fails or isn't wired up, the ledger is left exactly as
 /// it was under the pre-D39 behaviour — reconciliation must never block or fail a credit-gated
 /// call.</para>
+///
+/// <para><b>D45:</b> that <c>GET /api_usage</c> probe is itself a Twelve Data request. D39 wired it
+/// into the <i>daily</i> ledger — which is self-correcting, since the probe's own answer already
+/// counts it — but never into the <i>rolling per-minute window</i>. <see cref="_window"/> was only
+/// ever written from <see cref="TryAcquireAsync"/>, so a request nobody asked permission for left
+/// no trace in it, and for the whole minute a seed or reconcile fired in the window sat one short
+/// of what had actually gone over the wire. The throttle would then grant a full
+/// <see cref="TwelveDataCreditOptions.PerMinuteCreditLimit"/> on top of it: 9 real requests against
+/// an 8-request ceiling, and the 9th 429'd. Measured live 2026-09-03 — the scheduled backfill's
+/// 8th Twelve Data asset failed on every run whose day-seed landed in the same minute, leaving that
+/// one asset's <see cref="PriceHistory"/> days behind every other holding while the daily ledger
+/// and <c>GET /api/prices/status</c> both read perfectly healthy. The probe now reserves its slot
+/// through the same <see cref="WaitForPerMinuteRoomAsync"/> path every other call uses, and
+/// <see cref="UsageProbe.Attempted"/> is tracked separately from
+/// <see cref="UsageProbe.DailyUsage"/>, because a probe that fails was billed in full just the
+/// same — the D10/D26/D33/D35/D38 "not attempted vs attempted and failed" rule applied to the
+/// throttle's own spend.</para>
 /// </summary>
 public sealed class TwelveDataCreditThrottle(
     IServiceScopeFactory scopeFactory,
@@ -50,6 +67,11 @@ public sealed class TwelveDataCreditThrottle(
     ILogger<TwelveDataCreditThrottle> logger) : ITwelveDataCreditThrottle
 {
     private static readonly TimeSpan WindowLength = TimeSpan.FromSeconds(60);
+
+    /// <summary>What one <c>GET /api_usage</c> probe costs (D45): a real credit and a real slot in
+    /// the per-minute window, exactly like a <c>/quote</c> or <c>/time_series</c> call. Measured
+    /// 2026-08-21 and again 2026-08-24 — see <c>TwelveDataUsageProvider</c>'s own remarks.</summary>
+    private const int UsageProbeCredits = 1;
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly List<(DateTimeOffset At, int Credits)> _window = [];
@@ -132,14 +154,32 @@ public sealed class TwelveDataCreditThrottle(
             // First write of a new UTC day: seed from Twelve Data's real counter instead of zero.
             // A day that starts mid-way through already-spent credits (or simply drifted overnight)
             // must not be treated as a fresh 800-credit allowance.
-            var real = await TryFetchRealUsageAsync(scope, cancellationToken);
-            entry = new TwelveDataCreditLedgerEntry { Date = today, CreditsUsed = real ?? 0 };
+            var probe = await ProbeRealUsageAsync(scope, cancellationToken);
+
+            // D45: three outcomes, not two. A probe that was never made costs nothing and seeds at
+            // zero (the pre-D39 fallback). A probe that answered already counts itself, so its
+            // answer is the seed verbatim. A probe that was made and failed told us nothing but was
+            // still billed — seeding at zero there would start the day one credit light, which is
+            // the same under-counting D39 exists to prevent.
+            entry = new TwelveDataCreditLedgerEntry
+            {
+                Date = today,
+                CreditsUsed = probe.DailyUsage ?? (probe.Attempted ? UsageProbeCredits : 0),
+            };
             db.AddTwelveDataCreditLedgerEntry(entry);
             await db.SaveChangesAsync(cancellationToken);
 
-            if (real is { } seeded)
+            if (probe.Attempted)
             {
+                // Set on any attempt, not only a successful one (D45): the interval governs how
+                // often a credit is spent probing, and a failed probe spent one. Leaving this null
+                // made every subsequent acquire probe again — a burst of billed calls, each now
+                // also claiming a per-minute slot, precisely when the endpoint is already unhappy.
                 _lastReconciledAt = now;
+            }
+
+            if (probe.DailyUsage is { } seeded)
+            {
                 logger.LogInformation(
                     "Seeded Twelve Data credit ledger for {Date} from real usage: {Credits}",
                     today,
@@ -148,8 +188,10 @@ public sealed class TwelveDataCreditThrottle(
             else
             {
                 logger.LogWarning(
-                    "Could not seed Twelve Data credit ledger for {Date} from real usage; starting from zero",
-                    today);
+                    "Could not seed Twelve Data credit ledger for {Date} from real usage; starting from {Credits} ({Probe})",
+                    today,
+                    entry.CreditsUsed,
+                    probe.Attempted ? "the failed probe's own credit" : "zero, no usage provider wired up");
             }
 
             return entry;
@@ -160,8 +202,8 @@ public sealed class TwelveDataCreditThrottle(
 
         if (dueForReconciliation)
         {
-            var real = await TryFetchRealUsageAsync(scope, cancellationToken);
-            if (real is { } reconciled)
+            var probe = await ProbeRealUsageAsync(scope, cancellationToken);
+            if (probe.DailyUsage is { } reconciled)
             {
                 logger.LogInformation(
                     "Reconciled Twelve Data credit ledger for {Date}: local {Local} -> real {Real}",
@@ -170,21 +212,62 @@ public sealed class TwelveDataCreditThrottle(
                     reconciled);
                 entry.CreditsUsed = reconciled;
                 await db.SaveChangesAsync(cancellationToken);
+            }
+            else if (probe.Attempted)
+            {
+                // D45: real usage unavailable this time, so the ledger keeps its local total — but
+                // the probe that failed to tell us anything was still billed, so account for it
+                // rather than letting the one call the throttle makes on its own behalf be the one
+                // call it never records.
+                entry.CreditsUsed += UsageProbeCredits;
+                await db.SaveChangesAsync(cancellationToken);
+            }
+
+            if (probe.Attempted)
+            {
+                // As in the seed branch: back off for the full interval on any attempt, successful
+                // or not, rather than re-probing (and re-spending) on every acquire.
                 _lastReconciledAt = now;
             }
-            // else: real usage unavailable this time — leave the ledger as-is and try again once
-            // the interval next elapses, rather than blocking or failing this credit request.
         }
 
         return entry;
     }
 
-    /// <summary>Never throws except on cancellation — a failed or missing reconciliation source
-    /// must degrade to the pre-D39 behaviour, not break credit gating.</summary>
-    private static async Task<int?> TryFetchRealUsageAsync(AsyncServiceScope scope, CancellationToken cancellationToken)
+    /// <summary>
+    /// Issues one <c>GET /api_usage</c>, reserving its per-minute slot first (D45). Must be called
+    /// while holding <see cref="_gate"/> — it touches <see cref="_window"/> and calls
+    /// <see cref="WaitForPerMinuteRoomAsync"/>, which has the same requirement.
+    ///
+    /// The slot is claimed <b>before</b> the request goes out and is never released, including when
+    /// the request fails: Twelve Data bills a rejected call in full (D38), so an attempt that
+    /// returns nothing has still consumed the minute's capacity. Never throws except on
+    /// cancellation — a failed or missing reconciliation source must degrade to the pre-D39
+    /// behaviour, not break credit gating.
+    /// </summary>
+    private async Task<UsageProbe> ProbeRealUsageAsync(AsyncServiceScope scope, CancellationToken cancellationToken)
     {
         var usageProvider = scope.ServiceProvider.GetService<ITwelveDataUsageProvider>();
-        return usageProvider is null ? null : await usageProvider.GetDailyUsageAsync(cancellationToken);
+        if (usageProvider is null)
+        {
+            // Nothing wired up: no request leaves the process, so no credit and no slot. This is
+            // "not attempted", and it must stay distinguishable from a probe that ran and failed.
+            return UsageProbe.NotAttempted;
+        }
+
+        await WaitForPerMinuteRoomAsync(UsageProbeCredits, cancellationToken);
+        _window.Add((timeProvider.GetUtcNow(), UsageProbeCredits));
+
+        return new UsageProbe(Attempted: true, DailyUsage: await usageProvider.GetDailyUsageAsync(cancellationToken));
+    }
+
+    /// <summary>D45. <see cref="Attempted"/> answers "did a billed request leave the process?";
+    /// <see cref="DailyUsage"/> answers "did it come back with a number?". Collapsing the two into
+    /// a bare <c>int?</c> — as the pre-D45 code did — makes a failed probe indistinguishable from
+    /// no probe at all, which is exactly how spend goes unrecorded.</summary>
+    private readonly record struct UsageProbe(bool Attempted, int? DailyUsage)
+    {
+        public static UsageProbe NotAttempted => new(false, null);
     }
 
     public async Task<TwelveDataCreditStatus> GetStatusAsync(CancellationToken cancellationToken)
