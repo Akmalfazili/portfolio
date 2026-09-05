@@ -836,3 +836,23 @@ a Friday-evening spot is legitimately ~60 hours old by Sunday night, and any nai
 would fire a false staleness warning every single weekend. Marking it properly means knowing the FX
 market's own session — which this codebase does not model — not adding a constant. Decide that
 deliberately if it is ever worth doing; do not bolt on a `TimeSpan`.
+
+### 13.6 The crypto table's "Priced as of" column was removed (2026-09-05)
+
+Removed at the user's request, and it cost nothing, because **that column could only ever read
+"Live"**. §4.4's boxed warning is the whole explanation: `QuoteFreshness.Classify` returns
+`PriceSource.Live` unconditionally for any provider with no market calendar, CoinGecko included, so
+the `Close` branch the cell rendered was unreachable on real data and the column carried no
+information at all. It was a label asserting freshness it had never actually checked — the same
+shape of problem as a skip list whose name asserts a reason.
+
+**`priceSource` and `priceAsOf` stay on `ZakatCryptoLineDto`.** They are honest wire data, and §4.4
+is explicit that the DTO carries `priceSource` so the report starts telling the truth the moment the
+classifier learns about CoinGecko. Nothing about that changed; only the cell that was rendering a
+constant went away.
+
+**The consequence to know:** if `QuoteFreshness` ever does learn CoinGecko's staleness, the crypto
+table has no column left to show it in and one must be added back deliberately. The information did
+not stop existing, it stopped being displayed. Do not treat the column's absence as a decision that
+crypto staleness is not worth showing — it is a decision that a hardcoded "Live" was worse than
+nothing.

@@ -299,7 +299,7 @@ describe('ZakatPage', () => {
     await fixture.whenStable();
     fixture.detectChanges();
 
-    const header = fixture.nativeElement.querySelector('.zakat__panel:nth-of-type(2) thead th:nth-child(6)');
+    const header = fixture.nativeElement.querySelector('.zakat__panel:nth-of-type(2) thead th:nth-child(5)');
     expect(header.textContent).toContain('FX rate (USD/SGD)');
     expect(header.textContent).toContain('as of 5 Sep 2026, 7:31 pm SGT');
     expect(header.querySelector('.zakat__footnote--warning')).toBeNull();
@@ -321,7 +321,7 @@ describe('ZakatPage', () => {
     await fixture.whenStable();
     fixture.detectChanges();
 
-    const header = fixture.nativeElement.querySelector('.zakat__panel:nth-of-type(2) thead th:nth-child(6)');
+    const header = fixture.nativeElement.querySelector('.zakat__panel:nth-of-type(2) thead th:nth-child(5)');
     expect(header.textContent).toContain('USD/SGD close');
     expect(header.textContent).toContain('4 Sep 2026');
     expect(header.querySelector('.zakat__footnote--warning')).toBeNull();
@@ -343,7 +343,7 @@ describe('ZakatPage', () => {
     await fixture.whenStable();
     fixture.detectChanges();
 
-    const header = fixture.nativeElement.querySelector('.zakat__panel:nth-of-type(2) thead th:nth-child(6)');
+    const header = fixture.nativeElement.querySelector('.zakat__panel:nth-of-type(2) thead th:nth-child(5)');
     expect(header.textContent).toContain('4 Sep 2026');
     expect(header.textContent?.toLowerCase()).toContain('unavailable');
     expect(header.querySelector('.zakat__footnote--warning')).not.toBeNull();
@@ -355,7 +355,7 @@ describe('ZakatPage', () => {
     await fixture.whenStable();
     fixture.detectChanges();
 
-    const header = fixture.nativeElement.querySelector('.zakat__panel:nth-of-type(2) thead th:nth-child(6)');
+    const header = fixture.nativeElement.querySelector('.zakat__panel:nth-of-type(2) thead th:nth-child(5)');
     expect(header.textContent?.trim()).toBe('FX rate (USD/SGD)');
   });
 
@@ -372,7 +372,7 @@ describe('ZakatPage', () => {
     await fixture.whenStable();
     fixture.detectChanges();
 
-    const header = fixture.nativeElement.querySelector('.zakat__panel:nth-of-type(2) thead th:nth-child(6)');
+    const header = fixture.nativeElement.querySelector('.zakat__panel:nth-of-type(2) thead th:nth-child(5)');
     expect(header.textContent?.trim()).toBe('FX rate (USD/SGD)');
   });
 
@@ -407,16 +407,6 @@ describe('ZakatPage', () => {
     const text = fixture.nativeElement.textContent as string;
     expect(text).toContain('Your convention — not a MUIS ruling');
     expect(text).toContain('ETH');
-  });
-
-  it('shows a stale-close caveat for a Close-sourced crypto quote, distinct from a live one', async () => {
-    fixture.detectChanges();
-    flush(report({ crypto: [cryptoLine({ priceSource: 'Close', priceAsOf: '2026-07-24T00:00:00+00:00' })] }));
-    await fixture.whenStable();
-    fixture.detectChanges();
-
-    const text = fixture.nativeElement.textContent as string;
-    expect(text).toContain('stale, not live');
   });
 
   // --- "Set year end" — wires into AssetFormDialog in edit mode -----------

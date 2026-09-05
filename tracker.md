@@ -1477,6 +1477,12 @@ in `local-date.ts`: `fxAsOf` is a real instant with a real time of day, so neith
 route (D19a) nor the ISO-slice route (`formatCloseDate`) applies. The comment there says so, to
 stop it being "fixed" into the slicing idiom.
 
+The crypto table's **"Priced as of" column was removed** in the same session (zakat.md §13.6). It
+could only ever render "Live": `QuoteFreshness.Classify` returns `Live` unconditionally for any
+provider without a market calendar, so the cell's `Close` branch was unreachable and the column
+asserted a freshness it never checked. `priceSource`/`priceAsOf` stay on the DTO — if the
+classifier ever learns CoinGecko, a column has to be added back on purpose.
+
 **zakat.md §13.5 records one open item** — a stored spot served after a Twelve Data outage longer
 than the TTL is labelled `Spot` with no staleness warning. Not dishonest (the real timestamp is on
 screen) but weaker than the `Live`/`Close` treatment nearby. Left open because forex closes at

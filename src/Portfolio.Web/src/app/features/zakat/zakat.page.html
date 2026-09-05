@@ -157,7 +157,6 @@
                 <th scope="col">Status</th>
                 <th scope="col">Qty held</th>
                 <th scope="col">Price (USD)</th>
-                <th scope="col">Priced as of</th>
                 <th scope="col">
                   FX rate (USD/SGD)
                   @if (cryptoFxHeader(); as fx) {
@@ -183,17 +182,6 @@
                   </td>
                   <td>{{ line.quantityHeld | quantity }}</td>
                   <td>{{ line.priceUsd | money: 'USD' : 'price' }}</td>
-                  <td>
-                    @if (line.priceSource === 'Live') {
-                      Live
-                    } @else if (line.priceSource === 'Close') {
-                      <span class="zakat__footnote zakat__footnote--warning">
-                        Close &middot; {{ closeDateLabel(line) }} — stale, not live
-                      </span>
-                    } @else {
-                      —
-                    }
-                  </td>
                   <td>{{ line.fxRateUsed | quantity: 8 }}</td>
                   <td>{{ line.valueSgd | money: 'SGD' }}</td>
                 </tr>

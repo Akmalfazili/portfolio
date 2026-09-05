@@ -13,7 +13,7 @@ import { StateMessage } from '../../shared/state-message/state-message';
 import { StatTile } from '../../shared/stat-tile/stat-tile';
 import { ConfirmDialog, ConfirmDialogData } from '../../shared/confirm-dialog/confirm-dialog';
 import { lastGoodValue } from '../../shared/util/last-good-value';
-import { formatCloseDate, formatDateOnlyLong, formatFxAsOf } from '../../shared/util/local-date';
+import { formatDateOnlyLong, formatFxAsOf } from '../../shared/util/local-date';
 import { AssetFormDialog, AssetFormDialogData, AssetFormDialogResult } from '../asset-management/asset-form.dialog';
 import {
   ZakatPaymentFormDialog,
@@ -126,15 +126,6 @@ export class ZakatPage {
 
   statusLabel(status: ZakatAssetStatus): string {
     return STATUS_LABEL[status];
-  }
-
-  /**
-   * D20 convention, reused here — a `"Close"`-sourced crypto quote is stale
-   * and must say so with the close's OWN date, never presented as if it were
-   * a fresh live price. Mirrors `HoldingsTable.closeDateLabel`.
-   */
-  closeDateLabel(line: ZakatCryptoLineDto): string {
-    return line.priceAsOf ? formatCloseDate(line.priceAsOf) : '';
   }
 
   statusTone(status: ZakatAssetStatus): StatusTone {
