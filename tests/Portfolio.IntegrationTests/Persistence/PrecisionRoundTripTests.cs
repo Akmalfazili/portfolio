@@ -217,4 +217,35 @@ public sealed class PrecisionRoundTripTests : IAsyncLifetime
 
         reloaded.Rate.Should().Be(rate);
     }
+
+    [Fact]
+    public async Task FxSpotQuote_Rate_SurvivesRoundTrip_At18_8_WithoutTruncation()
+    {
+        const decimal rate = 1.26691234m; // 8 decimal places, per decimal(18,8) — same precision as FxRate
+
+        int quoteId;
+        var asOf = new DateTimeOffset(2026, 9, 5, 11, 31, 0, TimeSpan.Zero);
+        var fetchedAt = new DateTimeOffset(2026, 9, 5, 11, 31, 5, TimeSpan.Zero);
+        await using (var context = CreateContext())
+        {
+            var quote = new FxSpotQuote
+            {
+                Base = "USD",
+                Quote = "SGD",
+                Rate = rate,
+                AsOf = asOf,
+                FetchedAt = fetchedAt,
+            };
+            context.FxSpotQuotes.Add(quote);
+            await context.SaveChangesAsync();
+            quoteId = quote.Id;
+        }
+
+        await using var readContext = CreateContext();
+        var reloaded = await readContext.FxSpotQuotes.AsNoTracking().SingleAsync(q => q.Id == quoteId);
+
+        reloaded.Rate.Should().Be(rate);
+        reloaded.AsOf.Should().Be(asOf);
+        reloaded.FetchedAt.Should().Be(fetchedAt);
+    }
 }

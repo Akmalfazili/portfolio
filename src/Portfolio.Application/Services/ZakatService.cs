@@ -20,9 +20,22 @@ namespace Portfolio.Application.Services;
 /// converts INTO USD and therefore divides. This is the first caller that converts OUT of USD, and
 /// therefore MULTIPLIES — see <see cref="ConvertUsdToSgd"/>, and
 /// <c>FxDirectionTests</c> for the pinning test.</para>
+///
+/// <para><b>Crypto's USD/SGD rate is live, but only when the report is valuing "today".</b> A
+/// carried-forward daily close can be up to a day stale, which matters for crypto specifically
+/// because its price itself is a ~live CoinGecko quote — pairing a fresh price with a stale rate
+/// silently understated or overstated the SGD figure. When <see cref="GetReportAsync"/>'s
+/// reference date (<c>asOf</c>, or today when null) resolves to today, one
+/// <see cref="IFxSpotRateService"/> call is made per report (not per crypto line) and used for
+/// every crypto line. When it is a past date, a spot is never attempted — valuing a historical
+/// position at today's rate would be wrong regardless of freshness — and the daily-close resolver
+/// is used exactly as before. Stock lines are entirely unaffected: they always use the close
+/// date's own <c>FxRate</c> row (zakat.md §4.2), which is the MUIS method, not a limitation this
+/// file works around.</para>
 /// </summary>
 public sealed class ZakatService(
-    IPortfolioDbContext db, TimeProvider timeProvider, IMarketCalendar calendar) : IZakatService
+    IPortfolioDbContext db, TimeProvider timeProvider, IMarketCalendar calendar, IFxSpotRateService fxSpotRateService)
+    : IZakatService
 {
     private const string Usd = "USD";
     private const string Sgd = "SGD";
@@ -30,7 +43,12 @@ public sealed class ZakatService(
     public async Task<ZakatReportDto> GetReportAsync(DateOnly? asOf, CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
-        var referenceDate = asOf ?? ReportingClock.Today(timeProvider);
+        var today = ReportingClock.Today(timeProvider);
+        var referenceDate = asOf ?? today;
+        // A spot is only ever worth attempting when this report is valuing "today" — a historical
+        // ?asOf= must keep using the daily-close resolver regardless of what the live rate is
+        // right now (see the class remarks).
+        var isReferenceDateToday = referenceDate == today;
 
         var stockAssets = await db.Assets
             .Where(a => a.AssetClass == AssetClass.Stock)
@@ -70,11 +88,19 @@ public sealed class ZakatService(
             .Where(q => cryptoAssetIds.Contains(q.AssetId))
             .ToDictionaryAsync(q => q.AssetId, cancellationToken);
 
+        // One spot fetch for the whole report, never one per crypto line — IFxSpotRateService
+        // already caches behind a TTL, but there is no reason to hit even that cache N times for
+        // one report. Never attempted for a historical ?asOf= — see the class remarks.
+        var spot = isReferenceDateToday
+            ? await fxSpotRateService.GetOrRefreshAsync(Usd, Sgd, cancellationToken)
+            : null;
+
         var stockLines = stockAssets
             .Select(a => BuildStockLine(a, transactionsByAsset, priceHistoryByAsset, usdSgdRates, referenceDate))
             .ToList();
         var cryptoLines = cryptoAssets
-            .Select(a => BuildCryptoLine(a, transactionsByAsset, quotesByAsset, usdSgdRates, referenceDate, now))
+            .Select(a => BuildCryptoLine(
+                a, transactionsByAsset, quotesByAsset, usdSgdRates, referenceDate, now, isReferenceDateToday, spot))
             .ToList();
 
         // Sum the already-DisplayRounding'd per-line figures, matching PortfolioSummaryService's
@@ -174,7 +200,9 @@ public sealed class ZakatService(
         IReadOnlyDictionary<int, PriceQuote> quotesByAsset,
         IReadOnlyList<FxRate> usdSgdRatesAscending,
         DateOnly referenceDate,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        bool isReferenceDateToday,
+        FxSpotQuote? spot)
     {
         var transactions = transactionsByAsset.TryGetValue(asset.Id, out var t) ? t : [];
         var quantity = QuantityAsOf.Calculate(transactions, referenceDate);
@@ -183,7 +211,7 @@ public sealed class ZakatService(
         {
             return new ZakatCryptoLineDto(
                 asset.Id, asset.Symbol, asset.Name, asset.Currency, ZakatAssetStatus.NoQuote,
-                quantity, null, null, null, null, null, null, null);
+                quantity, null, null, null, null, null, null, null, null, null);
         }
 
         if (asset.Currency != Usd)
@@ -193,21 +221,53 @@ public sealed class ZakatService(
                 $"'{asset.Currency}' to SGD — only USD is supported for crypto.");
         }
 
-        if (usdSgdRatesAscending.Count == 0)
+        DateOnly fxDateUsed;
+        bool fxCarriedBack;
+        decimal fxRateUsed;
+        DateTimeOffset? fxAsOf;
+        ZakatFxSource fxSource;
+
+        if (spot is not null)
         {
-            return new ZakatCryptoLineDto(
-                asset.Id, asset.Symbol, asset.Name, asset.Currency, ZakatAssetStatus.NoFxRateForCloseDate,
-                quantity, quote.Price, null, quote.AsOf, null, null, null, null);
+            // A live spot is available — used regardless of what is (or is not) in FxRates. See
+            // zakat.md-adjacent reasoning above: an empty daily-close table is not a failure here,
+            // because nothing about this branch reads from it.
+            fxDateUsed = ReportingClock.DateFor(spot.AsOf);
+            fxCarriedBack = false;
+            fxRateUsed = spot.Rate;
+            fxAsOf = spot.AsOf;
+            fxSource = ZakatFxSource.Spot;
+        }
+        else
+        {
+            // No spot in play — either it was never attempted (a historical ?asOf=) or it was
+            // attempted and came back empty (throttle/429/provider error). Either way this falls
+            // back to the same daily-close resolver as before, and the same empty-table guard
+            // still applies: a spot's absence does not excuse an empty FxRates table too.
+            if (usdSgdRatesAscending.Count == 0)
+            {
+                return new ZakatCryptoLineDto(
+                    asset.Id, asset.Symbol, asset.Name, asset.Currency, ZakatAssetStatus.NoFxRateForCloseDate,
+                    quantity, quote.Price, null, quote.AsOf, null, null, null, null, null, null);
+            }
+
+            var fx = FxRateResolver.ResolveDetailed(usdSgdRatesAscending, referenceDate);
+            fxDateUsed = fx.ResolvedDate;
+            fxCarriedBack = fx.CarriedBack;
+            fxRateUsed = fx.Rate;
+            fxAsOf = null;
+            fxSource = isReferenceDateToday
+                ? ZakatFxSource.DailyCloseSpotUnavailable
+                : ZakatFxSource.DailyCloseHistoricalAsOf;
         }
 
         var priceSource = QuoteFreshness.Classify(calendar, asset.QuoteProviderKind, quote.AsOf, now);
-        var fx = FxRateResolver.ResolveDetailed(usdSgdRatesAscending, referenceDate);
-        var valueSgd = ConvertUsdToSgd(quantity * quote.Price, fx.Rate);
+        var valueSgd = ConvertUsdToSgd(quantity * quote.Price, fxRateUsed);
 
         return new ZakatCryptoLineDto(
             asset.Id, asset.Symbol, asset.Name, asset.Currency, ZakatAssetStatus.Included,
-            quantity, quote.Price, priceSource, quote.AsOf, fx.ResolvedDate, fx.CarriedBack,
-            fx.Rate, DisplayRounding.Money(valueSgd));
+            quantity, quote.Price, priceSource, quote.AsOf, fxDateUsed, fxCarriedBack,
+            fxRateUsed, fxAsOf, fxSource, DisplayRounding.Money(valueSgd));
     }
 
     /// <summary>

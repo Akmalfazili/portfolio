@@ -517,6 +517,22 @@ export interface ZakatStockLineDto {
 }
 
 /**
+ * Provenance of a crypto line's USD/SGD rate (zakat.md §12). Three-way, not
+ * two, for the same reason as `ZakatAssetStatus` (§6, the D10/D26/D33/D35/D45
+ * defect family): "not attempted" and "attempted and failed" must never share
+ * a bucket, because collapsing them is how a silent staleness bug hides
+ * behind a report that otherwise looks healthy.
+ */
+export type ZakatFxSource =
+  | 'Spot' // Live Twelve Data /exchange_rate rate, cached 15 minutes.
+  // `?asOf=` names a past date, so a live spot was never the right thing to
+  // fetch in the first place — a daily close is correct here, not a fallback.
+  | 'DailyCloseHistoricalAsOf'
+  // The live spot WAS attempted, for today's date, and failed — this is the
+  // stored daily close standing in for it. A warning: the rate may be stale.
+  | 'DailyCloseSpotUnavailable';
+
+/**
  * One crypto asset's zakat line. Crypto follows NO MUIS ruling (zakat.md
  * §2.3 — a user convention, not a ruling, and must be labelled as such) and
  * is valued at TODAY's price, never a fiscal year end — crypto has none and
@@ -540,6 +556,16 @@ export interface ZakatCryptoLineDto {
    *  Crypto has no SGD-native case, so unlike the stock line's
    *  `fxRateUsed` this is only ever `null` for a non-`Included` status. */
   fxRateUsed: number | null;
+  /** The provider's own timestamp for a live `/exchange_rate` spot — a real
+   *  `DateTimeOffset`, e.g. `"2026-09-05T11:31:00+00:00"`. `null` when the
+   *  rate came from a daily close instead: a close has no time of day, so
+   *  this null means "daily close", never "unknown" or "not attempted" —
+   *  see `fxSource` for which of those a null `fxRateUsed` actually is. */
+  fxAsOf: string | null;
+  /** Which of the three ways this line's rate was resolved — see
+   *  `ZakatFxSource`. `null` only alongside a `null` `fxRateUsed` (a
+   *  non-`Included` status has no rate to attribute a source to). */
+  fxSource: ZakatFxSource | null;
   valueSgd: number | null;
 }
 

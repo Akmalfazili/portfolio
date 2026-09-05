@@ -158,7 +158,14 @@
                 <th scope="col">Qty held</th>
                 <th scope="col">Price (USD)</th>
                 <th scope="col">Priced as of</th>
-                <th scope="col">FX rate (USD/SGD)</th>
+                <th scope="col">
+                  FX rate (USD/SGD)
+                  @if (cryptoFxHeader(); as fx) {
+                    <span class="zakat__footnote" [class.zakat__footnote--warning]="fx.warning">{{
+                      fx.text
+                    }}</span>
+                  }
+                </th>
                 <th scope="col">Value (SGD)</th>
               </tr>
             </thead>

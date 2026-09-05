@@ -66,6 +66,7 @@ public static class DependencyInjection
         services.Configure<PriceBackfillOptions>(configuration.GetSection(PriceBackfillOptions.SectionName));
         services.Configure<PriceRefreshOptions>(configuration.GetSection(PriceRefreshOptions.SectionName));
         services.Configure<DividendBackfillOptions>(configuration.GetSection(DividendBackfillOptions.SectionName));
+        services.Configure<FxSpotRateOptions>(configuration.GetSection(FxSpotRateOptions.SectionName));
 
         services.AddTransient<RedactingLoggingHandler>();
 

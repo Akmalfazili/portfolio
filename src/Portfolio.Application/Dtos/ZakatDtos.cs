@@ -49,6 +49,38 @@ public enum ZakatAssetStatus
 }
 
 /// <summary>
+/// How the USD/SGD rate on a crypto line was sourced. Stock lines never use a spot rate — they
+/// always use the close date's own <c>FxRate</c> row (zakat.md §4.2, the MUIS method, not a
+/// limitation) — so this taxonomy only applies to <see cref="ZakatCryptoLineDto"/>.
+///
+/// <para><b>Three members, not two.</b> Same D10/D26/D33/D35/D38/D45 defect family as
+/// <see cref="ZakatAssetStatus"/>: collapsing "a spot was never attempted because the report is
+/// historical" into the same bucket as "a spot was attempted and failed" would hide a live
+/// Twelve Data outage behind what looks like ordinary historical-report behaviour.</para>
+/// </summary>
+public enum ZakatFxSource
+{
+    /// <summary>Live <c>/exchange_rate</c> rate, fetched (or served from a fresh cache) via
+    /// <see cref="IFxSpotRateService"/>. Only possible when the report's reference date is today.</summary>
+    Spot,
+
+    /// <summary>
+    /// The stored daily-close <c>FxRate</c> was used because <c>?asOf=</c> named a past date — a
+    /// spot rate was deliberately never attempted, since valuing a historical crypto position at
+    /// today's rate would be wrong. Normal, not a warning.
+    /// </summary>
+    DailyCloseHistoricalAsOf,
+
+    /// <summary>
+    /// The reference date is today, a live spot WAS attempted, and it could not be had — throttle
+    /// denial, a non-success HTTP status, or a provider error — so the report fell back to the
+    /// stored daily-close <c>FxRate</c> instead. Unlike <see cref="DailyCloseHistoricalAsOf"/>, this
+    /// is a warning: the UI renders it as one.
+    /// </summary>
+    DailyCloseSpotUnavailable,
+}
+
+/// <summary>
 /// One stock asset's contribution to the zakat report, valued at ITS OWN last fiscal year end —
 /// see zakat.md §2.2/§2.7. Every stock asset appears here, including ones holding zero units today
 /// (zakat.md §2.8) — this list is never filtered to current holdings.
@@ -119,6 +151,11 @@ public sealed record ZakatStockLineDto(
     /// of one and "no conversion happened" are exactly the not-attempted-vs-attempted distinction
     /// this file's <see cref="ZakatAssetStatus"/> doc comments exist to protect. Null for every other
     /// non-<see cref="ZakatAssetStatus.Included"/> status.
+    ///
+    /// <para>No <c>FxSource</c>/<c>FxAsOf</c> pair here the way <see cref="ZakatCryptoLineDto"/>
+    /// has one — a stock line always uses the close date's own <c>FxRate</c> row (zakat.md §4.2,
+    /// the MUIS method) and never a live spot, so a "spot vs. daily close" field here would be
+    /// null forever rather than a genuine distinction.</para>
     /// </summary>
     decimal? FxRateUsed,
 
@@ -175,6 +212,22 @@ public sealed record ZakatCryptoLineDto(
     /// through this rate — there is no SGD-native crypto asset — so it is null only for a
     /// non-<see cref="ZakatAssetStatus.Included"/> status.</summary>
     decimal? FxRateUsed,
+
+    /// <summary>
+    /// The live provider's own timestamp for <see cref="FxRateUsed"/> — set only when
+    /// <see cref="FxSource"/> is <see cref="ZakatFxSource.Spot"/>. Null when the rate came from a
+    /// daily close instead (<see cref="ZakatFxSource.DailyCloseHistoricalAsOf"/> or
+    /// <see cref="ZakatFxSource.DailyCloseSpotUnavailable"/>), because a close has no time of day —
+    /// that null means "daily close, no intraday timestamp", never "unknown".
+    /// </summary>
+    DateTimeOffset? FxAsOf,
+
+    /// <summary>
+    /// How <see cref="FxRateUsed"/> was sourced — see <see cref="ZakatFxSource"/> for why this is
+    /// three states, not two. Null only for a non-<see cref="ZakatAssetStatus.Included"/> status,
+    /// the same as every other Fx field on this line.
+    /// </summary>
+    ZakatFxSource? FxSource,
 
     /// <summary>This asset's contribution to the zakat total, in SGD. Null unless
     /// <see cref="Status"/> is <see cref="ZakatAssetStatus.Included"/>.</summary>

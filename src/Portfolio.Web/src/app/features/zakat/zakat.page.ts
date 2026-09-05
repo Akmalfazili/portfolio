@@ -13,7 +13,7 @@ import { StateMessage } from '../../shared/state-message/state-message';
 import { StatTile } from '../../shared/stat-tile/stat-tile';
 import { ConfirmDialog, ConfirmDialogData } from '../../shared/confirm-dialog/confirm-dialog';
 import { lastGoodValue } from '../../shared/util/last-good-value';
-import { formatCloseDate } from '../../shared/util/local-date';
+import { formatCloseDate, formatDateOnlyLong, formatFxAsOf } from '../../shared/util/local-date';
 import { AssetFormDialog, AssetFormDialogData, AssetFormDialogResult } from '../asset-management/asset-form.dialog';
 import {
   ZakatPaymentFormDialog,
@@ -140,6 +140,50 @@ export class ZakatPage {
   statusTone(status: ZakatAssetStatus): StatusTone {
     return statusTone(status);
   }
+
+  /**
+   * The crypto table's single, shared FX rate belongs in the COLUMN HEADER,
+   * not repeated per row — every crypto line in one report converts through
+   * the same rate. `null` renders the bare header with no sub-label at all:
+   * that happens with no included crypto lines, or — defensively — if lines
+   * ever disagreed on `fxSource`, which should never happen for a single
+   * shared rate but must never be asserted as a provenance we don't actually
+   * have (zakat.md §6/§12's three-way-never-collapsed rule, applied to a
+   * header instead of a cell).
+   */
+  readonly cryptoFxHeader = computed<{ text: string; warning: boolean } | null>(() => {
+    const sourced = this.cryptoLines().filter((l) => l.fxSource != null);
+    if (sourced.length === 0) {
+      return null;
+    }
+
+    const sources = new Set(sourced.map((l) => l.fxSource));
+    if (sources.size > 1) {
+      return null;
+    }
+
+    const source = sourced[0].fxSource;
+    if (source === 'Spot') {
+      const fxAsOf = sourced.find((l) => l.fxAsOf)?.fxAsOf;
+      return fxAsOf ? { text: `as of ${formatFxAsOf(fxAsOf)}`, warning: false } : null;
+    }
+
+    const fxDateUsed = sourced.find((l) => l.fxDateUsed)?.fxDateUsed;
+    if (!fxDateUsed) {
+      return null;
+    }
+    const closeLabel = `USD/SGD close · ${formatDateOnlyLong(fxDateUsed)}`;
+
+    if (source === 'DailyCloseSpotUnavailable') {
+      return {
+        text: `${closeLabel} — live rate unavailable, showing the previous close`,
+        warning: true,
+      };
+    }
+    // DailyCloseHistoricalAsOf — correct, expected behaviour for a
+    // historical `?asOf=`, not a warning.
+    return { text: closeLabel, warning: false };
+  });
 
   // --- Asset lookup, for the "Set/edit fiscal year end" action per row -----
 

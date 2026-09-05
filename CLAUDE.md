@@ -141,6 +141,12 @@ A close is **never** written into `PriceQuote`. The last-close fallback happens 
 carries `priceSource: "Live" | "Close"` plus the close's **own** `priceAsOf` date, so a stale
 price can never masquerade as current. Any consumer must treat `"Close"` as stale data.
 
+The mirror rule: a **live spot rate is never written into `FxRates`**. That table is daily closes,
+and `PriceBackfillService` skips any date it already holds, so an intraday spot stored as today's
+row would freeze in permanently as that day's *close*. The zakat crypto path's live USD/SGD rate
+(`/exchange_rate`, 15-min TTL) therefore lives in its own `FxSpotQuote` row and reports
+`fxSource` + `fxAsOf` alongside it. See [zakat.md](zakat.md) §13.
+
 A held position with no quote reports `currentPriceUsd: null` and `marketValueUsd: 0`, never an
 error, and the UI renders "Awaiting price" — never the naive −100% the raw numbers would read
 as. Totals carry an unpriced-holdings caveat rather than being quietly wrong.

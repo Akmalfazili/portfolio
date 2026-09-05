@@ -35,6 +35,10 @@ public interface IPortfolioDbContext
     /// <see cref="ZakatPayment"/>'s own remarks for why deleting an asset must never touch this.</summary>
     IQueryable<ZakatPayment> ZakatPayments { get; }
 
+    /// <summary>Cached live spot rates, one row per currency pair — deliberately hangs off no other
+    /// table. See <see cref="FxSpotQuote"/>'s own remarks.</summary>
+    IQueryable<FxSpotQuote> FxSpotQuotes { get; }
+
     void AddAsset(Asset asset);
 
     /// <summary>
@@ -91,6 +95,11 @@ public interface IPortfolioDbContext
     /// <summary>Removes a zakat payment record. Never called by asset deletion — see
     /// <see cref="ZakatPayment"/>.</summary>
     void RemoveZakatPayment(ZakatPayment payment);
+
+    /// <summary>Adds a new spot quote row. Follow the same upsert idiom as
+    /// <see cref="AddPriceQuote"/> — add when absent, mutate the tracked entity in place when a
+    /// row for the pair already exists, never add a second row per pair.</summary>
+    void AddFxSpotQuote(FxSpotQuote quote);
 
     ValueTask<Asset?> FindAssetAsync(int id, CancellationToken cancellationToken);
 

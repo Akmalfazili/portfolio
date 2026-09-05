@@ -38,6 +38,8 @@ public class PortfolioDbContext(DbContextOptions<PortfolioDbContext> options) : 
 
     public DbSet<ZakatPayment> ZakatPayments => Set<ZakatPayment>();
 
+    public DbSet<FxSpotQuote> FxSpotQuotes => Set<FxSpotQuote>();
+
     IQueryable<Asset> IPortfolioDbContext.Assets => Assets;
 
     IQueryable<Transaction> IPortfolioDbContext.Transactions => Transactions;
@@ -59,6 +61,8 @@ public class PortfolioDbContext(DbContextOptions<PortfolioDbContext> options) : 
     IQueryable<AssetDividendState> IPortfolioDbContext.AssetDividendStates => AssetDividendStates;
 
     IQueryable<ZakatPayment> IPortfolioDbContext.ZakatPayments => ZakatPayments;
+
+    IQueryable<FxSpotQuote> IPortfolioDbContext.FxSpotQuotes => FxSpotQuotes;
 
     public void AddAsset(Asset asset) => Assets.Add(asset);
 
@@ -97,6 +101,8 @@ public class PortfolioDbContext(DbContextOptions<PortfolioDbContext> options) : 
     public void AddZakatPayment(ZakatPayment payment) => ZakatPayments.Add(payment);
 
     public void RemoveZakatPayment(ZakatPayment payment) => ZakatPayments.Remove(payment);
+
+    public void AddFxSpotQuote(FxSpotQuote quote) => FxSpotQuotes.Add(quote);
 
     public ValueTask<Asset?> FindAssetAsync(int id, CancellationToken cancellationToken) =>
         Assets.FindAsync([id], cancellationToken);

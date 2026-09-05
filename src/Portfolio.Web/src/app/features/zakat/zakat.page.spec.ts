@@ -7,7 +7,14 @@ import { of } from 'rxjs';
 
 import { ZakatPage } from './zakat.page';
 import { API_ROUTES } from '../../core/api/api-routes';
-import { AssetDto, ZakatCryptoLineDto, ZakatPaymentDto, ZakatReportDto, ZakatStockLineDto } from '../../core/api/models';
+import {
+  AssetDto,
+  ZakatCryptoLineDto,
+  ZakatFxSource,
+  ZakatPaymentDto,
+  ZakatReportDto,
+  ZakatStockLineDto,
+} from '../../core/api/models';
 import { NotificationService } from '../../core/notifications/notification.service';
 
 function stockLine(overrides: Partial<ZakatStockLineDto> = {}): ZakatStockLineDto {
@@ -44,6 +51,8 @@ function cryptoLine(overrides: Partial<ZakatCryptoLineDto> = {}): ZakatCryptoLin
     fxDateUsed: '2026-09-03',
     fxCarriedBack: false,
     fxRateUsed: 1.29,
+    fxAsOf: '2026-09-05T11:31:00+00:00',
+    fxSource: 'Spot' as ZakatFxSource,
     valueSgd: 1548.2966,
     ...overrides,
   };
@@ -271,6 +280,100 @@ describe('ZakatPage', () => {
     // FX rate is the 6th column (Symbol, Status, Fiscal year end, Valued as of, Qty held, Close, FX rate, Value, Actions).
     const fxCell = cells[6];
     expect(fxCell.textContent?.trim()).toBe('—');
+  });
+
+  // --- zakat.md §12 — the crypto FX column header carries the shared rate's
+  // provenance (one rate for every crypto line, so it belongs on the header,
+  // never repeated per row), and must never assert a provenance the report
+  // didn't actually give it.
+
+  it('shows the live spot timestamp, in SGT, as the crypto FX header sub-label', async () => {
+    fixture.detectChanges();
+    flush(
+      report({
+        crypto: [
+          cryptoLine({ fxSource: 'Spot', fxAsOf: '2026-09-05T11:31:00+00:00', fxDateUsed: '2026-09-05' }),
+        ],
+      }),
+    );
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const header = fixture.nativeElement.querySelector('.zakat__panel:nth-of-type(2) thead th:nth-child(6)');
+    expect(header.textContent).toContain('FX rate (USD/SGD)');
+    expect(header.textContent).toContain('as of 5 Sep 2026, 7:31 pm SGT');
+    expect(header.querySelector('.zakat__footnote--warning')).toBeNull();
+  });
+
+  it('shows a plain (non-warning) close-date sub-label for a historical ?asOf= report', async () => {
+    fixture.detectChanges();
+    flush(
+      report({
+        crypto: [
+          cryptoLine({
+            fxSource: 'DailyCloseHistoricalAsOf',
+            fxAsOf: null,
+            fxDateUsed: '2026-09-04',
+          }),
+        ],
+      }),
+    );
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const header = fixture.nativeElement.querySelector('.zakat__panel:nth-of-type(2) thead th:nth-child(6)');
+    expect(header.textContent).toContain('USD/SGD close');
+    expect(header.textContent).toContain('4 Sep 2026');
+    expect(header.querySelector('.zakat__footnote--warning')).toBeNull();
+  });
+
+  it('shows a warning-styled close-date sub-label, with a reason, when the live spot could not be fetched', async () => {
+    fixture.detectChanges();
+    flush(
+      report({
+        crypto: [
+          cryptoLine({
+            fxSource: 'DailyCloseSpotUnavailable',
+            fxAsOf: null,
+            fxDateUsed: '2026-09-04',
+          }),
+        ],
+      }),
+    );
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const header = fixture.nativeElement.querySelector('.zakat__panel:nth-of-type(2) thead th:nth-child(6)');
+    expect(header.textContent).toContain('4 Sep 2026');
+    expect(header.textContent?.toLowerCase()).toContain('unavailable');
+    expect(header.querySelector('.zakat__footnote--warning')).not.toBeNull();
+  });
+
+  it('renders the bare FX header with no sub-label when there are no included crypto lines', async () => {
+    fixture.detectChanges();
+    flush(report({ crypto: [cryptoLine({ status: 'NoQuote', priceUsd: null, priceSource: 'Live', fxDateUsed: null, fxCarriedBack: null, fxRateUsed: null, fxAsOf: null, fxSource: null, valueSgd: null })] }));
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const header = fixture.nativeElement.querySelector('.zakat__panel:nth-of-type(2) thead th:nth-child(6)');
+    expect(header.textContent?.trim()).toBe('FX rate (USD/SGD)');
+  });
+
+  it('renders the bare FX header with no sub-label when included crypto lines disagree on fxSource', async () => {
+    fixture.detectChanges();
+    flush(
+      report({
+        crypto: [
+          cryptoLine({ assetId: 4, symbol: 'ETH', fxSource: 'Spot', fxAsOf: '2026-09-05T11:31:00+00:00' }),
+          cryptoLine({ assetId: 5, symbol: 'AMP', fxSource: 'DailyCloseSpotUnavailable', fxAsOf: null, fxDateUsed: '2026-09-04' }),
+        ],
+      }),
+    );
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const header = fixture.nativeElement.querySelector('.zakat__panel:nth-of-type(2) thead th:nth-child(6)');
+    expect(header.textContent?.trim()).toBe('FX rate (USD/SGD)');
   });
 
   // --- zakat.md §2.4 — never a nisab verdict, never nisab hard-coded -------

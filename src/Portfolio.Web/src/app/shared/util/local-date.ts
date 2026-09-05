@@ -48,6 +48,17 @@ export function formatDateOnly(value: string): string {
 }
 
 /**
+ * Formats a plain `DateOnly` "YYYY-MM-DD" string as `"4 Sep 2026"` — day,
+ * month, year, deliberately no weekday. Used where the year matters (a
+ * footnote naming a specific FX close date, which must disambiguate across
+ * years) but the day of week does not, unlike `formatDateOnly`'s callers.
+ */
+export function formatDateOnlyLong(value: string): string {
+  const date = fromDateOnlyString(value);
+  return `${date.getDate()} ${MONTH_ABBR[date.getMonth()]} ${date.getFullYear()}`;
+}
+
+/**
  * Formats a D20 `priceAsOf` CLOSE timestamp — e.g. `"2026-07-24T00:00:00+00:00"`
  * — as `"Fri 24 Jul"`. Used only for `priceSource: "Close"`, never for a
  * genuinely live quote; a stale close must never be labelled as if it were
@@ -71,4 +82,41 @@ export function formatDateOnly(value: string): string {
  */
 export function formatCloseDate(priceAsOf: string): string {
   return formatDateOnly(priceAsOf.slice(0, 10));
+}
+
+/**
+ * Formats a real instant — e.g. the zakat report's `fxAsOf`, a live
+ * `/exchange_rate` timestamp — as `"5 Sep 2026, 7:31 pm SGT"`.
+ *
+ * This is NOT the same case as `formatDateOnly`/`formatCloseDate` above, and
+ * must not be "fixed" into their slice-the-ISO-string idiom. Those two exist
+ * because their inputs carry NO genuine time-of-day (a `DateOnly`, or a close
+ * pinned to UTC midnight of its own calendar date) — slicing sidesteps
+ * needing a timezone at all. `fxAsOf` is different: it is a genuine
+ * per-minute instant, so collapsing it to a date via slicing would silently
+ * drop the time, and reading it with the *browser's* local getters (the
+ * other trap this file's header warns about) would render a Singapore-dollar
+ * conversion's timestamp in whatever zone the viewer's machine happens to be
+ * set to — wrong for a report whose entire subject is a Singapore levy. This
+ * value must always be read in `Asia/Singapore`, explicitly, regardless of
+ * where the browser thinks it is — hence `Intl.DateTimeFormat` with a pinned
+ * `timeZone`, not the local-getters idiom used elsewhere in this file.
+ */
+export function formatFxAsOf(fxAsOf: string): string {
+  const instant = new Date(fxAsOf);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Singapore',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).formatToParts(instant);
+
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  const month = MONTH_ABBR[Number(get('month')) - 1];
+  const dayPeriod = get('dayPeriod').toLowerCase();
+
+  return `${get('day')} ${month} ${get('year')}, ${get('hour')}:${get('minute')} ${dayPeriod} SGT`;
 }

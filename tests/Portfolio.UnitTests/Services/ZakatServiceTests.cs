@@ -1,5 +1,7 @@
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using NSubstitute;
+using Portfolio.Application.Abstractions;
 using Portfolio.Application.Common;
 using Portfolio.Application.Dtos;
 using Portfolio.Application.Services;
@@ -17,6 +19,12 @@ namespace Portfolio.UnitTests.Services;
 /// D10/D26/D33/D35/D38/D45 defect family the taxonomy exists to prevent repeating), the FX
 /// direction pin (§4.3 — the single easiest thing in this feature to get backwards), and the
 /// zakat payment ledger's own validation rules.
+///
+/// <para>Unless a test configures it otherwise, <see cref="_fxSpotRateService"/> returns null (an
+/// NSubstitute Task-returning member defaults to a completed task carrying <c>default</c>, i.e.
+/// null here) — every pre-existing test in this file therefore exercises the "spot unavailable,
+/// fall back to the daily close" branch exactly as it did before the live-spot change, and the
+/// spot-specific behaviour gets its own tests below.</para>
 /// </summary>
 public sealed class ZakatServiceTests : IDisposable
 {
@@ -24,6 +32,7 @@ public sealed class ZakatServiceTests : IDisposable
     private static readonly DateOnly Today = new(2026, 9, 3);
 
     private readonly PortfolioDbContext _db;
+    private readonly IFxSpotRateService _fxSpotRateService = Substitute.For<IFxSpotRateService>();
     private readonly ZakatService _sut;
 
     public ZakatServiceTests()
@@ -33,7 +42,7 @@ public sealed class ZakatServiceTests : IDisposable
             .Options;
         _db = new PortfolioDbContext(options);
 
-        _sut = new ZakatService(_db, new FixedTimeProvider(Now), new MarketCalendar());
+        _sut = new ZakatService(_db, new FixedTimeProvider(Now), new MarketCalendar(), _fxSpotRateService);
     }
 
     public void Dispose() => _db.Dispose();
@@ -275,6 +284,73 @@ public sealed class ZakatServiceTests : IDisposable
         // drift away from the arithmetic it claims to describe.
         line.ValueSgd.Should().Be(DisplayRoundingSum(line.QuantityHeld * line.PriceUsd!.Value * line.FxRateUsed!.Value));
         report.CryptoZakatableSgd.Should().Be(line.ValueSgd);
+
+        // The substitute's default null response means a spot WAS attempted (referenceDate is
+        // today) and came back unavailable — the warning source, not the historical one.
+        line.FxSource.Should().Be(ZakatFxSource.DailyCloseSpotUnavailable);
+        line.FxAsOf.Should().BeNull(); // a daily close has no time of day
+        await _fxSpotRateService.Received(1).GetOrRefreshAsync("USD", "SGD", Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetReportAsync_CryptoWithLiveSpot_UsesSpotRate_IncludedEvenWithNoFxRatesAtAll()
+    {
+        // No USD/SGD FxRate rows at all — the empty-table guard must not fire when a spot is
+        // available, because this branch never reads FxRates.
+        var eth = AddCrypto(1, "ETH");
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = eth.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
+            Quantity = 0.5m, PricePerUnit = 2000m, Fees = 0m, Currency = "USD",
+        });
+        _db.PriceQuotes.Add(new PriceQuote { AssetId = eth.Id, Price = 2400.46m, Currency = "USD", AsOf = Now });
+        await _db.SaveChangesAsync();
+
+        // 2026-09-03T11:31:00Z = 2026-09-03 19:31 SGT — same SGT calendar day as Today/Now.
+        var spotAsOf = new DateTimeOffset(2026, 9, 3, 11, 31, 0, TimeSpan.Zero);
+        var spot = new FxSpotQuote { Base = "USD", Quote = "SGD", Rate = 1.26691m, AsOf = spotAsOf, FetchedAt = Now };
+        _fxSpotRateService.GetOrRefreshAsync("USD", "SGD", Arg.Any<CancellationToken>()).Returns(spot);
+
+        var report = await _sut.GetReportAsync(Today, CancellationToken.None);
+
+        var line = report.Crypto.Should().ContainSingle().Subject;
+        line.Status.Should().Be(ZakatAssetStatus.Included);
+        line.FxSource.Should().Be(ZakatFxSource.Spot);
+        line.FxAsOf.Should().Be(spotAsOf);
+        line.FxDateUsed.Should().Be(new DateOnly(2026, 9, 3));
+        line.FxCarriedBack.Should().BeFalse();
+        line.FxRateUsed.Should().Be(1.26691m);
+        // FX direction pin, extended to the spot path: a USD value must convert to MORE SGD, not
+        // less — fails immediately if the multiply here were ever swapped for a divide.
+        (0.5m * 2400.46m * 1.26691m).Should().BeGreaterThan(0.5m * 2400.46m);
+        line.ValueSgd.Should().Be(DisplayRoundingSum(0.5m * 2400.46m * 1.26691m));
+    }
+
+    [Fact]
+    public async Task GetReportAsync_CryptoWithHistoricalAsOf_NeverAttemptsASpot_UsesDailyClose()
+    {
+        var pastDate = new DateOnly(2026, 6, 1);
+        var eth = AddCrypto(1, "ETH");
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = eth.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
+            Quantity = 0.5m, PricePerUnit = 2000m, Fees = 0m, Currency = "USD",
+        });
+        _db.PriceQuotes.Add(new PriceQuote { AssetId = eth.Id, Price = 2400.46m, Currency = "USD", AsOf = Now });
+        AddUsdSgdRate(pastDate, 1.30m);
+        await _db.SaveChangesAsync();
+
+        var report = await _sut.GetReportAsync(pastDate, CancellationToken.None);
+
+        var line = report.Crypto.Should().ContainSingle().Subject;
+        line.Status.Should().Be(ZakatAssetStatus.Included);
+        line.FxSource.Should().Be(ZakatFxSource.DailyCloseHistoricalAsOf);
+        line.FxAsOf.Should().BeNull();
+        // A historical ?asOf= must never even ask for a spot — valuing a past position at today's
+        // live rate would be silently wrong regardless of whether the spot call would have
+        // succeeded.
+        await _fxSpotRateService.DidNotReceive().GetOrRefreshAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -314,7 +390,7 @@ public sealed class ZakatServiceTests : IDisposable
         // 2026-09-03T16:30:00Z = 2026-09-04 00:30 SGT. With no ?asOf= supplied, the report's
         // reference date must be the SGT calendar day, not the still-2026-09-03 UTC day.
         var boundaryTimeProvider = new FixedTimeProvider(new DateTimeOffset(2026, 9, 3, 16, 30, 0, TimeSpan.Zero));
-        var sut = new ZakatService(_db, boundaryTimeProvider, new MarketCalendar());
+        var sut = new ZakatService(_db, boundaryTimeProvider, new MarketCalendar(), _fxSpotRateService);
 
         var report = await sut.GetReportAsync(null, CancellationToken.None);
 
@@ -349,7 +425,7 @@ public sealed class ZakatServiceTests : IDisposable
         // paidOn date would have been rejected as a day in the future — the same SGT/UTC boundary
         // bug the reporting clock closes for trade dates.
         var boundaryTimeProvider = new FixedTimeProvider(new DateTimeOffset(2026, 9, 3, 16, 30, 0, TimeSpan.Zero));
-        var sut = new ZakatService(_db, boundaryTimeProvider, new MarketCalendar());
+        var sut = new ZakatService(_db, boundaryTimeProvider, new MarketCalendar(), _fxSpotRateService);
 
         var result = await sut.CreatePaymentAsync(
             new CreateZakatPaymentRequest(new DateOnly(2026, 9, 4), 100m), CancellationToken.None);

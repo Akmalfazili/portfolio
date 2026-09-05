@@ -1,4 +1,11 @@
-import { formatCloseDate, formatDateOnly, fromDateOnlyString, toDateOnlyString } from './local-date';
+import {
+  formatCloseDate,
+  formatDateOnly,
+  formatDateOnlyLong,
+  formatFxAsOf,
+  fromDateOnlyString,
+  toDateOnlyString,
+} from './local-date';
 
 describe('local-date', () => {
   it('formats local date parts directly, never via toISOString (which would shift by the UTC offset)', () => {
@@ -65,6 +72,29 @@ describe('local-date', () => {
       const wrongAtNegativeOffset = new Date(naiveInstant.getTime() - 5 * 60 * 60 * 1000); // UTC-5 local wall clock
       expect(wrongAtNegativeOffset.getUTCDate()).toBe(28); // rolls back to Feb 28 — the bug this guards against
       expect(formatCloseDate(priceAsOf)).toBe('Sun 1 Mar'); // formatCloseDate is unaffected
+    });
+  });
+
+  describe('formatDateOnlyLong', () => {
+    it('formats a plain DateOnly string as "4 Sep 2026" — day, month, year, no weekday', () => {
+      expect(formatDateOnlyLong('2026-09-04')).toBe('4 Sep 2026');
+    });
+  });
+
+  describe('formatFxAsOf', () => {
+    it('formats a live /exchange_rate instant in Asia/Singapore, explicitly, not the local zone', () => {
+      // 2026-09-05T11:31:00Z is 2026-09-05 19:31 SGT (UTC+8).
+      expect(formatFxAsOf('2026-09-05T11:31:00+00:00')).toBe('5 Sep 2026, 7:31 pm SGT');
+    });
+
+    it('rolls the calendar date forward in SGT for a UTC instant that lands on the next SGT day', () => {
+      // The case worth pinning: a UTC instant whose OWN calendar date differs
+      // from the date it lands on in Asia/Singapore (UTC+8) — 2026-09-05
+      // 20:05 UTC is already 2026-09-06 04:05 in Singapore. A formatter that
+      // read this with the machine's local getters instead of an explicit
+      // Asia/Singapore Intl.DateTimeFormat would only get this right by
+      // coincidence, and only in a zone that happens to also be UTC+8.
+      expect(formatFxAsOf('2026-09-05T20:05:00+00:00')).toBe('6 Sep 2026, 4:05 am SGT');
     });
   });
 });

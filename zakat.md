@@ -700,3 +700,139 @@ doing to the real database.
 exists only as a side effect of Z74 being an SGD asset, and this report now *displays* that rate
 prominently on every USD line — so the blast radius of that dependency going stale is larger and
 more visible than when §7.4 was written, not smaller.
+
+---
+
+## 13. A live spot rate for crypto's FX leg (2026-09-05)
+
+### 13.1 The gap this closes
+
+Crypto lines already price at a live CoinGecko quote a couple of minutes old, but were converting
+through `FxRateResolver.ResolveDetailed`, which resolves to the newest stored daily-close
+`FxRate` row — the previous UTC day's New York close by the time SGT afternoon arrives, since the
+day's own close has not landed yet. Verified live against the running container on 2026-09-05: a
+crypto line's `priceAsOf` read `2026-09-05T11:30:10Z` while `fxDateUsed` read `2026-09-04`. A fresh
+price paired with a stale rate is silently wrong in the same direction §4.4 already flags for
+`priceSource` — the honesty problem was one layer further down the same calculation.
+
+`TwelveDataFxProvider.GetSpotRateAsync` (`/exchange_rate`) already existed, was already
+unit-tested, and was called by nothing in production. Called live: `{"symbol":"USD/SGD","rate":
+1.26691,"timestamp":1788607860}` — a genuine per-minute timestamp, confirming the provider side
+needed no change; only something to cache and call it was missing.
+
+### 13.2 What was added
+
+- **`FxSpotQuote`** (`Portfolio.Domain.Entities`) — one row per currency pair, mirroring
+  `PriceQuote`'s "overwritten on refresh" shape, with `Rate` at `decimal(18,8)` (the FX precision,
+  not the `decimal(28,10)` price precision — this is a rate, not a quantity or a close). Hangs off
+  nothing, the same as `ZakatPayment`; `AssetDeleteCascadeTests` correctly grew no case for it.
+  Migration `AddFxSpotQuote`.
+- **Two timestamps, not one — `AsOf` and `FetchedAt`.** `AsOf` is the provider's own timestamp;
+  `FetchedAt` is when this process called it. On a weekend, `/exchange_rate` keeps returning
+  Friday's `AsOf` indefinitely, so a cache TTL keyed off `AsOf` would never be satisfied and would
+  re-spend a Twelve Data credit on every single page load, forever. The TTL
+  (`FxSpotRateOptions.Ttl`, default 15 minutes) is keyed off `FetchedAt` for exactly this reason.
+  Written into the entity's own XML doc, because it is invisible in the code otherwise.
+- **`IFxSpotRateService`/`FxSpotRateService`** (`Portfolio.Application.Services`) —
+  load-or-refresh-behind-a-TTL, never throwing: a provider failure (throttle denial, non-success
+  HTTP, or an outright exception) falls back to the stored row if one exists, or null if there
+  never was one. This sits on the zakat report's read path and must never turn a Twelve Data hiccup
+  into a 500.
+- **Never written to `FxRate`.** The exact mirror of "a close is never written into `PriceQuote`":
+  `PriceBackfillService` skips any date it already holds, so an intraday spot stored as today's
+  `FxRate` row would freeze in permanently and become "the close" every historical report reads
+  from that day forward.
+
+### 13.3 `ZakatService.BuildCryptoLine`, and the taxonomy this needed
+
+One spot fetch per report (not per crypto line), and only when the report's reference date
+resolves to today — a historical `?asOf=` never even asks, because valuing a past position at
+today's live rate would be wrong regardless of whether the call would have succeeded. When a spot
+is in play: `FxRateUsed = spot.Rate`, `FxDateUsed` = the **Singapore** calendar date of
+`spot.AsOf` (`ReportingClock.DateFor`, the same fixed +8 offset as every other user-facing "today"
+in this codebase), `FxCarriedBack = false`, and the line is `Included` **even with a completely
+empty `FxRates` table** — that branch never reads it. Stock lines are untouched; they still use the
+close date's own `FxRate` row, which is the MUIS method (§4.2), not a limitation being worked
+around.
+
+The existing `usdSgdRatesAscending.Count == 0` → `NoFxRateForCloseDate` guard still applies when
+there is no spot to fall back on — either because the reference date is historical, or because a
+spot was attempted and failed.
+
+A new three-member enum, `ZakatFxSource`, carries which of those happened onto
+`ZakatCryptoLineDto` (`FxSource`, plus `FxAsOf` — the provider's own timestamp, null for a daily
+close because a close has no time of day):
+
+- `Spot` — live rate used.
+- `DailyCloseHistoricalAsOf` — `?asOf=` named a past date; a spot was deliberately never attempted.
+  Normal, not a warning.
+- `DailyCloseSpotUnavailable` — the reference date was today, a spot WAS attempted, and it could
+  not be had; fell back to the stored close. This one is a warning.
+
+Two members would have collapsed "an old report correctly skipping a live call" into the same
+bucket as "a live call failed just now" — the exact D10/D26/D33/D35/D38/D45 shape this project
+keeps re-finding, one layer further down than where §6 first named it for the six-status
+per-asset taxonomy. Stock lines gained neither field: they never use a spot, so a
+`FxSource`/`FxAsOf` pair there would be null forever rather than a genuine distinction — documented
+on `ZakatStockLineDto.FxRateUsed` directly so the omission reads as a decision, not a gap.
+
+### 13.4 Verified, and not
+
+**Verified:** `dotnet build portfolio.slnx && dotnet test portfolio.slnx` green — 332 backend unit
+tests (up from 322) and 13 integration tests against real SQL Server (up from 12), including a new
+`FxSpotQuote.Rate` round-trip at `decimal(18,8)`. Every pre-existing `ZakatServiceTests` crypto test
+continues to pass unchanged against the new code path — the test double's default null response for
+the spot service exercises exactly the `DailyCloseSpotUnavailable` branch those tests already
+existed to describe, so nothing about their assertions had to change to keep meaning what they
+said. New tests cover: fresh cache skips the provider; stale cache calls it; a provider null with a
+stored row falls back to the stale row; a provider null with nothing stored returns null; a
+provider throw does not propagate either way; the weekend TTL case (`AsOf` three days stale,
+`FetchedAt` one minute old → no provider call); spot used only when the reference date is today;
+`?asOf=` in the past never calls the spot service at all; and the FX-direction pin extended through
+the spot path (a USD value converts to *more* SGD).
+
+**Not verified — this round was backend-only, against the DTO shape the frontend consumes, not the
+frontend itself:** no browser was opened; `FxSource`/`FxAsOf` have not been seen rendered, and
+whether the UI treats `DailyCloseSpotUnavailable` as a visible warning is a frontend decision made
+separately, against this same contract. The 15-minute TTL has not been measured against real
+Twelve Data traffic — it is sized to "a handful of zakat page loads a day", never load-tested.
+`TwelveDataCadenceCalculator` was deliberately left untouched, per the same reasoning: on-demand
+spot calls are a handful a day against an 800 daily budget, not enough to move where the cadence
+reserve sits.
+### 13.5 The container round (2026-09-05), and the one thing still open
+
+Everything §13.4 listed as unverified was then checked against the running stack — `docker compose
+up -d --build`, migration applied via the `migrate` service, real Twelve Data key, real browser.
+
+- **The rate is genuinely live.** `GET /api/zakat` returned `fxSource: "Spot"`, `fxAsOf:
+  "2026-09-05T12:02:00+00:00"`, `fxDateUsed: "2026-09-05"` — today, not the `2026-09-04` this
+  change exists to stop using — and `fxRateUsed: 1.26689` across all three crypto lines.
+- **`FxRates` was not polluted.** After the spot fetch, `SELECT TOP 3 ... FROM FxRates` still ended
+  at `2026-09-04`. `FxSpotQuotes` held exactly one row. The §13.2 invariant holds in practice, not
+  just in intent, and this is the check to repeat if that code is ever touched.
+- **Column precision is real.** `sys.columns` reports `Rate` as `decimal(18,8)` in SQL Server.
+- **The TTL actually saves credits.** `GET /api/prices/status` read `creditsUsedToday: 28`; three
+  further `GET /api/zakat` calls left it at 28. A historical `?asOf=2026-08-20` also left it at 28
+  and returned `fxSource: "DailyCloseHistoricalAsOf"`, `fxAsOf: null`, `fxRateUsed: 1.27231` —
+  that date's own close. The "spot is never attempted for a past date" rule is observed behaviour.
+- **The header renders.** The crypto table's **FX rate (USD/SGD)** header carries
+  `as of 5 Sep 2026, 8:02 pm SGT` — the correct SGT rendering of `12:02Z`.
+
+**Still not seen in a browser:** `DailyCloseSpotUnavailable`. Reaching it needs Twelve Data to fail
+while `FxSpotQuotes` is empty, which is not worth manufacturing against the live stack; unit tests
+cover it, the UI path is written, and nobody has watched it render.
+
+**Open, and deliberately not fixed here.** `FxSpotRateService` falls back to the *stored* spot when
+a refresh fails, and `ZakatService` labels that `ZakatFxSource.Spot` — correctly, since it is a spot
+rate. But after a Twelve Data outage longer than the TTL, that stored spot could be hours or days
+old and the header would render it as an ordinary `as of …` line with no warning, while the
+daily-close row it displaced might by then be *fresher*. It is not dishonest — the timestamp on
+screen is the real one, and a reader who looks will see the date is old — but it is weaker than the
+`Live`/`Close` treatment §4.4 applies one field over, where staleness is *marked* rather than left
+to be inferred.
+
+The reason it was left is that the obvious fix picks a wrong fight: forex closes on the weekend, so
+a Friday-evening spot is legitimately ~60 hours old by Sunday night, and any naive age threshold
+would fire a false staleness warning every single weekend. Marking it properly means knowing the FX
+market's own session — which this codebase does not model — not adding a constant. Decide that
+deliberately if it is ever worth doing; do not bolt on a `TimeSpan`.

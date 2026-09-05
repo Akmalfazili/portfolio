@@ -207,6 +207,16 @@
   color: var(--ui-color-status-warning);
 }
 
+// The crypto table's FX rate column header carries a `.zakat__footnote` as
+// its provenance sub-label (§12 — one shared rate per report, so it belongs
+// on the header, not repeated per row). `th` otherwise forces
+// uppercase/tracked text for the column label itself; undo both here so the
+// sub-label reads as a normal caption, not a second shouted heading.
+th .zakat__footnote {
+  text-transform: none;
+  letter-spacing: normal;
+}
+
 .zakat__actions-header {
   text-align: right;
 }

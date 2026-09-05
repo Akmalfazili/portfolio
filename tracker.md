@@ -1436,6 +1436,54 @@ knowingly partial until they are in. `NoCloseOnOrBeforeFiscalYearEnd` and `NoFxR
 are still fixture-only; no live asset is in either state and reaching them would mean damaging real
 history.
 
+### Crypto's FX leg went live — `/exchange_rate`, cached 15 minutes (2026-09-05)
+
+Crypto lines were pairing a ~2-minute-old CoinGecko price with **yesterday's** USD/SGD daily close.
+Confirmed on the container before touching anything: `priceAsOf` `2026-09-05T11:30:10Z` against
+`fxDateUsed` `2026-09-04`, and `FxRates` really did end at `2026-09-04` — the day's own close does
+not land until well after the once-a-day backfill runs. A fresh price through a stale rate is the
+same honesty problem `priceSource` exists to expose, one field further down the calculation.
+
+`TwelveDataFxProvider.GetSpotRateAsync` had existed, unit-tested, since the provider was written
+and **was called by nothing in production**. The whole change is a cache and a caller.
+
+**The design record is [zakat.md](zakat.md) §13** — read it before touching this. Three things
+there are not visible in the code and each would be re-derived the hard way:
+
+- **`FxSpotQuote` carries two timestamps, `AsOf` and `FetchedAt`, and the TTL keys off
+  `FetchedAt`.** Over a weekend `/exchange_rate` returns Friday's `AsOf` indefinitely, so a TTL
+  measured against the provider's own timestamp would never be satisfied and would spend a credit
+  on every page load, forever.
+- **A spot is never written into `FxRate`** — the exact mirror of "a close is never written into
+  `PriceQuote`". `PriceBackfillService` skips any date it already holds, so an intraday spot stored
+  as today's row would freeze in permanently as that day's *close*, for every historical report
+  from then on. Verified after the live fetch: `FxRates` still ended at `2026-09-04`, one row in
+  `FxSpotQuotes`.
+- **A historical `?asOf=` never even asks for a spot** — `ZakatFxSource` has three members, not
+  two, so "not attempted" and "attempted and failed" stay apart. D10/D26/D33/D35/D38/D45 again.
+
+**Credit cost, measured rather than estimated.** `GET /api/prices/status` read `creditsUsedToday:
+28`; three further zakat loads and one historical `?asOf=` left it at **28**. The alternative
+considered and rejected was attaching the spot to every Twelve Data quote sweep — ~36 sweeps over
+an NYSE session at the current 11-minute cadence plus ~17 while closed, about **+53 credits/day**,
+to keep a rate warm for a page opened a few times a month. `TwelveDataCadenceCalculator` was
+deliberately left alone: a handful of on-demand calls does not move where the reserve sits.
+
+The frontend puts the provenance in the **column header**, not on every row — all crypto lines in
+one report share one rate, so repeating it per row would be noise. It renders
+`as of 5 Sep 2026, 8:02 pm SGT`, formatted through `Intl.DateTimeFormat` with an explicit
+`timeZone: 'Asia/Singapore'`. Note this is a *third* date-handling case, distinct from both idioms
+in `local-date.ts`: `fxAsOf` is a real instant with a real time of day, so neither the local-getter
+route (D19a) nor the ISO-slice route (`formatCloseDate`) applies. The comment there says so, to
+stop it being "fixed" into the slicing idiom.
+
+**zakat.md §13.5 records one open item** — a stored spot served after a Twelve Data outage longer
+than the TTL is labelled `Spot` with no staleness warning. Not dishonest (the real timestamp is on
+screen) but weaker than the `Live`/`Close` treatment nearby. Left open because forex closes at
+weekends, so any naive age threshold false-alarms every Sunday; fixing it properly means modelling
+the FX session, not adding a constant.
+
+---
 ---
 ## Known gaps, deliberately accepted
 
