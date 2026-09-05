@@ -41,3 +41,12 @@ Thumbs.db
 *.mdf
 *.ldf
 *.ndf
+
+## Development notes and agent config — local only, deliberately untracked.
+## These stay on disk and remain in history before this commit; they are simply
+## no longer carried in the repo. README.md is NOT covered here on purpose.
+notes.txt
+CLAUDE.md
+tracker.md
+zakat.md
+.claude/
