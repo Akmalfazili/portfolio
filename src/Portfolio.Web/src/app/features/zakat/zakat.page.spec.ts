@@ -197,7 +197,7 @@ describe('ZakatPage', () => {
 
     const text = fixture.nativeElement.textContent as string;
     expect(text).toContain('1 asset is excluded from the totals below');
-    expect(text).toContain('carried forward, not the year-end date itself');
+    expect(text).toContain('valued 2025-09-26 — carried forward');
   });
 
   // --- zakat.md §4.3 — the FX rate column must never conflate "no rate
@@ -277,8 +277,8 @@ describe('ZakatPage', () => {
     fixture.detectChanges();
 
     const cells = Array.from(fixture.nativeElement.querySelectorAll('.zakat__panel table')[0].querySelectorAll('tbody td')) as HTMLElement[];
-    // FX rate is the 6th column (Symbol, Status, Fiscal year end, Valued as of, Qty held, Close, FX rate, Value, Actions).
-    const fxCell = cells[6];
+    // FX is the 6th column (Symbol, Status, Year end, Qty held, Close, FX, Value, Actions).
+    const fxCell = cells[5];
     expect(fxCell.textContent?.trim()).toBe('—');
   });
 
@@ -300,7 +300,7 @@ describe('ZakatPage', () => {
     fixture.detectChanges();
 
     const header = fixture.nativeElement.querySelector('.zakat__panel:nth-of-type(2) thead th:nth-child(5)');
-    expect(header.textContent).toContain('FX rate (USD/SGD)');
+    expect(header.textContent).toContain('FX (USD/SGD)');
     expect(header.textContent).toContain('as of 5 Sep 2026, 7:31 pm SGT');
     expect(header.querySelector('.zakat__footnote--warning')).toBeNull();
   });
@@ -356,7 +356,7 @@ describe('ZakatPage', () => {
     fixture.detectChanges();
 
     const header = fixture.nativeElement.querySelector('.zakat__panel:nth-of-type(2) thead th:nth-child(5)');
-    expect(header.textContent?.trim()).toBe('FX rate (USD/SGD)');
+    expect(header.textContent?.trim()).toBe('FX (USD/SGD)');
   });
 
   it('renders the bare FX header with no sub-label when included crypto lines disagree on fxSource', async () => {
@@ -373,7 +373,7 @@ describe('ZakatPage', () => {
     fixture.detectChanges();
 
     const header = fixture.nativeElement.querySelector('.zakat__panel:nth-of-type(2) thead th:nth-child(5)');
-    expect(header.textContent?.trim()).toBe('FX rate (USD/SGD)');
+    expect(header.textContent?.trim()).toBe('FX (USD/SGD)');
   });
 
   // --- zakat.md §2.4 — never a nisab verdict, never nisab hard-coded -------

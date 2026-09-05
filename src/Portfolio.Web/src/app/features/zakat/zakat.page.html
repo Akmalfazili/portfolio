@@ -1,13 +1,33 @@
 <section class="zakat">
   <h1 class="zakat__title">Zakat on shares</h1>
 
-  <p class="zakat__intro">
-    Stocks follow MUIS's multi-company method: each company valued at ITS OWN last fiscal year
-    end, then summed — see the design record for the full reasoning. Crypto has no MUIS ruling;
-    it is valued at today's price as a personal convention, not a ruling (labelled separately
-    below). Nisab is not shown here on purpose — compare the total against the current figure
-    published on zakat.sg yourself. This page never shows a "you owe" verdict.
-  </p>
+  <!-- The three rules that govern every figure below. Deliberately a scannable
+       legend rather than the paragraph this used to be: it was the only element
+       on the page at the 720px reading measure, which read as a stray column
+       against full-width siblings, and its caveats are the kind you read once.
+       Every disclaimer §2.3/§2.4 requires is still here, in full. -->
+  <dl class="zakat__legend">
+    <div class="zakat__legend-item">
+      <dt class="zakat__legend-term">Stocks</dt>
+      <dd class="zakat__legend-rule">
+        Each company valued at <strong>its own</strong> last fiscal year end, then summed —
+        MUIS's multi-company method.
+      </dd>
+    </div>
+    <div class="zakat__legend-item">
+      <dt class="zakat__legend-term">Crypto</dt>
+      <dd class="zakat__legend-rule">
+        Valued at today's price. A personal convention, <strong>not a MUIS ruling</strong>.
+      </dd>
+    </div>
+    <div class="zakat__legend-item">
+      <dt class="zakat__legend-term">No verdict</dt>
+      <dd class="zakat__legend-rule">
+        Nisab is not shown on purpose — compare the total against the current figure on
+        zakat.sg yourself. This page never shows a "you owe" verdict.
+      </dd>
+    </div>
+  </dl>
 
   @if (isLoading()) {
     <app-state-message variant="loading" title="Calculating zakat…" />
@@ -75,11 +95,10 @@
             <tr>
               <th scope="col">Symbol</th>
               <th scope="col">Status</th>
-              <th scope="col">Fiscal year end</th>
-              <th scope="col">Valued as of</th>
+              <th scope="col">Year end</th>
               <th scope="col">Qty held</th>
               <th scope="col">Close</th>
-              <th scope="col">FX rate (USD/SGD)</th>
+              <th scope="col">FX (USD/SGD)</th>
               <th scope="col">Value (SGD)</th>
               <th scope="col" class="zakat__actions-header">Actions</th>
             </tr>
@@ -96,12 +115,13 @@
                     {{ statusLabel(line.status) }}
                   </span>
                 </td>
-                <td>{{ line.fiscalYearEndDate ?? '—' }}</td>
                 <td>
-                  @if (line.closeDateUsed) {
-                    {{ line.closeDateUsed }}
+                  @if (line.fiscalYearEndDate) {
+                    <span class="zakat__date-token">{{ line.fiscalYearEndDate }}</span>
                     @if (line.closeDateExact === false) {
-                      <span class="zakat__footnote">carried forward, not the year-end date itself</span>
+                      <span class="zakat__footnote">
+                        valued <span class="zakat__date-token">{{ line.closeDateUsed }}</span> — carried forward
+                      </span>
                     }
                   } @else {
                     —
@@ -127,12 +147,14 @@
                 <td>{{ line.valueSgd | money: 'SGD' }}</td>
                 <td class="zakat__actions">
                   <button
-                    mat-button
+                    mat-icon-button
                     type="button"
                     [disabled]="!assetsReady()"
+                    [attr.aria-label]="fiscalYearEndActionLabel(line.status) + ' for ' + line.symbol"
+                    [matTooltip]="fiscalYearEndActionLabel(line.status)"
                     (click)="openFiscalYearEndDialog(line.assetId)"
                   >
-                    {{ fiscalYearEndActionLabel(line.status) }}
+                    <mat-icon aria-hidden="true">edit_calendar</mat-icon>
                   </button>
                 </td>
               </tr>
@@ -158,7 +180,7 @@
                 <th scope="col">Qty held</th>
                 <th scope="col">Price (USD)</th>
                 <th scope="col">
-                  FX rate (USD/SGD)
+                  FX (USD/SGD)
                   @if (cryptoFxHeader(); as fx) {
                     <span class="zakat__footnote" [class.zakat__footnote--warning]="fx.warning">{{
                       fx.text

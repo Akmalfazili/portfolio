@@ -6,18 +6,66 @@
 }
 
 .zakat__title {
-  margin: 0 0 var(--ui-space-3);
+  // Enough clearance that the legend's three hairline rules below read as the
+  // top of their own block, not as a broken underline hanging off the title.
+  margin: 0 0 var(--ui-space-6);
   font-size: var(--ui-font-size-2xl);
   font-weight: var(--ui-font-weight-semibold);
   color: var(--ui-color-accent);
 }
 
-.zakat__intro {
+// -----------------------------------------------------------------------------
+// The three rules that govern every figure on the page.
+//
+// This replaced a single --ui-layout-content-max paragraph. That paragraph's
+// measure was individually CORRECT (~75 characters is the readable range) but
+// it was the only element on the page at that width, and a lone narrow column
+// among full-width siblings reads as a mistake rather than as a deliberate
+// measure. Widening it to the full 960px would have been the wrong fix in the
+// other direction -- ~110-character lines are harder to read, not easier.
+//
+// Splitting it into three items solves both at once: the BLOCK is full width so
+// it aligns with the banner, tiles and panels below, while each item's own
+// measure lands around 45-55 characters, comfortably inside the readable range.
+//
+// Same auto-fit grid as .zakat__tiles below, reading the same token, so the two
+// share a column rhythm instead of establishing two competing ones.
+// -----------------------------------------------------------------------------
+.zakat__legend {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--ui-layout-tile-min-width), 1fr));
+  gap: var(--ui-space-3) var(--ui-space-6);
   margin: 0 0 var(--ui-space-6);
-  max-width: var(--ui-layout-content-max);
+}
+
+// A hairline rule per item, NOT a card. The stat tiles directly below are
+// bordered boxes; boxing these too would read as two rows of tiles competing
+// for the same attention, when this row is a legend to be read once and the
+// one below it is the actual answer.
+.zakat__legend-item {
+  border-top: 1px solid var(--ui-color-border);
+  padding-top: var(--ui-space-2);
+}
+
+.zakat__legend-term {
+  margin: 0 0 var(--ui-space-1);
+  font-size: var(--ui-font-size-xs);
+  font-weight: var(--ui-font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ui-color-on-surface-muted);
+}
+
+.zakat__legend-rule {
+  margin: 0; // dd carries a UA margin-inline-start
   color: var(--ui-color-on-surface-secondary);
   font-size: var(--ui-font-size-sm);
   line-height: var(--ui-line-height-relaxed);
+
+  strong {
+    font-weight: var(--ui-font-weight-semibold);
+    color: var(--ui-color-on-surface);
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -123,7 +171,7 @@
   th,
   td {
     text-align: left;
-    padding: var(--ui-space-3) var(--ui-space-4);
+    padding: var(--ui-space-3);
     border-bottom: 1px solid var(--ui-color-gridline);
     vertical-align: top;
   }
@@ -193,6 +241,15 @@
 .zakat__badge--excluded {
   background: color-mix(in srgb, var(--ui-color-status-warning) 18%, transparent);
   color: color-mix(in srgb, var(--ui-color-status-warning) 70%, var(--ui-color-on-surface));
+}
+
+// A YYYY-MM-DD is one token to a reader; letting it break mid-string reads as
+// two different numbers, and its hyphens are break opportunities CSS will
+// happily take once the column is narrow. The DATE is what must stay atomic --
+// not the cell, which would drag the carry-forward footnote onto one line and
+// widen the column straight back.
+.zakat__date-token {
+  white-space: nowrap;
 }
 
 .zakat__footnote {

@@ -3,6 +3,7 @@ import { httpResource, HttpClient } from '@angular/common/http';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
+import { MatTooltipModule } from '@angular/material/tooltip';
 
 import { API_ROUTES } from '../../core/api/api-routes';
 import { AssetDto, ZakatAssetStatus, ZakatCryptoLineDto, ZakatPaymentDto, ZakatReportDto, ZakatStockLineDto } from '../../core/api/models';
@@ -76,7 +77,7 @@ function sortLinesBySymbol<T extends { symbol: string }>(lines: T[]): T[] {
 @Component({
   selector: 'app-zakat-page',
   standalone: true,
-  imports: [MoneyPipe, QuantityPipe, StateMessage, StatTile, MatButtonModule, MatIconModule],
+  imports: [MoneyPipe, QuantityPipe, StateMessage, StatTile, MatButtonModule, MatIconModule, MatTooltipModule],
   templateUrl: './zakat.page.html',
   styleUrl: './zakat.page.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
