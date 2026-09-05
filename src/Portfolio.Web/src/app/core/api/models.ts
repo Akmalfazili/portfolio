@@ -87,6 +87,21 @@ export interface AssetDto {
    * state and keep only the calm "no price yet" one until this flips true.
    */
   providerHasEverSucceeded: boolean;
+
+  /**
+   * Recurring calendar month/day of this company's financial year end — see
+   * `zakat.md` §3.1. `null` means "not configured", a distinct reported
+   * state (`ZakatAssetStatus.FiscalYearEndNotConfigured`) never treated as
+   * "assume 31 Dec". ALWAYS `null` for `Crypto` — crypto has no financial
+   * year. Either both this and `fiscalYearEndDay` are set, or both are
+   * `null`; the server rejects one-of-two with a 400 keyed on
+   * `fiscalYearEndMonth`.
+   */
+  fiscalYearEndMonth: number | null;
+  /** Day of month, 1-31 — see `fiscalYearEndMonth`. 29 February is allowed
+   *  (clamped to 28 Feb in non-leap years at resolution time); `2/30`,
+   *  `4/31` and similar are rejected server-side. */
+  fiscalYearEndDay: number | null;
 }
 
 /**
@@ -107,6 +122,9 @@ export interface CreateAssetRequest {
   quoteProviderKind: QuoteProviderKind;
   providerSymbol: string | null;
   providerCoinId: string | null;
+  /** See `AssetDto.fiscalYearEndMonth`. Both-or-neither; always `null` for `Crypto`. */
+  fiscalYearEndMonth: number | null;
+  fiscalYearEndDay: number | null;
 }
 
 /** PUT /api/assets/{id} is a FULL REPLACE — the only way to flip `isActive`;
@@ -421,3 +439,156 @@ export interface AssetDividendHistoryDto {
   /** Newest ex-date first. */
   payments: DividendPaymentDto[];
 }
+
+// -----------------------------------------------------------------------------
+// Zakat on shares (zakat.md) — mirrors Portfolio.Application/Dtos/ZakatDtos.cs.
+// GET /api/zakat is the ONE sanctioned exception to asset-class segregation:
+// it returns stocks AND crypto in a single response because MUIS requires a
+// single grand total, but they stay in separate sub-objects with separate
+// subtotals so nothing aggregates implicitly. This report is denominated in
+// SGD — the app's usual USD reporting currency does not apply here, and
+// MoneyPipe must be called with an explicit 'SGD' currency, never its
+// default. Nisab is deliberately NOT encoded anywhere on this page (zakat.md
+// §2.4) — only the zakatable total and 2.5% of it are shown; the nisab
+// comparison against the current zakat.sg figure is the user's own to make.
+// -----------------------------------------------------------------------------
+
+/**
+ * Six outcomes, never one "skipped" bucket (zakat.md §6 — the D10/D26/D33/
+ * D35/D38/D45 defect family). `NotHeldAtFiscalYearEnd` (a correct zero,
+ * counted) and `FiscalYearEndNotConfigured` (a missing input, excluded) must
+ * never be presented the same way in the UI.
+ */
+export type ZakatAssetStatus =
+  | 'Included'
+  | 'NotHeldAtFiscalYearEnd'
+  | 'FiscalYearEndNotConfigured'
+  | 'NoCloseOnOrBeforeFiscalYearEnd'
+  | 'NoFxRateForCloseDate'
+  | 'NoQuote';
+
+/**
+ * One stock asset's zakat line, valued at ITS OWN last fiscal year end
+ * (zakat.md §2.2/§2.7 — the total is a sum across different dates by
+ * design). EVERY stock asset appears here, including one holding zero units
+ * today (zakat.md §2.8) — never filtered to current holdings. Nullable
+ * fields are genuinely `null` (never `0`) unless `status` is `Included`,
+ * except `quantityHeld`/`valueSgd`, which are legitimately `0` for
+ * `NotHeldAtFiscalYearEnd`.
+ */
+export interface ZakatStockLineDto {
+  assetId: number;
+  symbol: string;
+  name: string;
+  currency: string;
+  status: ZakatAssetStatus;
+  /** Null only when `status` is `FiscalYearEndNotConfigured`. */
+  fiscalYearEndDate: string | null;
+  /** Units held on `fiscalYearEndDate`. Null only when that date itself is null. */
+  quantityHeld: number | null;
+  /** Closing price in `currency`. Non-null only when `status` is `Included`. */
+  closeNative: number | null;
+  /** The `PriceHistory` date actually used — the greatest date at or before
+   *  `fiscalYearEndDate`. May differ from it; see `closeDateExact`. */
+  closeDateUsed: string | null;
+  /** `false` means `closeDateUsed` was carried forward from an earlier
+   *  trading day (weekend/holiday, or a year end landing on today, which has
+   *  no close of its own yet) — must be surfaced, never presented as exact. */
+  closeDateExact: boolean | null;
+  /** The USD/SGD `FxRate` date actually used. Null for an SGD-native asset
+   *  (no FX conversion at all) and null unless `status` is `Included`. */
+  fxDateUsed: string | null;
+  /** `true` means no FX rate existed at or before the close date at all, and
+   *  the resolver fell back to the EARLIEST rate on file — a real data gap,
+   *  not the ordinary weekend carry-forward. Must be surfaced. */
+  fxCarriedBack: boolean | null;
+  /** The USD/SGD rate actually applied to convert `closeNative` — SGD per
+   *  USD, `FxRate.Rate`'s own convention (zakat.md §4.3: this report
+   *  MULTIPLIES by it, the opposite of every other USD-to-native converter
+   *  in the codebase). `null` for an SGD-native asset (Z74) — that path runs
+   *  no FX conversion at all, so there is no rate to show; this is NOT the
+   *  same thing as a rate of `1.0` and must never render as one. Also
+   *  `null` for every non-`Included` status. */
+  fxRateUsed: number | null;
+  /** This line's contribution to the total, in SGD. `0` for
+   *  `NotHeldAtFiscalYearEnd` (a real, counted zero); `null` for every other
+   *  non-`Included` status — excluded entirely, never presented as zero. */
+  valueSgd: number | null;
+}
+
+/**
+ * One crypto asset's zakat line. Crypto follows NO MUIS ruling (zakat.md
+ * §2.3 — a user convention, not a ruling, and must be labelled as such) and
+ * is valued at TODAY's price, never a fiscal year end — crypto has none and
+ * keeps no price history to look one up in.
+ */
+export interface ZakatCryptoLineDto {
+  assetId: number;
+  symbol: string;
+  name: string;
+  currency: string;
+  status: Extract<ZakatAssetStatus, 'Included' | 'NoQuote'>;
+  /** Always computed regardless of `status` — nothing about resolving this can fail. */
+  quantityHeld: number;
+  /** Null only when `status` is `NoQuote`. */
+  priceUsd: number | null;
+  priceSource: PriceSource;
+  priceAsOf: string | null;
+  fxDateUsed: string | null;
+  fxCarriedBack: boolean | null;
+  /** The USD/SGD rate actually applied — SGD per USD (zakat.md §4.3).
+   *  Crypto has no SGD-native case, so unlike the stock line's
+   *  `fxRateUsed` this is only ever `null` for a non-`Included` status. */
+  fxRateUsed: number | null;
+  valueSgd: number | null;
+}
+
+/**
+ * GET /api/zakat?asOf=YYYY-MM-DD (asOf optional — defaults to today
+ * server-side). Nothing here is persisted; it is computed fresh on every
+ * read. `excludedAssetCount` is a caveat, same shape as
+ * `PortfolioSummaryDto.unpricedHoldingsCount` — a non-zero count means the
+ * total is knowingly incomplete and must say so.
+ */
+export interface ZakatReportDto {
+  /** The valuation reference date this report was computed against — used
+   *  as "today" for crypto and as the point each fiscal year end resolves
+   *  backward from. NOT a single valuation date for every line — see each
+   *  line's own date fields. */
+  asOf: string;
+  stocks: ZakatStockLineDto[];
+  crypto: ZakatCryptoLineDto[];
+  stockZakatableSgd: number;
+  /** Labelled separately from `stockZakatableSgd` on purpose — the crypto
+   *  valuation basis is a user convention, not a MUIS ruling (zakat.md §2.3),
+   *  and must never be presented with the same authority as the share figure. */
+  cryptoZakatableSgd: number;
+  totalZakatableSgd: number;
+  /** 2.5% of `totalZakatableSgd`. The nisab comparison is deliberately NOT
+   *  made here or anywhere in this UI — never render a "you owe / you don't
+   *  owe" verdict, and never hard-code a nisab figure. */
+  zakatPayableSgd: number;
+  /** Count of assets (stock + crypto) excluded from the total entirely —
+   *  every status except `Included`/`NotHeldAtFiscalYearEnd`. */
+  excludedAssetCount: number;
+}
+
+/**
+ * A zakat payment actually made — a recorded FACT, never derived from
+ * `ZakatReportDto` (zakat.md §3.2). Must never be written from the computed
+ * report, the same rule as "a close is never written into PriceQuote."
+ */
+export interface ZakatPaymentDto {
+  id: number;
+  /** A C# `DateOnly`, "YYYY-MM-DD" — never round-tripped through
+   *  `toISOString()` (SGT is UTC+8; same trap as `Transaction.tradeDate`). */
+  paidOn: string;
+  amountSgd: number;
+}
+
+export interface CreateZakatPaymentRequest {
+  paidOn: string;
+  amountSgd: number;
+}
+
+export type UpdateZakatPaymentRequest = CreateZakatPaymentRequest;

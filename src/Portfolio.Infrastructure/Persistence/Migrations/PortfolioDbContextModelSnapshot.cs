@@ -45,6 +45,12 @@ namespace Portfolio.Infrastructure.Persistence.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
 
+                    b.Property<int?>("FiscalYearEndDay")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("FiscalYearEndMonth")
+                        .HasColumnType("int");
+
                     b.Property<bool>("IsActive")
                         .HasColumnType("bit");
 
@@ -425,6 +431,29 @@ namespace Portfolio.Infrastructure.Persistence.Migrations
                     b.HasKey("Date");
 
                     b.ToTable("TwelveDataCreditLedgerEntries");
+                });
+
+            modelBuilder.Entity("Portfolio.Domain.Entities.ZakatPayment", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<decimal>("AmountSgd")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("decimal(19,4)");
+
+                    b.Property<DateOnly>("PaidOn")
+                        .HasColumnType("date");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PaidOn")
+                        .IsDescending();
+
+                    b.ToTable("ZakatPayments");
                 });
 
             modelBuilder.Entity("Portfolio.Domain.Entities.AssetDividendState", b =>

@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Portfolio.Application.Abstractions;
 using Portfolio.Application.Common;
 using Portfolio.Application.Dtos;
+using Portfolio.Application.Services.Calculators;
 using Portfolio.Domain.Entities;
 using Portfolio.Domain.Enums;
 
@@ -220,7 +221,7 @@ public sealed class TransactionService(IPortfolioDbContext db, TimeProvider time
             errors["fees"] = ["Fees cannot be negative."];
         }
 
-        var today = DateOnly.FromDateTime(timeProvider.GetUtcNow().UtcDateTime);
+        var today = ReportingClock.Today(timeProvider);
         if (tradeDate > today)
         {
             errors["tradeDate"] = ["Trade date cannot be in the future."];

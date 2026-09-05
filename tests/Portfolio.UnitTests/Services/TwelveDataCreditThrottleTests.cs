@@ -342,6 +342,32 @@ public sealed class TwelveDataCreditThrottleTests
         await usageProvider.DidNotReceive().GetDailyUsageAsync(Arg.Any<CancellationToken>());
     }
 
+    /// <summary>
+    /// Pins the deliberate split documented on <c>ReportingClock</c>: this ledger keys on the UTC
+    /// calendar day, never Singapore time, because it reconciles against Twelve Data's own
+    /// <c>/api_usage</c> counter, which itself resets at UTC midnight. 2026-09-03T15:30:00Z and
+    /// 2026-09-03T16:30:00Z straddle the SGT midnight boundary (2026-09-03 23:30 SGT vs.
+    /// 2026-09-04 00:30 SGT) but are both still 2026-09-03 in UTC — the ledger must keep
+    /// accumulating on the same day's row across that instant, not seed a new day the moment SGT
+    /// ticks over. A future refactor that "unifies" this onto <c>ReportingClock</c> would silently
+    /// break D39/D45's self-correction — see the class remarks on <c>ReportingClock</c>.
+    /// </summary>
+    [Fact]
+    public async Task TryAcquireAsync_AcrossTheSgtMidnightBoundary_StaysOnTheSameUtcDaysLedger()
+    {
+        var (sut, time) = CreateSut(now: DateTimeOffset.Parse("2026-09-03T15:30:00Z"));
+
+        (await sut.TryAcquireAsync(5, CancellationToken.None)).Should().BeTrue();
+
+        time.Advance(TimeSpan.FromHours(1)); // now 2026-09-03T16:30:00Z — new SGT day, same UTC day
+
+        (await sut.TryAcquireAsync(3, CancellationToken.None)).Should().BeTrue();
+
+        var status = await sut.GetStatusAsync(CancellationToken.None);
+        status.CreditsUsedToday.Should().Be(
+            8, "both acquires fall on 2026-09-03 in UTC, so the ledger must accumulate, not reseed, across the SGT-only midnight");
+    }
+
     /// <summary>Nudges the fake clock forward in small steps until <paramref name="task"/>
     /// completes, yielding real time in between so the throttle's internal await actually has a
     /// chance to observe each advance — mirrors the equivalent helper in

@@ -32,6 +32,8 @@ public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvid
                 a.ProviderCoinId,
                 a.IsActive,
                 a.CreatedAt,
+                a.FiscalYearEndMonth,
+                a.FiscalYearEndDay,
                 // D27. Translated to SQL by EF, so this stays one query rather than an N+1 across
                 // the asset list. PriceHistory is included as well as PriceQuote because a stock
                 // that was backfilled but has no live quote HAS been priced — only an asset that
@@ -59,6 +61,8 @@ public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvid
                 a.ProviderCoinId,
                 a.IsActive,
                 a.CreatedAt,
+                a.FiscalYearEndMonth,
+                a.FiscalYearEndDay,
                 // D27. Translated to SQL by EF, so this stays one query rather than an N+1 across
                 // the asset list. PriceHistory is included as well as PriceQuote because a stock
                 // that was backfilled but has no live quote HAS been priced — only an asset that
@@ -70,6 +74,7 @@ public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvid
     public async Task<ServiceResult<AssetDto>> CreateAsync(CreateAssetRequest request, CancellationToken cancellationToken)
     {
         var errors = ValidateCore(request.Symbol, request.Name, request.Currency, request.QuoteProviderKind, request.ProviderSymbol, request.ProviderCoinId);
+        ValidateFiscalYearEnd(request.AssetClass, request.FiscalYearEndMonth, request.FiscalYearEndDay, errors);
 
         if (errors.Count == 0 &&
             await db.Assets.AnyAsync(a => a.Symbol == request.Symbol, cancellationToken))
@@ -94,6 +99,8 @@ public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvid
             ProviderCoinId = request.ProviderCoinId,
             IsActive = true,
             CreatedAt = timeProvider.GetUtcNow(),
+            FiscalYearEndMonth = request.FiscalYearEndMonth,
+            FiscalYearEndDay = request.FiscalYearEndDay,
         };
 
         db.AddAsset(asset);
@@ -119,6 +126,7 @@ public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvid
         }
 
         var errors = ValidateCore(request.Symbol, request.Name, request.Currency, request.QuoteProviderKind, request.ProviderSymbol, request.ProviderCoinId);
+        ValidateFiscalYearEnd(request.AssetClass, request.FiscalYearEndMonth, request.FiscalYearEndDay, errors);
 
         if (errors.Count == 0 &&
             await db.Assets.AnyAsync(a => a.Id != id && a.Symbol == request.Symbol, cancellationToken))
@@ -140,6 +148,8 @@ public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvid
         asset.ProviderSymbol = request.ProviderSymbol;
         asset.ProviderCoinId = request.ProviderCoinId;
         asset.IsActive = request.IsActive;
+        asset.FiscalYearEndMonth = request.FiscalYearEndMonth;
+        asset.FiscalYearEndDay = request.FiscalYearEndDay;
         // CreatedAt is deliberately not settable through an update: D27's hint measures how long
         // an asset has gone unpriced, and letting a rename reset that clock would erase the signal.
 
@@ -236,6 +246,47 @@ public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvid
         return errors;
     }
 
+    /// <summary>
+    /// zakat.md §3.1: null means "not configured" and is always valid. Otherwise both
+    /// <paramref name="month"/> and <paramref name="day"/> must be set (one-of-two is invalid),
+    /// crypto must have neither set (it has no financial year), and the pair must be a real
+    /// fiscal year end in at least one calendar year — see
+    /// <see cref="Calculators.FiscalYearEndResolver.IsValidMonthDay"/> for exactly which day/month
+    /// combinations that allows (29 February included; 2/30, 4/31 and similar rejected).
+    /// </summary>
+    private static void ValidateFiscalYearEnd(
+        AssetClass assetClass, int? month, int? day, Dictionary<string, string[]> errors)
+    {
+        if (assetClass == AssetClass.Crypto)
+        {
+            if (month is not null || day is not null)
+            {
+                errors["fiscalYearEndMonth"] =
+                    ["Crypto assets have no financial year — FiscalYearEndMonth/Day must both be null."];
+            }
+
+            return;
+        }
+
+        if (month is null && day is null)
+        {
+            return;
+        }
+
+        if (month is null || day is null)
+        {
+            errors["fiscalYearEndMonth"] =
+                ["FiscalYearEndMonth and FiscalYearEndDay must both be set, or both left null."];
+            return;
+        }
+
+        if (!Calculators.FiscalYearEndResolver.IsValidMonthDay(month.Value, day.Value))
+        {
+            errors["fiscalYearEndDay"] =
+                [$"{month.Value}/{day.Value} is not a valid fiscal year end (29 February is the only allowed exception to a month's normal day count)."];
+        }
+    }
+
     private static AssetDto ToDto(Asset a, bool hasEverBeenPriced, bool providerHasEverSucceeded) => new(
         a.Id,
         a.Symbol,
@@ -248,6 +299,8 @@ public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvid
         a.ProviderCoinId,
         a.IsActive,
         a.CreatedAt,
+        a.FiscalYearEndMonth,
+        a.FiscalYearEndDay,
         hasEverBeenPriced,
         providerHasEverSucceeded);
 }

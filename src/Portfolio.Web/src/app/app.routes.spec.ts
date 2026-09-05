@@ -8,6 +8,7 @@ import { routes } from './app.routes';
 import { PortfolioOverviewPage } from './features/portfolio/portfolio-overview.page';
 import { AssetDetailPage } from './features/asset-detail/asset-detail.page';
 import { AssetManagementPage } from './features/asset-management/asset-management.page';
+import { ZakatPage } from './features/zakat/zakat.page';
 import { API_ROUTES } from './core/api/api-routes';
 import { PRICES_HUB_CONNECTION_FACTORY } from './core/prices/price-store';
 import { FakeHubConnection } from './core/prices/testing/fake-hub-connection';
@@ -97,6 +98,23 @@ describe('app routing — assetClass parameterisation', () => {
   it('lazy-loads AssetManagementPage for /assets (D24)', async () => {
     const instance = await harness.navigateByUrl('/assets', AssetManagementPage);
     expect(instance).toBeTruthy();
+    httpMock.expectOne(API_ROUTES.assets).flush([]);
+  });
+
+  it('lazy-loads ZakatPage for /zakat, with no data.assetClass (the one sanctioned exception)', async () => {
+    const instance = await harness.navigateByUrl('/zakat', ZakatPage);
+    expect(instance).toBeTruthy();
+    httpMock.expectOne(API_ROUTES.zakatReport()).flush({
+      asOf: '2026-09-03',
+      stocks: [],
+      crypto: [],
+      stockZakatableSgd: 0,
+      cryptoZakatableSgd: 0,
+      totalZakatableSgd: 0,
+      zakatPayableSgd: 0,
+      excludedAssetCount: 0,
+    });
+    httpMock.expectOne(API_ROUTES.zakatPayments).flush([]);
     httpMock.expectOne(API_ROUTES.assets).flush([]);
   });
 

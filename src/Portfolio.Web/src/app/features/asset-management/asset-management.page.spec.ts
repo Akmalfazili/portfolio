@@ -24,6 +24,8 @@ const AAPL: AssetDto = {
   createdAt: '2026-07-26T00:00:00+00:00',
   hasEverBeenPriced: true,
   providerHasEverSucceeded: true,
+  fiscalYearEndMonth: null,
+  fiscalYearEndDay: null,
 };
 
 // D24 real gap — GET /api/assets returns inactive assets too (confirmed
@@ -43,6 +45,8 @@ const MSFT_INACTIVE: AssetDto = {
   createdAt: '2026-07-26T00:00:00+00:00',
   hasEverBeenPriced: true,
   providerHasEverSucceeded: true,
+  fiscalYearEndMonth: null,
+  fiscalYearEndDay: null,
 };
 
 describe('AssetManagementPage', () => {
@@ -272,6 +276,8 @@ describe('AssetManagementPage', () => {
       createdAt: '2026-08-08T12:00:00+00:00',
       hasEverBeenPriced: false,
       providerHasEverSucceeded: false,
+      fiscalYearEndMonth: null,
+      fiscalYearEndDay: null,
     };
     vi.spyOn(dialog, 'open').mockReturnValue({
       afterClosed: () => of({ kind: 'saved', asset: created }),
@@ -331,6 +337,8 @@ describe('AssetManagementPage', () => {
       quoteProviderKind: 'TwelveData',
       providerSymbol: 'AAPL',
       providerCoinId: null,
+      fiscalYearEndMonth: null,
+      fiscalYearEndDay: null,
       isActive: false,
     });
     req.flush('boom', { status: 500, statusText: 'Server Error' });
@@ -535,5 +543,26 @@ describe('AssetManagementPage', () => {
 
     // No DELETE at all — httpMock.verify() in afterEach is the assertion.
     expect(fixture.nativeElement.textContent).toContain('AAPL');
+  });
+
+  // --- zakat.md §9 — editing an existing asset (previously impossible) ----
+
+  it('opens the edit dialog in edit mode and applies the saved result in place', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const dialog = TestBed.inject(MatDialog);
+    const updated: AssetDto = { ...AAPL, fiscalYearEndMonth: 9, fiscalYearEndDay: 30 };
+    const open = vi
+      .spyOn(dialog, 'open')
+      .mockReturnValue({ afterClosed: () => of({ kind: 'saved', asset: updated }) } as ReturnType<MatDialog['open']>);
+
+    fixture.componentInstance.openEditDialog(AAPL);
+    fixture.detectChanges();
+
+    expect(open.mock.calls[0][1]?.data).toEqual({ mode: 'edit', asset: AAPL });
+    expect(notifySuccess).toHaveBeenCalledWith('AAPL updated.');
   });
 });

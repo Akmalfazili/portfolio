@@ -93,6 +93,15 @@
                 mat-button
                 type="button"
                 [disabled]="deletingId() === asset.id"
+                [attr.aria-label]="'Edit ' + asset.symbol"
+                (click)="openEditDialog(asset)"
+              >
+                Edit
+              </button>
+              <button
+                mat-button
+                type="button"
+                [disabled]="deletingId() === asset.id"
                 [attr.aria-label]="(asset.isActive ? 'Deactivate ' : 'Reactivate ') + asset.symbol"
                 (click)="toggleActive(asset)"
               >

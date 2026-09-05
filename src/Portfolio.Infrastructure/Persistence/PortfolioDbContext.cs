@@ -36,6 +36,8 @@ public class PortfolioDbContext(DbContextOptions<PortfolioDbContext> options) : 
 
     public DbSet<AssetDividendState> AssetDividendStates => Set<AssetDividendState>();
 
+    public DbSet<ZakatPayment> ZakatPayments => Set<ZakatPayment>();
+
     IQueryable<Asset> IPortfolioDbContext.Assets => Assets;
 
     IQueryable<Transaction> IPortfolioDbContext.Transactions => Transactions;
@@ -55,6 +57,8 @@ public class PortfolioDbContext(DbContextOptions<PortfolioDbContext> options) : 
     IQueryable<DividendEvent> IPortfolioDbContext.DividendEvents => DividendEvents;
 
     IQueryable<AssetDividendState> IPortfolioDbContext.AssetDividendStates => AssetDividendStates;
+
+    IQueryable<ZakatPayment> IPortfolioDbContext.ZakatPayments => ZakatPayments;
 
     public void AddAsset(Asset asset) => Assets.Add(asset);
 
@@ -90,11 +94,18 @@ public class PortfolioDbContext(DbContextOptions<PortfolioDbContext> options) : 
 
     public void AddTwelveDataCreditLedgerEntry(TwelveDataCreditLedgerEntry entry) => TwelveDataCreditLedgerEntries.Add(entry);
 
+    public void AddZakatPayment(ZakatPayment payment) => ZakatPayments.Add(payment);
+
+    public void RemoveZakatPayment(ZakatPayment payment) => ZakatPayments.Remove(payment);
+
     public ValueTask<Asset?> FindAssetAsync(int id, CancellationToken cancellationToken) =>
         Assets.FindAsync([id], cancellationToken);
 
     public ValueTask<Transaction?> FindTransactionAsync(int id, CancellationToken cancellationToken) =>
         Transactions.FindAsync([id], cancellationToken);
+
+    public ValueTask<ZakatPayment?> FindZakatPaymentAsync(int id, CancellationToken cancellationToken) =>
+        ZakatPayments.FindAsync([id], cancellationToken);
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -1321,6 +1321,122 @@ forces a reconcile probe on the first acquire — the exact condition that broke
 
 ---
 
+### Zakat on shares added (2026-09-03)
+
+A zakat report over the whole portfolio, per MUIS's multi-company rule, plus a hand-entered
+ledger of zakat actually paid. **[zakat.md](zakat.md) is the design record** — it was written
+in full *before* any code existed, and it is the thing to read before touching this area. What
+follows is only what the implementation round itself taught.
+
+**The design-first order paid for itself.** zakat.md §4.3 warns that `FxRate.Rate` is SGD per
+USD and that every existing caller *divides* because every one of them converts *into* USD —
+this report is the first that converts *out*, and must multiply. Copying the surrounding idiom
+would have produced a number wrong by a factor of ~1.66 that still looked entirely plausible.
+Because the warning was read before the code was written, the trap cost nothing. That is the
+whole argument for writing the traps down in advance, and it is the first time in this project
+a known sharp edge drew no blood.
+
+**Two things the design sketch did not reach**, both of which would have left the feature
+unreachable rather than merely incomplete:
+
+- §9's backend list named the `Asset` columns, the configuration and the migration, but not
+  `AssetDto`/`CreateAssetRequest`/`UpdateAssetRequest`. Without those the two new columns are a
+  dead end nothing can write to. Added as optional trailing parameters defaulting to `null`.
+- `AssetFormDialog` was **create-only** — there was no way to reach any of the 22 assets already
+  in the database, so the new fiscal-year-end inputs would have been permanently unreachable for
+  exactly the assets that need them. An edit mode was added, narrowed deliberately to `name`,
+  `exchange` and the year end; identity and provider fields render disabled, because changing an
+  asset's symbol or provider once it has transactions and price history is a much larger
+  decision than this feature should smuggle in.
+
+**The sanctioned exception to asset-class segregation.** `GET /api/zakat` is the only endpoint
+that returns stocks *and* crypto, because MUIS needs the grand total. Separate sub-objects,
+separate subtotals, only the final sum crosses the line. It is also the only SGD-denominated
+response in the app. Both are noted in `CLAUDE.md` so they read as decisions rather than drift.
+
+**§4.4 turned out to be aspirational.** It asks that crypto's `priceSource` carry the
+`Live`/`Close` distinction through. `QuoteFreshness.Classify` returns `Live` unconditionally for
+any provider `ProviderMarkets.For(...)` has no calendar for — CoinGecko included — so a crypto
+zakat line reads `"Live"` however stale the quote is. Pre-existing behaviour that
+`PortfolioSummaryService` has always had for crypto; reused rather than special-cased, and
+recorded in zakat.md §4.4 so nobody reads a crypto `"Live"` as evidence of freshness.
+
+**The taxonomy work was the point, not overhead.** Six statuses, and the two that both
+contribute zero — `NotHeldAtFiscalYearEnd` (a correct answer) and `FiscalYearEndNotConfigured`
+(a missing input) — are visibly different in the API *and* in the UI. Confirmed by setting one
+asset's year end in a real browser and watching its badge move from the amber "year end not set"
+to a distinct neutral "not held at year end", with the top-level caveat switching from a setup
+notice to the excluded-count warning. This is the sixth appearance of the D10/D26/D33/D35/D38/D45
+family and the first time the distinction was built in from the start rather than retrofitted
+after a silent wrong number.
+
+**Shipped with no data, deliberately.** No asset has a fiscal year end. zakat.md §8 requires each
+confirmed against the company's own filings, and five of the 22 (AAPL, AVGO, JNJ, NVDA, CSCO) run
+52/53-week calendars where "the last Saturday of September" is not a fixed month/day. A guessed
+year end produces a confident wrong number nothing downstream can detect, so the report ships
+reading `FiscalYearEndNotConfigured` for every stock and a legitimate 0 subtotal. **Entering those
+22 values is the only thing standing between this report and a real figure.**
+
+**Spends zero Twelve Data credits**, and this is structural rather than lucky: `PriceBackfillService`
+already backfills from each asset's earliest transaction, so if quantity at a year end is above
+zero a transaction exists at or before it and the history necessarily reaches back past it. No new
+historical fetching was needed. Worth preserving — see zakat.md §7.1.
+
+**Not verified, and worth knowing:** the report has never run against the real 22-asset portfolio
+(the dev database seeds 3 stocks and 3 crypto; the real holdings live in the container database),
+and **AMP/ANVL precision has not been seen end-to-end through a real zakat calculation** — dev
+crypto holdings are 0 units, so `valueSgd` was trivially 0 and the display pipes were never handed
+`39,732.4862639449 @ $0.0004419`. Given that this project's decimal-precision rule exists precisely
+because those two positions read as zero under any two-decimal assumption, that is the gap to close
+first when the container database is next up.
+
+---
+
+### Zakat FX rate surfaced, and the first container run (2026-09-05)
+
+The report already showed *which* FX rate it used — `fxDateUsed`, plus a warning when the rate had
+been carried back — but never the rate itself, so its SGD figures could not be checked by the
+person reading them. Both line DTOs gained `FxRateUsed` and both tables an **FX rate (USD/SGD)**
+column, placed immediately before **Value (SGD)** so a row reads as its own arithmetic.
+
+**The interesting decision was what an SGD-native asset reports.** Z74 does no conversion at all,
+so it emits `null`, not `1.0` — a literal 1.0 is indistinguishable from a genuine rate that happens
+to be 1, which is this project's most repeated defect family (D10, D26, D33, D35, D38, D45) in
+miniature. The UI gives it a third rendering: a rate, a *"Already SGD — no FX conversion applied"*
+footnote, and a bare em-dash for a missing rate are three visibly different cells.
+
+**The rate is emitted unrounded**, at the `decimal(18,8)` FX rates are stored as, rather than
+through `DisplayRounding.Money`. `ValueSgd` is computed from that exact value before money
+rounding is applied once at the end; a second independent rounding step would let the displayed
+rate stop reconciling against the displayed value — the two would disagree by a hair and look like
+a calculation bug.
+
+**Verified against the real portfolio in the container — the first time this report has run on
+anything but dev seed data**, and the round closed the gap the previous entry flagged as the one to
+close first:
+
+- **AMP/ANVL precision, end to end through the display pipes.** The page renders
+  `39,732.4862639449 @ $0.00044562` → **SGD 22.43** and `36,810.905 @ $0.0007048` → **SGD 32.87**.
+  Under any two-decimal assumption AMP's price reads `0.00` and its whole contribution vanishes
+  silently. This is the case the project's decimal-precision rule exists for, finally *seen* rather
+  than argued from.
+- **Historical FX is genuinely per-date**: three rates on three dates in one response — AMZN 1.2852
+  (2025-12-31), AVGO 1.3016 (2025-10-31), crypto 1.26688 (2026-09-04). All six included lines
+  reconcile exactly as `quantity × price × fxRateUsed = valueSgd`, arithmetically checked. That
+  reconciliation is also the live proof that the §4.3 multiply-don't-divide direction is right.
+- **AVGO exercised the 52/53-week carry-forward on real data** — year end 2025-11-02 is a Sunday,
+  `closeDateUsed` 2025-10-31, `closeDateExact: false`.
+- The SGD-native branch is unreachable on real data (Z74 has no year end set), so it was reached by
+  **temporarily** setting Z74 to `3/31`, confirming null FX and `255 × 4.94 = 1259.70` exactly, then
+  reverting. Excluded count back to 18, Z74 back to `FiscalYearEndNotConfigured`.
+
+**Four year ends have since been entered** (AAPL, AMZN, ARVLF, AVGO) — the previous entry's "ships
+with no data" is no longer true, and both records were corrected. **18 remain**, and the total is
+knowingly partial until they are in. `NoCloseOnOrBeforeFiscalYearEnd` and `NoFxRateForCloseDate`
+are still fixture-only; no live asset is in either state and reaching them would mean damaging real
+history.
+
+---
 ## Known gaps, deliberately accepted
 
 Not defects — decisions. Each was considered and left as-is.
@@ -1431,6 +1547,8 @@ and it is a measurement on hold, not a defect** — see the top of this file.
 | 2026-08-27 | D40 — allocation pie labelling reworked so every slice carries a leader line and its ticker. **The first browser-verified change in this project**: the Chrome extension connected, so trap 8 did not bite. Four rounds, each one caught by looking at the real render — a threshold that hid small labels, a two-tier leader-line length that starved a mid-size slice of room, text sitting above the line instead of beside it, and a generic `moveOverlap` pass that moved labels without their lines. The last two rounds were settled by measuring the rendered SVG with `getBoundingClientRect()` rather than eyeballing screenshots, which both found a defect screenshots had hidden **and** showed that an earlier "2px overlap" reading from the same method had overstated its own severity. The /crypto cost-basis corner (two $0-cost-basis holdings beside one at 100%) is improved, not clean, and is documented as an accepted limit in the component |
 | 2026-08-28 | D43 — stat-tile value clipping fixed via a new line-height token. The lesson is the **no-op fix that verifies clean**: the first attempt reasoned out a plausible cause (inheriting body’s fixed 20px line-height), wrote a confident comment asserting it, changed the line-height to a token holding the value the element already had, and then passed a full build and 302 tests. Both the diagnosis and the fix were wrong and nothing in the suite could tell. What settled it was measuring the real element: computed line-height was *already* 1.2× before the change, and a swept ratio → overflow table across the component’s whole `clamp()` range (1.2 → 1–2px clipped everywhere, 1.25 → still clipped at floor and ceiling, 1.3 → clean) picked the value. Second browser-verified change in the project |
 | 2026-08-29 | D44 — `/stocks` self-blanking every 2 minutes fixed. `httpResource.reload()` preserves its value while `isLoading()` goes true (in-flight) but discards it entirely on a failed reload (verified by reading `_resource-chunk.mjs` directly), and the overview/asset-detail templates checked `isLoading()` before checking whether there was anything to show. Fixed with per-resource loading/error state (decoupling the allocation pie and annual-return chart from the summary's own state) and a new `lastGoodValue` helper covering both halves of the resource's asymmetric behaviour. The regression test was confirmed failing against the pre-fix code (`git stash` of the `.ts`/`.html` changes only, spec kept) before the fix was restored and reverified green — 308/308 frontend tests, `ng build` clean |
+| 2026-09-03 | Zakat on shares — backend, frontend and tests, built from `zakat.md`, a design record written in full before any code existed. The FX-direction trap that document warned about (this is the first path converting *out* of USD, so it must multiply where every existing caller divides) cost nothing, the first time a known sharp edge in this project drew no blood. Two gaps in the sketch surfaced during the build: the asset DTOs had no fiscal-year-end fields, and `AssetFormDialog` was create-only — either would have left the feature unreachable. Ships with **no** fiscal year ends configured, deliberately: each of the 22 needs confirming against company filings, and five run 52/53-week calendars. Zero Twelve Data credits, structurally |
+| 2026-09-05 | Zakat FX rate surfaced on every line (`FxRateUsed` plus an **FX rate (USD/SGD)** column), and the report run against the **real portfolio in a container for the first time**. An SGD-native asset reports `null`, never `1.0` — the D10/D26/D33/D35/D38/D45 family in miniature — and gets its own footnote rather than sharing the missing-rate em-dash. The rate is emitted unrounded so it reconciles exactly against the value computed from it. Closed the precision gap the 09-03 entry named first: AMP renders `39,732.4862639449 @ $0.00044562` → **SGD 22.43** through the real display pipes, where two decimals would have silently zeroed it. Three per-date FX rates in one response, and all six included lines reconcile as `quantity × price × rate`. Four fiscal year ends now entered, **18 still outstanding** |
 
 ---
 

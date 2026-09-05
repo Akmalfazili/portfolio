@@ -1,35 +1,42 @@
-<h2 mat-dialog-title>Track a new asset</h2>
+<h2 mat-dialog-title>{{ title }}</h2>
 
 <form [formGroup]="form" (ngSubmit)="submit()">
   <mat-dialog-content class="asset-form">
-    <table class="asset-form__routing" aria-label="Provider routing rules">
-      <caption>Which provider to pick, and what identifier it needs</caption>
-      <thead>
-        <tr>
-          <th scope="col">Asset</th>
-          <th scope="col">Provider</th>
-          <th scope="col">Identifier format</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>US equity</td>
-          <td>Twelve Data</td>
-          <td>Plain ticker — <code>AAPL</code></td>
-        </tr>
-        <tr>
-          <td>SGX equity</td>
-          <td>Yahoo</td>
-          <td><code>.SI</code> suffix — <code>Z74.SI</code></td>
-        </tr>
-        <tr>
-          <td>Crypto</td>
-          <td>CoinGecko</td>
-          <td>Coin ID, not ticker — <code>ethereum</code>, not <code>ETH</code></td>
-        </tr>
-      </tbody>
-    </table>
-
+    @if (isEdit) {
+      <p class="asset-form__note">
+        Symbol, asset class, currency and provider routing can't be changed here — they affect
+        which provider gets billed and what a historical price series means. Deactivate and
+        re-add the asset if one of those is genuinely wrong.
+      </p>
+    } @else {
+      <table class="asset-form__routing" aria-label="Provider routing rules">
+        <caption>Which provider to pick, and what identifier it needs</caption>
+        <thead>
+          <tr>
+            <th scope="col">Asset</th>
+            <th scope="col">Provider</th>
+            <th scope="col">Identifier format</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>US equity</td>
+            <td>Twelve Data</td>
+            <td>Plain ticker — <code>AAPL</code></td>
+          </tr>
+          <tr>
+            <td>SGX equity</td>
+            <td>Yahoo</td>
+            <td><code>.SI</code> suffix — <code>Z74.SI</code></td>
+          </tr>
+          <tr>
+            <td>Crypto</td>
+            <td>CoinGecko</td>
+            <td>Coin ID, not ticker — <code>ethereum</code>, not <code>ETH</code></td>
+          </tr>
+        </tbody>
+      </table>
+    }
     <mat-form-field appearance="outline">
       <mat-label>Symbol</mat-label>
       <input matInput [formControl]="form.controls.symbol" placeholder="AAPL" />
@@ -118,10 +125,60 @@
       </mat-form-field>
     }
 
-    <p class="asset-form__note">
-      A new asset has no price history yet, so its chart and its contribution to annual returns
-      stay empty until a backfill runs.
-    </p>
+    @if (!isEdit) {
+      <p class="asset-form__note">
+        A new asset has no price history yet, so its chart and its contribution to annual returns
+        stay empty until a backfill runs.
+      </p>
+    }
+
+    <div class="asset-form__fye">
+      <mat-form-field appearance="outline">
+        <mat-label>Fiscal year end — month</mat-label>
+        <input
+          matInput
+          type="number"
+          step="1"
+          min="1"
+          max="12"
+          placeholder="6"
+          [formControl]="form.controls.fiscalYearEndMonth"
+        />
+        @if (fieldError('fiscalYearEndMonth'); as error) {
+          <mat-error>{{ error }}</mat-error>
+        }
+      </mat-form-field>
+
+      <mat-form-field appearance="outline">
+        <mat-label>Fiscal year end — day</mat-label>
+        <input
+          matInput
+          type="number"
+          step="1"
+          min="1"
+          max="31"
+          placeholder="30"
+          [formControl]="form.controls.fiscalYearEndDay"
+        />
+        @if (fieldError('fiscalYearEndDay'); as error) {
+          <mat-error>{{ error }}</mat-error>
+        }
+      </mat-form-field>
+    </div>
+
+    @if (isCrypto()) {
+      <p class="asset-form__note">
+        Crypto has no financial year — zakat on crypto is valued at today's price instead (see the
+        Zakat page). This asset's fiscal year end can't be set.
+      </p>
+    } @else {
+      <p class="asset-form__note">
+        Recurring month/day this company's financial year ends on — e.g. <code>6</code> /
+        <code>30</code> for a 30 June year end. Leave both blank until you've confirmed it against
+        the company's own filings; a wrong year end produces a confident wrong zakat figure with
+        nothing downstream able to detect it. Used only by the Zakat report.
+      </p>
+    }
 
     @if (serverError(); as error) {
       <p class="asset-form__error">

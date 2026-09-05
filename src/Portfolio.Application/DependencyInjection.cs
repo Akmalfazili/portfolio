@@ -26,6 +26,7 @@ public static class DependencyInjection
         services.AddScoped<IPortfolioSummaryService, PortfolioSummaryService>();
         services.AddScoped<IPortfolioPerformanceService, PortfolioPerformanceService>();
         services.AddScoped<IDividendService, DividendService>();
+        services.AddScoped<IZakatService, ZakatService>();
 
         services.AddSingleton<IMarketCalendar, MarketCalendar>();
 

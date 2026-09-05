@@ -147,7 +147,7 @@ public sealed class DividendServiceTests : IDisposable
             AssetId = aapl.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2020, 1, 1),
             Quantity = 10m, PricePerUnit = 100m, Fees = 0m, Currency = "USD",
         });
-        var oneYearAgo = DateOnly.FromDateTime(Now.UtcDateTime).AddYears(-1);
+        var oneYearAgo = ReportingClock.DateFor(Now).AddYears(-1);
         _db.DividendEvents.Add(new DividendEvent { AssetId = aapl.Id, ExDate = oneYearAgo, AmountPerShare = 1m, Currency = "USD" });
         _db.AssetDividendStates.Add(new AssetDividendState { AssetId = aapl.Id, LastAttemptedAt = Now, LastSuccessAt = Now, LastRunSuccess = true });
         await _db.SaveChangesAsync();
@@ -168,7 +168,7 @@ public sealed class DividendServiceTests : IDisposable
             AssetId = aapl.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2020, 1, 1),
             Quantity = 10m, PricePerUnit = 100m, Fees = 0m, Currency = "USD",
         });
-        var justOutsideWindow = DateOnly.FromDateTime(Now.UtcDateTime).AddYears(-1).AddDays(-1);
+        var justOutsideWindow = ReportingClock.DateFor(Now).AddYears(-1).AddDays(-1);
         _db.DividendEvents.Add(new DividendEvent { AssetId = aapl.Id, ExDate = justOutsideWindow, AmountPerShare = 1m, Currency = "USD" });
         _db.AssetDividendStates.Add(new AssetDividendState { AssetId = aapl.Id, LastAttemptedAt = Now, LastSuccessAt = Now, LastRunSuccess = true });
         await _db.SaveChangesAsync();
@@ -177,6 +177,40 @@ public sealed class DividendServiceTests : IDisposable
 
         result.Value!.Trailing12MonthIncomeUsd.Should().Be(0m); // outside the trailing window
         result.Value!.AllTimeIncomeUsd.Should().Be(10m); // still counted all-time
+    }
+
+    [Fact]
+    public async Task GetAssetDividendHistoryAsync_AtSgtMidnightBoundary_WindowIsAnchoredToTheNewSgtDay()
+    {
+        // 2026-09-03T16:30:00Z = 2026-09-04 00:30 SGT. The trailing-12-month window must anchor to
+        // 2026-09-04 (the SGT "today"), not 2026-09-03 (the still-current UTC day) — an ex-date of
+        // exactly 2025-09-04 is inside the window under the SGT anchor and would be excluded under
+        // the old UTC one.
+        var boundaryTimeProvider = new FixedTimeProvider(new DateTimeOffset(2026, 9, 3, 16, 30, 0, TimeSpan.Zero));
+        var sut = new DividendService(_db, new DividendIncomeCalculator(), boundaryTimeProvider);
+
+        var aapl = AddAsset(1, "AAPL", AssetClass.Stock, "USD");
+        _db.Assets.Add(aapl);
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = aapl.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2020, 1, 1),
+            Quantity = 10m, PricePerUnit = 100m, Fees = 0m, Currency = "USD",
+        });
+        var exactlyOneYearBeforeTheNewSgtDay = new DateOnly(2025, 9, 4);
+        _db.DividendEvents.Add(new DividendEvent
+        {
+            AssetId = aapl.Id, ExDate = exactlyOneYearBeforeTheNewSgtDay, AmountPerShare = 1m, Currency = "USD",
+        });
+        _db.AssetDividendStates.Add(new AssetDividendState
+        {
+            AssetId = aapl.Id, LastAttemptedAt = boundaryTimeProvider.GetUtcNow(),
+            LastSuccessAt = boundaryTimeProvider.GetUtcNow(), LastRunSuccess = true,
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await sut.GetAssetDividendHistoryAsync(aapl.Id, CancellationToken.None);
+
+        result.Value!.Trailing12MonthIncomeUsd.Should().Be(10m);
     }
 
     [Fact]

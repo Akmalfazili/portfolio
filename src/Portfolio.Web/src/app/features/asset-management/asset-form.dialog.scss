@@ -56,10 +56,20 @@
   }
 }
 
+.asset-form__fye {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--ui-space-3);
+}
+
 .asset-form__note {
   margin: 0 0 var(--ui-space-2);
   color: var(--ui-color-on-surface-muted);
   font-size: var(--ui-font-size-xs);
+
+  code {
+    font-family: var(--ui-font-family-mono);
+  }
 }
 
 .asset-form__error {

@@ -20,6 +20,19 @@ public sealed record AssetDto(
     DateTimeOffset CreatedAt,
 
     /// <summary>
+    /// Calendar month of this company's financial year end, 1-12; null means not configured. Always
+    /// null for <see cref="Enums.AssetClass.Crypto"/>. Feeds the zakat-on-shares report — see
+    /// zakat.md — nowhere else. Either this and <see cref="FiscalYearEndDay"/> are both set or both
+    /// null; enforced by <c>AssetService</c>, not the database.
+    /// </summary>
+    int? FiscalYearEndMonth,
+
+    /// <summary>Day of month of the financial year end, 1-31 (29 is allowed for February — it
+    /// clamps to 28 in a non-leap year at the point the zakat report resolves it, never rejected
+    /// here). See <see cref="FiscalYearEndMonth"/>.</summary>
+    int? FiscalYearEndDay,
+
+    /// <summary>
     /// D27 — false when this asset has never had a single price recorded, from any source: no
     /// <c>PriceQuote</c> and no <c>PriceHistory</c> row exists for it.
     ///
@@ -70,7 +83,13 @@ public sealed record CreateAssetRequest(
     string Currency,
     QuoteProviderKind QuoteProviderKind,
     string? ProviderSymbol,
-    string? ProviderCoinId);
+    string? ProviderCoinId,
+
+    /// <summary>See <see cref="AssetDto.FiscalYearEndMonth"/>. Both null (not configured, the only
+    /// valid state for a <see cref="AssetClass.Crypto"/> request) or both set — validated in
+    /// <c>AssetService</c>.</summary>
+    int? FiscalYearEndMonth = null,
+    int? FiscalYearEndDay = null);
 
 /// <summary>Full replace of an existing asset, including <see cref="IsActive"/> — the only way to
 /// deactivate one (D23/Phase 12). Same D23 provider-routing coherence rules as
@@ -84,4 +103,8 @@ public sealed record UpdateAssetRequest(
     QuoteProviderKind QuoteProviderKind,
     string? ProviderSymbol,
     string? ProviderCoinId,
-    bool IsActive);
+    bool IsActive,
+
+    /// <summary>See <see cref="CreateAssetRequest.FiscalYearEndMonth"/>.</summary>
+    int? FiscalYearEndMonth = null,
+    int? FiscalYearEndDay = null);

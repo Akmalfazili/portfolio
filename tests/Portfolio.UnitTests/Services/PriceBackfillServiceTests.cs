@@ -88,13 +88,14 @@ public sealed class PriceBackfillServiceTests : IDisposable
         IFxRateProvider fxProvider,
         int maxCallsPerRun = 800,
         IMarketCalendar? calendar = null,
-        ITwelveDataCreditThrottle? creditThrottle = null) =>
+        ITwelveDataCreditThrottle? creditThrottle = null,
+        TimeProvider? timeProvider = null) =>
         new(
             _db,
             router,
             fxProvider,
             calendar ?? AlwaysClosedCalendar(),
-            _timeProvider,
+            timeProvider ?? _timeProvider,
             Options.Create(new PriceBackfillOptions { MaxProviderCallsPerRun = maxCallsPerRun }),
             creditThrottle ?? ThrottleWithRemainingBudget(800),
             NullLogger<PriceBackfillService>.Instance);
@@ -631,13 +632,15 @@ public sealed class PriceBackfillServiceTests : IDisposable
         var router = RouterAlwaysReturning(stockProvider);
         var fxProvider = Substitute.For<IFxRateProvider>();
 
-        // Same UTC day as _timeProvider's fixed "now" (2026-07-26).
+        // Same SGT reporting day as _timeProvider's fixed "now" (2026-07-26T00:00:00Z = 2026-07-26
+        // 08:00 SGT). 06:00 UTC is 14:00 SGT the same day, safely away from the SGT midnight
+        // boundary this run's gate now keys on (see ReportingClock).
         _db.RefreshRuns.Add(new RefreshRun
         {
             Trigger = RefreshTrigger.BackfillScheduled,
             AssetClass = AssetClass.Stock,
-            StartedAt = new DateTimeOffset(2026, 7, 26, 21, 0, 0, TimeSpan.Zero),
-            CompletedAt = new DateTimeOffset(2026, 7, 26, 21, 0, 1, TimeSpan.Zero),
+            StartedAt = new DateTimeOffset(2026, 7, 26, 6, 0, 0, TimeSpan.Zero),
+            CompletedAt = new DateTimeOffset(2026, 7, 26, 6, 0, 1, TimeSpan.Zero),
             Success = true,
             SymbolsRefreshed = 2,
         });
@@ -652,6 +655,41 @@ public sealed class PriceBackfillServiceTests : IDisposable
         await stockProvider.DidNotReceive().GetHistoryAsync(
             Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
         (await _db.RefreshRuns.CountAsync()).Should().Be(1); // the seeded row only, nothing new added
+    }
+
+    [Fact]
+    public async Task RunIfDueAsync_PreviousRunJustAfterNyseClose_StillGatesAcrossTheFollowingUtcMidnight()
+    {
+        // Pins the reasoning behind moving this gate to SGT (see ReportingClock): NYSE closes
+        // ~20:00-21:00 UTC, which is already past the SGT day boundary (16:00 UTC) — so a
+        // scheduled run written right after close (here, 2026-07-25T21:00:00Z) lands in SGT day
+        // 2026-07-26. A later overnight poll at 2026-07-26T01:00:00Z has already crossed UTC
+        // midnight into 2026-07-26, but is still SGT day 2026-07-26 (09:00 SGT) — so the gate must
+        // still hold and must NOT re-run the backfill just because the UTC calendar date ticked
+        // over between NYSE's close and the next poll.
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        var router = RouterAlwaysReturning(stockProvider);
+        var fxProvider = Substitute.For<IFxRateProvider>();
+
+        _db.RefreshRuns.Add(new RefreshRun
+        {
+            Trigger = RefreshTrigger.BackfillScheduled,
+            AssetClass = AssetClass.Stock,
+            StartedAt = new DateTimeOffset(2026, 7, 25, 21, 0, 0, TimeSpan.Zero),
+            CompletedAt = new DateTimeOffset(2026, 7, 25, 21, 0, 1, TimeSpan.Zero),
+            Success = true,
+            SymbolsRefreshed = 2,
+        });
+        await _db.SaveChangesAsync();
+
+        var overnightPollTime = new FixedTimeProvider(new DateTimeOffset(2026, 7, 26, 1, 0, 0, TimeSpan.Zero));
+        var sut = CreateSut(router, fxProvider, timeProvider: overnightPollTime); // AlwaysClosedCalendar
+
+        var result = await sut.RunIfDueAsync(CancellationToken.None);
+
+        result.Outcome.Should().Be(PriceBackfillOutcome.AlreadyRanToday);
+        await stockProvider.DidNotReceive().GetHistoryAsync(
+            Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]

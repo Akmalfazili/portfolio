@@ -184,6 +184,25 @@ export class AssetManagementPage {
     });
   }
 
+  /**
+   * zakat.md §9 — the only way to set an existing asset's fiscal year end
+   * (or its name/exchange) after creation. Narrower than the create dialog:
+   * identity and provider-routing fields are shown disabled, for context
+   * only — see AssetFormDialog's class doc comment for why.
+   */
+  openEditDialog(asset: AssetDto): void {
+    const ref = this.dialog.open<AssetFormDialog, AssetFormDialogData, AssetFormDialogResult>(AssetFormDialog, {
+      data: { mode: 'edit', asset },
+    });
+
+    ref.afterClosed().subscribe((result) => {
+      if (result?.kind === 'saved') {
+        this.assetsResource.update((list) => sortAssets((list ?? []).map((a) => (a.id === asset.id ? result.asset : a))));
+        this.notifications.success(`${result.asset.symbol} updated.`);
+      }
+    });
+  }
+
   toggleActive(asset: AssetDto): void {
     const activating = !asset.isActive;
     const ref = this.dialog.open<ConfirmDialog, ConfirmDialogData, boolean>(ConfirmDialog, {
@@ -216,6 +235,8 @@ export class AssetManagementPage {
         quoteProviderKind: asset.quoteProviderKind,
         providerSymbol: asset.providerSymbol,
         providerCoinId: asset.providerCoinId,
+        fiscalYearEndMonth: asset.fiscalYearEndMonth,
+        fiscalYearEndDay: asset.fiscalYearEndDay,
         isActive: activating,
       };
 

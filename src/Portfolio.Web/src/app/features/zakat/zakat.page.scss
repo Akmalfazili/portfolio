@@ -1,0 +1,259 @@
+@use '../../../styles/ui.mixins' as ui;
+
+.zakat {
+  max-width: var(--ui-layout-content-max-wide);
+  margin: 0 auto;
+}
+
+.zakat__title {
+  margin: 0 0 var(--ui-space-3);
+  font-size: var(--ui-font-size-2xl);
+  font-weight: var(--ui-font-weight-semibold);
+  color: var(--ui-color-accent);
+}
+
+.zakat__intro {
+  margin: 0 0 var(--ui-space-6);
+  max-width: var(--ui-layout-content-max);
+  color: var(--ui-color-on-surface-secondary);
+  font-size: var(--ui-font-size-sm);
+  line-height: var(--ui-line-height-relaxed);
+}
+
+// -----------------------------------------------------------------------------
+// Banners — same amber "this figure needs a caveat" convention used across the
+// app (overview.page.scss's __caveat, transactions.page.scss's __warning).
+// -----------------------------------------------------------------------------
+.zakat__warning,
+.zakat__caveat {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  margin: 0 0 var(--ui-space-4);
+  padding: var(--ui-space-3) var(--ui-space-4);
+  background: color-mix(in srgb, var(--ui-color-status-warning) 14%, transparent);
+  color: var(--ui-color-on-surface);
+  border-radius: var(--ui-radius-sm);
+  font-size: var(--ui-font-size-sm);
+
+  mat-icon {
+    color: var(--ui-color-status-warning);
+    flex: none;
+  }
+
+  button {
+    margin-left: auto;
+  }
+}
+
+// Day-one setup state (zakat.md §8) — deliberately a calmer, informational
+// tone rather than the amber "something needs attention" one: this is the
+// expected state before any fiscal year end has been confirmed, not a
+// problem with the data.
+.zakat__setup-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ui-space-2);
+  margin: 0 0 var(--ui-space-4);
+  padding: var(--ui-space-3) var(--ui-space-4);
+  background: color-mix(in srgb, var(--ui-color-accent) 10%, transparent);
+  color: var(--ui-color-on-surface);
+  border-radius: var(--ui-radius-sm);
+  font-size: var(--ui-font-size-sm);
+  line-height: var(--ui-line-height-normal);
+
+  mat-icon {
+    color: var(--ui-color-accent);
+    flex: none;
+  }
+}
+
+.zakat__asof {
+  margin: 0 0 var(--ui-space-4);
+  color: var(--ui-color-on-surface-muted);
+  font-size: var(--ui-font-size-xs);
+}
+
+// -----------------------------------------------------------------------------
+// Stat tiles — same grid pattern as overview.page.scss's __tiles.
+// -----------------------------------------------------------------------------
+.zakat__tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--ui-layout-tile-min-width), 1fr));
+  gap: var(--ui-space-3);
+  margin-bottom: var(--ui-space-6);
+}
+
+.zakat__convention-note,
+.zakat__nisab-note {
+  display: block;
+  color: var(--ui-color-on-surface-muted);
+  font-size: var(--ui-font-size-xs);
+}
+
+.zakat__panel {
+  background: var(--ui-color-surface);
+  border: 1px solid var(--ui-color-border);
+  border-radius: var(--ui-radius-md);
+  padding: var(--ui-space-4);
+  margin-bottom: var(--ui-space-6);
+  overflow-x: auto;
+}
+
+.zakat__panel-title {
+  margin: 0 0 var(--ui-space-4);
+  font-size: var(--ui-font-size-lg);
+  font-weight: var(--ui-font-weight-semibold);
+  color: var(--ui-color-on-surface);
+}
+
+.zakat__empty-note {
+  margin: 0;
+  color: var(--ui-color-on-surface-muted);
+  font-size: var(--ui-font-size-sm);
+}
+
+// -----------------------------------------------------------------------------
+// Shared table look, matching asset-management.page.scss / transactions.page.scss.
+// -----------------------------------------------------------------------------
+.zakat__table {
+  width: 100%;
+  border-collapse: collapse;
+
+  th,
+  td {
+    text-align: left;
+    padding: var(--ui-space-3) var(--ui-space-4);
+    border-bottom: 1px solid var(--ui-color-gridline);
+    vertical-align: top;
+  }
+
+  th {
+    font-size: var(--ui-font-size-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--ui-color-on-surface-muted);
+  }
+
+  td {
+    font-variant-numeric: var(--ui-font-numeric-variant);
+  }
+
+  tr:last-child td {
+    border-bottom: none;
+  }
+}
+
+.zakat__caption {
+  @include ui.ui-visually-hidden;
+}
+
+.zakat__symbol {
+  display: block;
+  font-weight: var(--ui-font-weight-semibold);
+  color: var(--ui-color-accent);
+  font-variant-numeric: normal;
+}
+
+.zakat__name {
+  display: block;
+  color: var(--ui-color-on-surface-muted);
+  font-size: var(--ui-font-size-xs);
+  font-variant-numeric: normal;
+}
+
+// zakat.md §6 — the six statuses must stay visually distinguishable. Tone is
+// a grouping for colour only; the LABEL TEXT is what actually distinguishes
+// all six from each other (see STATUS_LABEL in zakat.page.ts) — colour alone
+// never carries the distinction between e.g. the four different "excluded"
+// reasons.
+.zakat__badge {
+  display: inline-block;
+  padding: var(--ui-space-1) var(--ui-space-2);
+  border-radius: var(--ui-radius-pill);
+  font-size: var(--ui-font-size-xs);
+  font-weight: var(--ui-font-weight-medium);
+  font-variant-numeric: normal;
+  white-space: nowrap;
+}
+
+.zakat__badge--included {
+  background: color-mix(in srgb, var(--ui-color-status-good) 16%, transparent);
+  color: var(--ui-color-status-good);
+}
+
+// A CORRECT zero, not a warning — deliberately the same neutral/muted
+// treatment as an inactive-asset badge elsewhere, never the amber "excluded"
+// colour below, so it can never be mistaken for FiscalYearEndNotConfigured.
+.zakat__badge--not-held {
+  background: color-mix(in srgb, var(--ui-color-on-surface-muted) 16%, transparent);
+  color: var(--ui-color-on-surface-muted);
+}
+
+.zakat__badge--excluded {
+  background: color-mix(in srgb, var(--ui-color-status-warning) 18%, transparent);
+  color: color-mix(in srgb, var(--ui-color-status-warning) 70%, var(--ui-color-on-surface));
+}
+
+.zakat__footnote {
+  display: block;
+  margin-top: var(--ui-space-1);
+  color: var(--ui-color-on-surface-muted);
+  font-size: var(--ui-font-size-xs);
+  font-variant-numeric: normal;
+}
+
+.zakat__footnote--warning {
+  color: var(--ui-color-status-warning);
+}
+
+.zakat__actions-header {
+  text-align: right;
+}
+
+.zakat__actions {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: normal;
+}
+
+// -----------------------------------------------------------------------------
+// Part 2 — payment history. Deliberately visually distinct from the computed
+// panels above (an accent-coloured top border, not just another __panel) so
+// the "recorded fact vs computed estimate" split reads at a glance, not only
+// from the copy.
+// -----------------------------------------------------------------------------
+.zakat__recorded {
+  background: var(--ui-color-surface);
+  border: 1px solid var(--ui-color-border);
+  border-top: 3px solid var(--ui-color-accent);
+  border-radius: var(--ui-radius-md);
+  padding: var(--ui-space-4);
+  overflow-x: auto;
+}
+
+.zakat__panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--ui-space-2);
+  margin-bottom: var(--ui-space-2);
+
+  .zakat__panel-title {
+    margin-bottom: 0;
+  }
+}
+
+.zakat__recorded-note {
+  margin: 0 0 var(--ui-space-4);
+  color: var(--ui-color-on-surface-muted);
+  font-size: var(--ui-font-size-sm);
+}
+
+@include ui.ui-breakpoint-down(sm) {
+  .zakat__panel-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

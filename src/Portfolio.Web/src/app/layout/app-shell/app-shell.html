@@ -47,6 +47,16 @@
         <mat-icon matListItemIcon aria-hidden="true">tune</mat-icon>
         <span matListItemTitle>Assets</span>
       </a>
+      <a
+        mat-list-item
+        routerLink="/zakat"
+        routerLinkActive="shell__nav-link--active"
+        [routerLinkActiveOptions]="{ exact: false }"
+        (click)="isHandset() && sidenav.close()"
+      >
+        <mat-icon matListItemIcon aria-hidden="true">volunteer_activism</mat-icon>
+        <span matListItemTitle>Zakat</span>
+      </a>
     </mat-nav-list>
   </mat-sidenav>
 

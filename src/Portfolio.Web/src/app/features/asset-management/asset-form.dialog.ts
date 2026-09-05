@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
-import { FormControl, FormGroup, ReactiveFormsModule, ValidationErrors, Validators } from '@angular/forms';
+import { AbstractControl, FormControl, FormGroup, ReactiveFormsModule, ValidationErrors, ValidatorFn, Validators } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
 import { MatFormFieldModule } from '@angular/material/form-field';
@@ -9,11 +9,16 @@ import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 
 import { API_ROUTES } from '../../core/api/api-routes';
-import { AssetClass, AssetDto, CreateAssetRequest, QuoteProviderKind, ValidationProblemDetails } from '../../core/api/models';
+import {
+  AssetClass,
+  AssetDto,
+  CreateAssetRequest,
+  QuoteProviderKind,
+  UpdateAssetRequest,
+  ValidationProblemDetails,
+} from '../../core/api/models';
 
-export interface AssetFormDialogData {
-  mode: 'create';
-}
+export type AssetFormDialogData = { mode: 'create' } | { mode: 'edit'; asset: AssetDto };
 
 export type AssetFormDialogResult = { kind: 'saved'; asset: AssetDto };
 
@@ -26,6 +31,8 @@ interface AssetFormControls {
   quoteProviderKind: FormControl<QuoteProviderKind>;
   providerSymbol: FormControl<string | null>;
   providerCoinId: FormControl<string | null>;
+  fiscalYearEndMonth: FormControl<number | null>;
+  fiscalYearEndDay: FormControl<number | null>;
 }
 
 /**
@@ -47,17 +54,46 @@ const SERVER_ERROR_FIELDS: (keyof AssetFormControls)[] = [
   'quoteProviderKind',
   'providerSymbol',
   'providerCoinId',
+  'fiscalYearEndMonth',
+  'fiscalYearEndDay',
 ];
 
 /**
- * Create form for a new tracked asset (D24). Crypto locks its provider to
- * CoinGecko — the app's own decision is that crypto only ever routes through
- * CoinGecko (tracker.md Decisions) — while Stock lets the user choose
- * TwelveData (US equities) or Yahoo (SGX, `.SI` suffix; TwelveData's free
- * tier cannot serve SGX at all). Switching provider swaps which identifier
- * field is shown (`providerSymbol` vs `providerCoinId`) and clears the
- * other, so a stale hidden value never gets submitted alongside the visible
- * one.
+ * zakat.md §3.1 — "both set or both null" is enforced client-side too, not
+ * only relied on server-side, so the pair mismatch surfaces before a round
+ * trip. Reads the counterpart via `control.parent` (set once the control is
+ * attached to the FormGroup below) rather than closing over the sibling
+ * control directly, since both controls are constructed in the same object
+ * literal and neither exists yet when the other's validator is built.
+ */
+function fiscalYearEndPairValidator(counterpartName: keyof AssetFormControls): ValidatorFn {
+  return (control: AbstractControl<number | null>): ValidationErrors | null => {
+    const hasValue = (value: unknown): boolean => value !== null && value !== undefined && value !== '';
+    if (hasValue(control.value)) {
+      return null;
+    }
+    const counterpart = control.parent?.get(counterpartName as string);
+    return counterpart && hasValue(counterpart.value) ? { fiscalYearEndPair: true } : null;
+  };
+}
+
+/**
+ * Create/edit form for a tracked asset (D24 + zakat.md §9). Crypto locks its
+ * provider to CoinGecko and its fiscal-year-end fields to null+disabled —
+ * crypto has no financial year (zakat.md §2.3/§3.1), so guessing one would
+ * produce a confident wrong zakat figure with nothing downstream able to
+ * detect it.
+ *
+ * Edit mode (new — there was previously no way to change a tracked asset
+ * after creation) deliberately narrows what can change: identity and
+ * provider-routing fields are shown for context but disabled, since altering
+ * them has real consequences elsewhere (which provider gets billed a
+ * credit, what a historical price series even means) that are out of scope
+ * for what this dialog exists to let someone fix. Only `name`, `exchange`
+ * and the two fiscal-year-end fields are editable. `PUT /api/assets/{id}` is
+ * still a full replace, so submit always resends every field — the disabled
+ * ones just carry the asset's existing value through unchanged, the same
+ * pattern `AssetManagementPage.toggleActive` already uses for `isActive`.
  */
 @Component({
   selector: 'app-asset-form-dialog',
@@ -72,32 +108,51 @@ export class AssetFormDialog {
   private readonly dialogRef = inject(MatDialogRef<AssetFormDialog, AssetFormDialogResult>);
   private readonly http = inject(HttpClient);
 
+  readonly isEdit = this.data.mode === 'edit';
+
+  private readonly existing: AssetDto | null = this.data.mode === 'edit' ? this.data.asset : null;
+
+  readonly title = this.existing ? `Edit ${this.existing.symbol}` : 'Track a new asset';
+
   readonly submitting = signal(false);
   readonly serverError = signal<string | null>(null);
 
   readonly form: FormGroup<AssetFormControls> = new FormGroup<AssetFormControls>({
-    symbol: new FormControl<string>('', { nonNullable: true, validators: [Validators.required] }),
-    name: new FormControl<string>('', { nonNullable: true, validators: [Validators.required] }),
-    assetClass: new FormControl<AssetClass>('Stock', { nonNullable: true, validators: [Validators.required] }),
-    exchange: new FormControl<string | null>(null),
-    currency: new FormControl<string>('USD', {
-      nonNullable: true,
-      validators: [Validators.required, Validators.pattern(/^[A-Za-z]{3}$/)],
-    }),
-    quoteProviderKind: new FormControl<QuoteProviderKind>('TwelveData', {
+    symbol: new FormControl<string>(this.existing?.symbol ?? '', { nonNullable: true, validators: [Validators.required] }),
+    name: new FormControl<string>(this.existing?.name ?? '', { nonNullable: true, validators: [Validators.required] }),
+    assetClass: new FormControl<AssetClass>(this.existing?.assetClass ?? 'Stock', {
       nonNullable: true,
       validators: [Validators.required],
     }),
-    providerSymbol: new FormControl<string | null>(null),
-    providerCoinId: new FormControl<string | null>(null),
+    exchange: new FormControl<string | null>(this.existing?.exchange ?? null),
+    currency: new FormControl<string>(this.existing?.currency ?? 'USD', {
+      nonNullable: true,
+      validators: [Validators.required, Validators.pattern(/^[A-Za-z]{3}$/)],
+    }),
+    quoteProviderKind: new FormControl<QuoteProviderKind>(this.existing?.quoteProviderKind ?? 'TwelveData', {
+      nonNullable: true,
+      validators: [Validators.required],
+    }),
+    providerSymbol: new FormControl<string | null>(this.existing?.providerSymbol ?? null),
+    providerCoinId: new FormControl<string | null>(this.existing?.providerCoinId ?? null),
+    // zakat.md §3.1 — recurring month/day, not a stored date. Range-validated
+    // here (1-12 / 1-31); the exact "which day/month combinations are a real
+    // fiscal year end" rule (29 Feb allowed, 2/30 and 4/31 rejected) is left
+    // to the server, same division of labour as D23's provider-routing rule.
+    fiscalYearEndMonth: new FormControl<number | null>(this.existing?.fiscalYearEndMonth ?? null, {
+      validators: [Validators.min(1), Validators.max(12), fiscalYearEndPairValidator('fiscalYearEndDay')],
+    }),
+    fiscalYearEndDay: new FormControl<number | null>(this.existing?.fiscalYearEndDay ?? null, {
+      validators: [Validators.min(1), Validators.max(31), fiscalYearEndPairValidator('fiscalYearEndMonth')],
+    }),
   });
 
-  readonly assetClassValue = signal<AssetClass>('Stock');
-  readonly providerValue = signal<QuoteProviderKind>('TwelveData');
+  readonly assetClassValue = signal<AssetClass>(this.existing?.assetClass ?? 'Stock');
+  readonly providerValue = signal<QuoteProviderKind>(this.existing?.quoteProviderKind ?? 'TwelveData');
 
   readonly isCrypto = computed(() => this.assetClassValue() === 'Crypto');
   readonly usesCoinId = computed(() => this.providerValue() === 'CoinGecko');
-  readonly showsCreditWarning = computed(() => this.providerValue() === 'TwelveData');
+  readonly showsCreditWarning = computed(() => !this.isEdit && this.providerValue() === 'TwelveData');
 
   readonly identifierHint = computed(() => {
     switch (this.providerValue()) {
@@ -111,17 +166,38 @@ export class AssetFormDialog {
   });
 
   constructor() {
+    if (this.isEdit) {
+      // Identity and provider-routing stay visible for context but are not
+      // editable here — see the class doc comment for why.
+      this.form.controls.symbol.disable({ emitEvent: false });
+      this.form.controls.assetClass.disable({ emitEvent: false });
+      this.form.controls.currency.disable({ emitEvent: false });
+      this.form.controls.quoteProviderKind.disable({ emitEvent: false });
+      this.form.controls.providerSymbol.disable({ emitEvent: false });
+      this.form.controls.providerCoinId.disable({ emitEvent: false });
+    }
+
     this.form.controls.assetClass.valueChanges.subscribe((assetClass) => {
       this.assetClassValue.set(assetClass);
       if (assetClass === 'Crypto') {
         this.form.controls.quoteProviderKind.setValue('CoinGecko');
         this.form.controls.quoteProviderKind.disable({ emitEvent: false });
         this.form.controls.currency.setValue('USD');
+        // Crypto has no financial year (zakat.md §2.3) — cleared AND
+        // disabled, same "the field that no longer applies must be cleared,
+        // not just hidden" rule as providerSymbol/providerCoinId below, so a
+        // stale value from a previous Stock selection is never submitted.
+        this.form.controls.fiscalYearEndMonth.setValue(null);
+        this.form.controls.fiscalYearEndDay.setValue(null);
+        this.form.controls.fiscalYearEndMonth.disable({ emitEvent: false });
+        this.form.controls.fiscalYearEndDay.disable({ emitEvent: false });
       } else {
         this.form.controls.quoteProviderKind.enable({ emitEvent: false });
         if (this.form.controls.quoteProviderKind.value === 'CoinGecko') {
           this.form.controls.quoteProviderKind.setValue('TwelveData');
         }
+        this.form.controls.fiscalYearEndMonth.enable({ emitEvent: false });
+        this.form.controls.fiscalYearEndDay.enable({ emitEvent: false });
       }
     });
 
@@ -136,6 +212,27 @@ export class AssetFormDialog {
         this.form.controls.providerCoinId.setValue(null);
       }
     });
+
+    // Cross-field "both or neither" validity depends on the SIBLING control's
+    // value, which Angular does not automatically re-check when only the
+    // sibling changes — nudge each one to revalidate when the other moves.
+    this.form.controls.fiscalYearEndMonth.valueChanges.subscribe(() =>
+      this.form.controls.fiscalYearEndDay.updateValueAndValidity({ onlySelf: true, emitEvent: false }),
+    );
+    this.form.controls.fiscalYearEndDay.valueChanges.subscribe(() =>
+      this.form.controls.fiscalYearEndMonth.updateValueAndValidity({ onlySelf: true, emitEvent: false }),
+    );
+
+    if (this.isEdit) {
+      // Crypto locked to no fiscal year end from the start in edit mode too —
+      // matches the create-mode branch above without needing an assetClass
+      // valueChanges event to fire (the control is disabled and starts at
+      // its existing value, so no change event occurs on mount).
+      if (this.assetClassValue() === 'Crypto') {
+        this.form.controls.fiscalYearEndMonth.disable({ emitEvent: false });
+        this.form.controls.fiscalYearEndDay.disable({ emitEvent: false });
+      }
+    }
   }
 
   fieldError(name: keyof AssetFormControls): string | null {
@@ -156,6 +253,17 @@ export class AssetFormDialog {
     if (errors['pattern']) {
       return name === 'currency' ? 'A 3-letter ISO currency code, e.g. USD.' : 'Invalid format.';
     }
+    if (errors['min']) {
+      const { min } = errors['min'] as { min: number };
+      return `Must be ${min} or greater.`;
+    }
+    if (errors['max']) {
+      const { max } = errors['max'] as { max: number };
+      return `Must be ${max} or less.`;
+    }
+    if (errors['fiscalYearEndPair']) {
+      return 'Set both month and day, or leave both blank.';
+    }
     return 'Invalid value.';
   }
 
@@ -175,12 +283,21 @@ export class AssetFormDialog {
       quoteProviderKind: raw.quoteProviderKind,
       providerSymbol: raw.providerSymbol?.trim() ? raw.providerSymbol.trim() : null,
       providerCoinId: raw.providerCoinId?.trim() ? raw.providerCoinId.trim() : null,
+      fiscalYearEndMonth: raw.fiscalYearEndMonth,
+      fiscalYearEndDay: raw.fiscalYearEndDay,
     };
 
     this.submitting.set(true);
     this.serverError.set(null);
 
-    this.http.post<AssetDto>(API_ROUTES.assets, request).subscribe({
+    const call = this.existing
+      ? this.http.put<AssetDto>(
+          API_ROUTES.asset(this.existing.id),
+          { ...request, isActive: this.existing.isActive } satisfies UpdateAssetRequest,
+        )
+      : this.http.post<AssetDto>(API_ROUTES.assets, request);
+
+    call.subscribe({
       next: (asset) => {
         this.submitting.set(false);
         this.dialogRef.close({ kind: 'saved', asset });

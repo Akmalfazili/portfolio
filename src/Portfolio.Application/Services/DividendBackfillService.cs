@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Portfolio.Application.Abstractions;
+using Portfolio.Application.Services.Calculators;
 using Portfolio.Domain.Entities;
 using Portfolio.Domain.Enums;
 
@@ -22,7 +23,10 @@ public sealed class DividendBackfillService(
     public async Task<DividendBackfillRunResult> RunIfDueAsync(CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
-        var today = DateOnly.FromDateTime(now.UtcDateTime);
+        // Reporting-day gate, not a UTC one — see ReportingClock. Both sides of the comparison
+        // below (the stored StartedAt instant and "today") must move together onto the same
+        // Singapore calendar day, or the gate compares two different clocks.
+        var today = ReportingClock.Today(timeProvider);
 
         // Gates on the most recent scheduled run that actually PROCESSED something
         // (SymbolsRefreshed > 0), not on any scheduled run at all. Found live: RunAsync used to
@@ -44,7 +48,7 @@ public sealed class DividendBackfillService(
             .Select(r => (DateTimeOffset?)r.StartedAt)
             .FirstOrDefaultAsync(cancellationToken);
 
-        if (lastProductiveScheduledRunAt is { } last && DateOnly.FromDateTime(last.UtcDateTime) == today)
+        if (lastProductiveScheduledRunAt is { } last && ReportingClock.DateFor(last) == today)
         {
             return new DividendBackfillRunResult(DividendBackfillOutcome.AlreadyRanToday, null);
         }
@@ -56,7 +60,7 @@ public sealed class DividendBackfillService(
     public async Task<DividendBackfillSummary> RunAsync(RefreshTrigger trigger, CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
-        var today = DateOnly.FromDateTime(now.UtcDateTime);
+        var today = ReportingClock.Today(timeProvider);
 
         var assetsProcessed = new List<string>();
         var assetsSkippedForBudget = new List<string>();

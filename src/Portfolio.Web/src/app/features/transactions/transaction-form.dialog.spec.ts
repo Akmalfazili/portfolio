@@ -22,6 +22,8 @@ const ANVL: AssetDto = {
   createdAt: '2026-07-26T00:00:00+00:00',
   hasEverBeenPriced: true,
   providerHasEverSucceeded: true,
+  fiscalYearEndMonth: null,
+  fiscalYearEndDay: null,
 };
 
 const AAPL: AssetDto = {
@@ -38,6 +40,8 @@ const AAPL: AssetDto = {
   createdAt: '2026-07-26T00:00:00+00:00',
   hasEverBeenPriced: true,
   providerHasEverSucceeded: true,
+  fiscalYearEndMonth: null,
+  fiscalYearEndDay: null,
 };
 
 const EXISTING: TransactionDto = {

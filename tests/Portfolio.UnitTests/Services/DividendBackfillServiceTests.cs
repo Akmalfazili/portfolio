@@ -49,8 +49,9 @@ public sealed class DividendBackfillServiceTests : IDisposable
 
     public void Dispose() => _db.Dispose();
 
-    private DividendBackfillService CreateSut(IDividendProvider provider, int maxAssetsPerRun = 500) =>
-        new(_db, provider, _timeProvider, Options.Create(new DividendBackfillOptions { MaxAssetsPerRun = maxAssetsPerRun }), NullLogger<DividendBackfillService>.Instance);
+    private DividendBackfillService CreateSut(
+        IDividendProvider provider, int maxAssetsPerRun = 500, TimeProvider? timeProvider = null) =>
+        new(_db, provider, timeProvider ?? _timeProvider, Options.Create(new DividendBackfillOptions { MaxAssetsPerRun = maxAssetsPerRun }), NullLogger<DividendBackfillService>.Instance);
 
     [Fact]
     public async Task RunAsync_InsertsDividendEvents_AndUpsertsASuccessfulAssetDividendState()
@@ -187,6 +188,37 @@ public sealed class DividendBackfillServiceTests : IDisposable
         await _db.SaveChangesAsync();
 
         var sut = CreateSut(provider);
+
+        var result = await sut.RunIfDueAsync(CancellationToken.None);
+
+        result.Outcome.Should().Be(DividendBackfillOutcome.AlreadyRanToday);
+        await provider.DidNotReceive().GetDividendHistoryAsync(
+            Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunIfDueAsync_PreviousProductiveRunJustAfterNyseClose_StillGatesAcrossTheFollowingUtcMidnight()
+    {
+        // Same reasoning as the equivalent PriceBackfillService test: NYSE closes ~20:00-21:00
+        // UTC, already past the SGT day boundary (16:00 UTC), so a run written right after close
+        // (here, 2026-07-25T21:00:00Z) lands in SGT day 2026-07-26. A later overnight poll at
+        // 2026-07-26T01:00:00Z has crossed UTC midnight but is still SGT day 2026-07-26 (09:00
+        // SGT) - the gate must still hold and must not re-run just because the UTC date ticked
+        // over.
+        var provider = Substitute.For<IDividendProvider>();
+        _db.RefreshRuns.Add(new RefreshRun
+        {
+            Trigger = RefreshTrigger.DividendBackfillScheduled,
+            AssetClass = AssetClass.Stock,
+            StartedAt = new DateTimeOffset(2026, 7, 25, 21, 0, 0, TimeSpan.Zero),
+            CompletedAt = new DateTimeOffset(2026, 7, 25, 21, 0, 1, TimeSpan.Zero),
+            Success = true,
+            SymbolsRefreshed = 1,
+        });
+        await _db.SaveChangesAsync();
+
+        var overnightPollTime = new FixedTimeProvider(new DateTimeOffset(2026, 7, 26, 1, 0, 0, TimeSpan.Zero));
+        var sut = CreateSut(provider, timeProvider: overnightPollTime);
 
         var result = await sut.RunIfDueAsync(CancellationToken.None);
 

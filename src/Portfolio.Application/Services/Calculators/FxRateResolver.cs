@@ -24,7 +24,19 @@ public static class FxRateResolver
     /// <see cref="FxRate.Date"/> and must all share the same currency pair — the caller loads one
     /// list per currency once and reuses it, rather than this method re-filtering per call.
     /// </summary>
-    public static decimal Resolve(IReadOnlyList<FxRate> ratesAscendingByDate, DateOnly date)
+    public static decimal Resolve(IReadOnlyList<FxRate> ratesAscendingByDate, DateOnly date) =>
+        ResolveDetailed(ratesAscendingByDate, date).Rate;
+
+    /// <summary>
+    /// Same resolution as <see cref="Resolve"/>, but also returns the origin date of the rate that
+    /// was actually used. Ordinary callers only need <see cref="Resolve"/> — this exists for the
+    /// zakat report, the first caller that must tell a genuine carry-<i>forward</i> (a weekend, a
+    /// holiday — fine) apart from falling back to the earliest stored rate because <paramref
+    /// name="date"/> precedes every row on file (not fine for a single headline figure — see
+    /// zakat.md §5). Compare <see cref="FxRateResolution.ResolvedDate"/> against the requested date
+    /// yourself, or use <see cref="FxRateResolution.CarriedBack"/>.
+    /// </summary>
+    public static FxRateResolution ResolveDetailed(IReadOnlyList<FxRate> ratesAscendingByDate, DateOnly date)
     {
         if (ratesAscendingByDate.Count == 0)
         {
@@ -43,6 +55,23 @@ public static class FxRateResolver
             carriedForward = rate;
         }
 
-        return (carriedForward ?? ratesAscendingByDate[0]).Rate;
+        var resolved = carriedForward ?? ratesAscendingByDate[0];
+        return new FxRateResolution(resolved.Rate, resolved.Date, date);
     }
+}
+
+/// <summary>
+/// The rate <see cref="FxRateResolver.ResolveDetailed"/> chose, plus enough of its own provenance
+/// to tell a normal carry-forward apart from a before-the-data fallback. See
+/// <see cref="FxRateResolver.ResolveDetailed"/>'s remarks.
+/// </summary>
+public sealed record FxRateResolution(decimal Rate, DateOnly ResolvedDate, DateOnly RequestedDate)
+{
+    /// <summary>
+    /// True when the resolved rate is dated <i>after</i> the requested date — i.e.
+    /// <see cref="FxRateResolver"/> found nothing at or before <see cref="RequestedDate"/> and fell
+    /// back to the earliest rate on file rather than genuinely carrying one forward. Carrying a
+    /// rate <i>forward</i> (the normal case, a weekend) leaves this false.
+    /// </summary>
+    public bool CarriedBack => ResolvedDate > RequestedDate;
 }

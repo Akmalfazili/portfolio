@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Portfolio.Application.Abstractions;
 using Portfolio.Application.Dtos;
+using Portfolio.Application.Services.Calculators;
 using Portfolio.Domain.Entities;
 using Portfolio.Domain.Enums;
 
@@ -39,14 +40,17 @@ public sealed class PriceBackfillService(
             return new PriceBackfillRunResult(PriceBackfillOutcome.MarketOpen, null);
         }
 
-        var today = DateOnly.FromDateTime(now.UtcDateTime);
+        // Reporting-day gate, not a UTC one — see ReportingClock. Both sides of this comparison
+        // must move together: the stored StartedAt instant and "today" are converted to the same
+        // Singapore calendar day, or the gate compares two different clocks.
+        var today = ReportingClock.Today(timeProvider);
         var lastScheduledRunAt = await db.RefreshRuns
             .Where(r => r.Trigger == RefreshTrigger.BackfillScheduled)
             .OrderByDescending(r => r.StartedAt)
             .Select(r => (DateTimeOffset?)r.StartedAt)
             .FirstOrDefaultAsync(cancellationToken);
 
-        if (lastScheduledRunAt is { } last && DateOnly.FromDateTime(last.UtcDateTime) == today)
+        if (lastScheduledRunAt is { } last && ReportingClock.DateFor(last) == today)
         {
             return new PriceBackfillRunResult(PriceBackfillOutcome.AlreadyRanToday, null);
         }
@@ -58,7 +62,7 @@ public sealed class PriceBackfillService(
     public async Task<PriceBackfillSummary> RunAsync(RefreshTrigger trigger, CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
-        var today = DateOnly.FromDateTime(now.UtcDateTime);
+        var today = ReportingClock.Today(timeProvider);
 
         // D37: the budget is derived from what Twelve Data's persisted daily ledger says is
         // actually left today, not a hardcoded constant — a fixed budget smaller than one full

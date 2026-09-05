@@ -89,7 +89,7 @@ public sealed class PortfolioSummaryService(
     private async Task<IReadOnlyList<HoldingDto>> BuildHoldingsAsync(AssetClass assetClass, CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
-        var today = DateOnly.FromDateTime(now.UtcDateTime);
+        var today = ReportingClock.Today(timeProvider);
 
         var assets = await db.Assets
             .Where(a => a.AssetClass == assetClass)

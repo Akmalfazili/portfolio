@@ -33,6 +33,7 @@ app.MapTransactionEndpoints();
 app.MapPricesEndpoints();
 app.MapDividendEndpoints();
 app.MapPortfolioEndpoints();
+app.MapZakatEndpoints();
 
 app.MapHub<PricesHub>("/hubs/prices");
 

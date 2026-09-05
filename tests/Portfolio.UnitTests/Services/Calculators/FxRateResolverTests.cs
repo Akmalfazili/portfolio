@@ -52,4 +52,35 @@ public sealed class FxRateResolverTests
         var act = () => FxRateResolver.Resolve([], new DateOnly(2026, 1, 1));
         act.Should().Throw<InvalidOperationException>();
     }
+
+    [Fact]
+    public void ResolveDetailed_GenuineCarryForward_IsNotFlaggedAsCarriedBack()
+    {
+        // Jan 7 carries Jan 5's rate forward across a weekend — a normal, unremarkable case.
+        var result = FxRateResolver.ResolveDetailed(Rates, new DateOnly(2026, 1, 7));
+
+        result.Rate.Should().Be(1.31m);
+        result.ResolvedDate.Should().Be(new DateOnly(2026, 1, 5));
+        result.CarriedBack.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ResolveDetailed_DateBeforeEveryStoredRate_IsFlaggedAsCarriedBack()
+    {
+        // zakat.md §5: the resolved rate is dated AFTER the requested date, which means this was a
+        // before-the-data fallback to the earliest rate, not a genuine carry-forward.
+        var requested = new DateOnly(2025, 12, 25);
+        var result = FxRateResolver.ResolveDetailed(Rates, requested);
+
+        result.Rate.Should().Be(1.30m);
+        result.ResolvedDate.Should().Be(new DateOnly(2026, 1, 1));
+        result.RequestedDate.Should().Be(requested);
+        result.CarriedBack.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ResolveDetailed_ExactDateMatch_IsNotFlaggedAsCarriedBack()
+    {
+        FxRateResolver.ResolveDetailed(Rates, new DateOnly(2026, 1, 5)).CarriedBack.Should().BeFalse();
+    }
 }

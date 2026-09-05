@@ -37,5 +37,12 @@ export const routes: Routes = [
     loadComponent: () =>
       import('./features/asset-management/asset-management.page').then((m) => m.AssetManagementPage),
   },
+  {
+    // The one sanctioned exception to asset-class segregation (zakat.md) —
+    // this page spans stocks AND crypto, so it deliberately carries no
+    // `data.assetClass` and is not parameterised like the two routes above.
+    path: 'zakat',
+    loadComponent: () => import('./features/zakat/zakat.page').then((m) => m.ZakatPage),
+  },
   { path: '**', redirectTo: 'stocks' },
 ];

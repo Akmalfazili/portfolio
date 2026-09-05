@@ -44,6 +44,28 @@ public class Asset
     public bool IsActive { get; set; } = true;
 
     /// <summary>
+    /// Calendar month of this company's financial year end, 1-12. Null means "not configured" —
+    /// a distinct, reported state (see <c>ZakatAssetStatus.FiscalYearEndNotConfigured</c>), never
+    /// silently assumed to be 31 December. Always null for <see cref="Domain.Enums.AssetClass.Crypto"/>,
+    /// which has no financial year. Either both this and <see cref="FiscalYearEndDay"/> are set, or
+    /// both are null — enforced at write time in <c>AssetService</c>, not by a database constraint.
+    /// A recurring month/day rather than a stored date: it is self-maintaining across years rather
+    /// than needing re-entry, at the cost of drifting by a few days for a handful of 52/53-week
+    /// fiscal calendars — see zakat.md §8 for which assets that affects and why the drift is
+    /// accepted.
+    /// </summary>
+    public int? FiscalYearEndMonth { get; set; }
+
+    /// <summary>
+    /// Day of month of this company's financial year end, 1-31. See <see cref="FiscalYearEndMonth"/>
+    /// for the null/pairing rules. 29 is allowed even though most years are not leap years — it is
+    /// clamped to 28 February at resolution time (<c>FiscalYearEndResolver</c>), never rejected at
+    /// write time. A day that is never valid for its month (2/30, 4/31, ...) is rejected at write
+    /// time instead.
+    /// </summary>
+    public int? FiscalYearEndDay { get; set; }
+
+    /// <summary>
     /// When this asset was added. Exists for D27: a well-formed but <i>wrong</i> provider
     /// identifier (<c>APPL</c> for <c>AAPL</c>, or a CoinGecko id that does not exist) is accepted
     /// at creation and then renders "Awaiting price" forever, giving no hint that the record rather

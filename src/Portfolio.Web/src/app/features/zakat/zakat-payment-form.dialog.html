@@ -1,0 +1,52 @@
+@if (deletedElsewhere()) {
+  <h2 mat-dialog-title>Payment no longer exists</h2>
+  <mat-dialog-content>
+    <p class="zakat-payment-form__deleted">
+      This payment was deleted elsewhere while you had it open for editing. Your changes were not
+      saved.
+    </p>
+  </mat-dialog-content>
+  <mat-dialog-actions align="end">
+    <button mat-flat-button type="button" color="primary" (click)="closeAfterDeletedElsewhere()">
+      Close
+    </button>
+  </mat-dialog-actions>
+} @else {
+  <h2 mat-dialog-title>{{ title }}</h2>
+
+  <form [formGroup]="form" (ngSubmit)="submit()">
+    <mat-dialog-content class="zakat-payment-form">
+      <mat-form-field appearance="outline">
+        <mat-label>Paid on</mat-label>
+        <input matInput [matDatepicker]="picker" [max]="today" [formControl]="form.controls.paidOn" />
+        <mat-datepicker-toggle matIconSuffix [for]="picker" />
+        <mat-datepicker #picker />
+        @if (fieldError('paidOn'); as error) {
+          <mat-error>{{ error }}</mat-error>
+        }
+      </mat-form-field>
+
+      <mat-form-field appearance="outline">
+        <mat-label>Amount (SGD)</mat-label>
+        <input matInput type="number" step="0.01" [formControl]="form.controls.amountSgd" />
+        @if (fieldError('amountSgd'); as error) {
+          <mat-error>{{ error }}</mat-error>
+        }
+      </mat-form-field>
+
+      @if (serverError(); as error) {
+        <p class="zakat-payment-form__error">
+          <mat-icon aria-hidden="true">error_outline</mat-icon>
+          {{ error }}
+        </p>
+      }
+    </mat-dialog-content>
+
+    <mat-dialog-actions align="end">
+      <button mat-button type="button" (click)="close()" [disabled]="submitting()">Cancel</button>
+      <button mat-flat-button type="submit" color="primary" [disabled]="submitting()">
+        {{ submitting() ? 'Saving…' : 'Save' }}
+      </button>
+    </mat-dialog-actions>
+  </form>
+}

@@ -170,6 +170,29 @@ public sealed class PrecisionRoundTripTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ZakatPaymentAmountSgd_SurvivesRoundTrip()
+    {
+        // zakat.md §3.2: decimal(19,4), the monetary-total convention — configured explicitly even
+        // though a hand-entered payment ledger "looks harmless". decimal(18,2) would silently round
+        // this to 1234.57, a cent off from what was actually paid.
+        const decimal amountSgd = 1234.5678m;
+
+        int paymentId;
+        await using (var context = CreateContext())
+        {
+            var payment = new ZakatPayment { PaidOn = new DateOnly(2026, 3, 1), AmountSgd = amountSgd };
+            context.ZakatPayments.Add(payment);
+            await context.SaveChangesAsync();
+            paymentId = payment.Id;
+        }
+
+        await using var readContext = CreateContext();
+        var reloaded = await readContext.ZakatPayments.AsNoTracking().SingleAsync(p => p.Id == paymentId);
+
+        reloaded.AmountSgd.Should().Be(amountSgd);
+    }
+
+    [Fact]
     public async Task FxRate_SurvivesRoundTrip()
     {
         const decimal rate = 1.34567891m; // 8 decimal places, per decimal(18,8)

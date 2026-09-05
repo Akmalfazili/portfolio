@@ -48,6 +48,55 @@ public sealed class AssetDeleteCascadeTests : IAsyncLifetime
         await context.Database.EnsureDeletedAsync();
     }
 
+    /// <summary>
+    /// zakat.md §3.2: <see cref="ZakatPayment"/> deliberately hangs off nothing — no foreign key to
+    /// <see cref="Asset"/> at all. Deleting every asset in the database must leave the payment
+    /// ledger completely untouched, unlike every other child table this test class covers.
+    /// </summary>
+    [Fact]
+    public async Task DeleteAsync_LeavesTheZakatPaymentLedgerCompletelyUntouched_AgainstSqlServer()
+    {
+        int assetId;
+        int paymentId;
+
+        await using (var seed = CreateContext())
+        {
+            var asset = new Asset
+            {
+                Symbol = "TSTZKT",
+                Name = "Zakat Delete Test",
+                AssetClass = AssetClass.Stock,
+                Exchange = "NASDAQ",
+                Currency = "USD",
+                QuoteProviderKind = QuoteProviderKind.TwelveData,
+                ProviderSymbol = "TSTZKT",
+                IsActive = true,
+                CreatedAt = Now,
+            };
+            seed.Assets.Add(asset);
+
+            var payment = new ZakatPayment { PaidOn = new DateOnly(2026, 3, 1), AmountSgd = 250.75m };
+            seed.ZakatPayments.Add(payment);
+
+            await seed.SaveChangesAsync();
+            assetId = asset.Id;
+            paymentId = payment.Id;
+        }
+
+        await using (var act = CreateContext())
+        {
+            var service = new AssetService(act, TimeProvider.System);
+            var deleted = await service.DeleteAsync(assetId, CancellationToken.None);
+            deleted.Should().BeTrue();
+        }
+
+        await using var verify = CreateContext();
+        (await verify.Assets.AnyAsync(a => a.Id == assetId)).Should().BeFalse();
+        // Deleting the asset must not touch the payment ledger — no relationship exists to cascade
+        // through, and nothing in AssetService.DeleteAsync references ZakatPayment at all.
+        (await verify.ZakatPayments.AnyAsync(p => p.Id == paymentId)).Should().BeTrue();
+    }
+
     [Fact]
     public async Task DeleteAsync_RemovesTheAssetAndEveryChildRow_AgainstSqlServer()
     {

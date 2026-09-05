@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Portfolio.Application.Common;
 using Portfolio.Application.Dtos;
 using Portfolio.Application.Services;
+using Portfolio.Application.Services.Calculators;
 using Portfolio.Domain.Entities;
 using Portfolio.Domain.Enums;
 using Portfolio.Infrastructure.Persistence;
@@ -95,7 +96,10 @@ public sealed class TransactionServiceTests : IDisposable
     [Fact]
     public async Task CreateAsync_RejectsFutureTradeDate()
     {
-        var future = DateOnly.FromDateTime(_timeProvider.GetUtcNow().UtcDateTime).AddDays(1);
+        // "Today" here is the reporting (SGT) day, matching what ValidateCommon actually checks —
+        // not raw UTC, which would happen to agree at this fixture's noon-UTC fixed time anyway,
+        // but asserting via ReportingClock pins the real intent rather than a coincidence.
+        var future = ReportingClock.Today(_timeProvider).AddDays(1);
         var request = new CreateTransactionRequest(
             _ethAsset.Id, TransactionType.Buy, future, 1m, 2500m, 0m, "USD", null);
 
@@ -108,11 +112,28 @@ public sealed class TransactionServiceTests : IDisposable
     [Fact]
     public async Task CreateAsync_AllowsTradeDateOfToday()
     {
-        var today = DateOnly.FromDateTime(_timeProvider.GetUtcNow().UtcDateTime);
+        var today = ReportingClock.Today(_timeProvider);
         var request = new CreateTransactionRequest(
             _ethAsset.Id, TransactionType.Buy, today, 1m, 2500m, 0m, "USD", null);
 
         var result = await _sut.CreateAsync(request, CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task CreateAsync_AtSgtMidnightBoundary_AcceptsTheNewSgtDayTradeDate()
+    {
+        // 2026-09-03T16:30:00Z = 2026-09-04 00:30 SGT. Under the old UTC-derived "today" this
+        // trade date would have been rejected as a day in the future — the exact bug this change
+        // closes: the browser (SGT) and the API (UTC) disagreeing about the calendar day for the
+        // eight hours between SGT midnight and UTC midnight.
+        var boundaryTimeProvider = new FixedTimeProvider(new DateTimeOffset(2026, 9, 3, 16, 30, 0, TimeSpan.Zero));
+        var sut = new TransactionService(_db, boundaryTimeProvider);
+        var request = new CreateTransactionRequest(
+            _ethAsset.Id, TransactionType.Buy, new DateOnly(2026, 9, 4), 1m, 2500m, 0m, "USD", null);
+
+        var result = await sut.CreateAsync(request, CancellationToken.None);
 
         result.IsSuccess.Should().BeTrue();
     }

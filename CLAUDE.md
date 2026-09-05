@@ -41,6 +41,12 @@ why, what broke and what the breakage taught. **Read the area you are about to c
 changing it.** Most of the sharp edges in this project are invisible in the code, and each one
 cost a real debugging session to find. Update it when behaviour changes.
 
+**[zakat.md](zakat.md) is the design record for the zakat report** — what MUIS requires, which
+of its ambiguities were resolved and how, and the traps in the calculation. Read it before
+touching anything under `Services/ZakatService.cs`, `features/zakat/`, or `Asset`'s fiscal
+year end columns. Its conventions are decisions, not discoveries; several would produce a
+confident wrong number if reverted.
+
 Work is split by area. Delegate to the specialised agent that owns it rather than working
 across boundaries:
 
@@ -93,6 +99,13 @@ crypto have separate navigation, separate totals, and never aggregate together.
 `PriceBackfillService` filters to `AssetClass.Stock`, and the cost-vs-market and annual-return
 components are never imported into the crypto path rather than rendering empty. This is a
 one-way door for the past: unrecorded days cannot be bought back from CoinGecko's free tier.
+
+**`GET /api/zakat` is the one sanctioned exception** and the only endpoint that returns both
+classes, because MUIS's rule needs the grand total across everything held. It is not a
+precedent: the two stay in separate sub-objects with separate subtotals (`stockZakatableSgd`,
+`cryptoZakatableSgd`) so nothing aggregates implicitly, and only the deliberate final sum
+crosses the line. It is also the only response denominated in **SGD** rather than USD — nisab
+is an SGD figure and zakat is paid in SGD. See [zakat.md](zakat.md) §2.5 and §9.
 
 ### Asset deletion
 

@@ -31,6 +31,10 @@ public interface IPortfolioDbContext
 
     IQueryable<AssetDividendState> AssetDividendStates { get; }
 
+    /// <summary>The zakat payment ledger — deliberately hangs off no other table. See
+    /// <see cref="ZakatPayment"/>'s own remarks for why deleting an asset must never touch this.</summary>
+    IQueryable<ZakatPayment> ZakatPayments { get; }
+
     void AddAsset(Asset asset);
 
     /// <summary>
@@ -80,9 +84,19 @@ public interface IPortfolioDbContext
 
     void AddTwelveDataCreditLedgerEntry(TwelveDataCreditLedgerEntry entry);
 
+    /// <summary>Adds a zakat payment record. Never called by the report itself — see
+    /// <see cref="ZakatPayment"/>.</summary>
+    void AddZakatPayment(ZakatPayment payment);
+
+    /// <summary>Removes a zakat payment record. Never called by asset deletion — see
+    /// <see cref="ZakatPayment"/>.</summary>
+    void RemoveZakatPayment(ZakatPayment payment);
+
     ValueTask<Asset?> FindAssetAsync(int id, CancellationToken cancellationToken);
 
     ValueTask<Transaction?> FindTransactionAsync(int id, CancellationToken cancellationToken);
+
+    ValueTask<ZakatPayment?> FindZakatPaymentAsync(int id, CancellationToken cancellationToken);
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken);
 }

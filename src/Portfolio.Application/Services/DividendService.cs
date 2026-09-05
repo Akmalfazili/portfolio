@@ -165,7 +165,7 @@ public sealed class DividendService(
             return (null, null);
         }
 
-        var today = DateOnly.FromDateTime(timeProvider.GetUtcNow().UtcDateTime);
+        var today = ReportingClock.Today(timeProvider);
         var trailing12MonthStart = today.AddYears(-1);
 
         var trailing12Month = DisplayRounding.Money(

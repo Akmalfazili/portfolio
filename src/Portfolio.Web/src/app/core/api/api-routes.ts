@@ -25,6 +25,11 @@ export const API_ROUTES = {
   portfolioSummary: (assetClass: AssetClass) => `/api/portfolio/${assetClass}/summary`,
   portfolioAllocation: (assetClass: AssetClass) => `/api/portfolio/${assetClass}/allocation`,
   stockAnnualReturns: '/api/portfolio/stock/annual-returns',
+  // The one sanctioned exception to asset-class segregation — see
+  // ZakatReportDto. `asOf` is optional; omitted, the server defaults to today.
+  zakatReport: (asOf?: string) => (asOf ? `/api/zakat?asOf=${asOf}` : '/api/zakat'),
+  zakatPayments: '/api/zakat/payments',
+  zakatPayment: (id: number) => `/api/zakat/payments/${id}`,
 } as const;
 
 export const PRICES_HUB_URL = '/hubs/prices';
