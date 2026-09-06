@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
 import { httpResource } from '@angular/common/http';
 import { Router } from '@angular/router';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
@@ -6,7 +6,7 @@ import { MatIconModule } from '@angular/material/icon';
 
 import { AllocationItemDto, AnnualReturnsDto, AssetClass, PortfolioAllocationDto, PortfolioSummaryDto } from '../../core/api/models';
 import { API_ROUTES } from '../../core/api/api-routes';
-import { PriceStore } from '../../core/prices/price-store';
+import { reloadOnRefreshCycle } from '../../core/prices/reload-on-refresh-cycle';
 import { MoneyPipe } from '../../shared/pipes/money.pipe';
 import { StateMessage } from '../../shared/state-message/state-message';
 import { StatTile } from '../../shared/stat-tile/stat-tile';
@@ -47,7 +47,6 @@ export class PortfolioOverviewPage {
   readonly assetClass = input.required<AssetClass>();
 
   private readonly router = inject(Router);
-  private readonly priceStore = inject(PriceStore);
 
   private readonly summaryResource = httpResource<PortfolioSummaryDto>(() =>
     API_ROUTES.portfolioSummary(this.assetClass()),
@@ -200,30 +199,17 @@ export class PortfolioOverviewPage {
   );
   readonly allocationValueLabel = computed(() => (this.allocationMode() === 'market' ? 'Market value' : 'Cost basis'));
 
-  private lastAppliedRefreshAt: string | null = null;
-
   constructor() {
     // Reload the calculation endpoints once a scheduled/manual refresh cycle
     // actually completes — reacting to PriceStore's own signal, never polling
-    // independently (rule #2). Skips the very first emission so mount doesn't
-    // double-fetch on top of the initial httpResource requests.
-    effect(() => {
-      const at = this.priceStore.lastRefreshedAt();
-      if (at === null || at === this.lastAppliedRefreshAt) {
-        return;
+    // independently (rule #2). See core/prices/reload-on-refresh-cycle.ts for
+    // the shared skip-first/skip-unchanged semantics.
+    reloadOnRefreshCycle(() => {
+      this.summaryResource.reload();
+      this.allocationResource.reload();
+      if (this.isStock()) {
+        this.annualReturnsResource.reload();
       }
-      const isFirstObservation = this.lastAppliedRefreshAt === null;
-      this.lastAppliedRefreshAt = at;
-      if (isFirstObservation) {
-        return;
-      }
-      untracked(() => {
-        this.summaryResource.reload();
-        this.allocationResource.reload();
-        if (this.isStock()) {
-          this.annualReturnsResource.reload();
-        }
-      });
     });
   }
 

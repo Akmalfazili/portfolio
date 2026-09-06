@@ -154,4 +154,105 @@ describe('PriceStore', () => {
     store.refreshNow();
     httpMock.expectNone(API_ROUTES.pricesRefresh);
   });
+
+  describe('visibilitychange catch-up', () => {
+    function setVisibility(state: DocumentVisibilityState): void {
+      Object.defineProperty(document, 'visibilityState', { value: state, configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    }
+
+    afterEach(() => {
+      // Restore jsdom's default so later tests/files aren't affected.
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    });
+
+    it('issues GET /api/prices/status when the document becomes visible', async () => {
+      setup('resolve');
+      await Promise.resolve();
+      await Promise.resolve();
+
+      setVisibility('visible');
+
+      const req = httpMock.expectOne(API_ROUTES.pricesStatus);
+      expect(req.request.method).toBe('GET');
+      req.flush({
+        lastRefreshedAt: '2026-08-01T10:00:00Z',
+        nyseOpen: true,
+        sgxOpen: false,
+        nextScheduledRunAt: null,
+        sources: [],
+      } satisfies PriceRefreshStatus);
+
+      expect(store.lastRefreshedAt()).toBe('2026-08-01T10:00:00Z');
+    });
+
+    it('does nothing when the document becomes hidden', async () => {
+      setup('resolve');
+      await Promise.resolve();
+      await Promise.resolve();
+
+      setVisibility('hidden');
+
+      httpMock.expectNone(API_ROUTES.pricesStatus);
+    });
+
+    it('retries the hub connection immediately on visibility, rather than waiting out the retry interval, while polling-fallback', async () => {
+      setup('reject');
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(store.connectionState()).toBe('polling-fallback');
+
+      // The initial fallback poll fired by entering degraded mode.
+      httpMock.expectOne(API_ROUTES.pricesStatus).flush({
+        lastRefreshedAt: null,
+        nyseOpen: false,
+        sgxOpen: false,
+        nextScheduledRunAt: null,
+        sources: [],
+      } satisfies PriceRefreshStatus);
+
+      fakeConnection.startResult = 'resolve';
+      const startSpy = vi.spyOn(fakeConnection, 'start');
+
+      setVisibility('visible');
+
+      // The visibility handler's own status catch-up fetch.
+      httpMock.expectOne(API_ROUTES.pricesStatus).flush({
+        lastRefreshedAt: null,
+        nyseOpen: false,
+        sgxOpen: false,
+        nextScheduledRunAt: null,
+        sources: [],
+      } satisfies PriceRefreshStatus);
+
+      expect(startSpy).toHaveBeenCalled();
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(store.connectionState()).toBe('connected');
+    });
+
+    it('does not retry the hub connection on visibility while already connected', async () => {
+      setup('resolve');
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(store.connectionState()).toBe('connected');
+
+      const startSpy = vi.spyOn(fakeConnection, 'start');
+
+      setVisibility('visible');
+      httpMock.expectOne(API_ROUTES.pricesStatus).flush({
+        lastRefreshedAt: null,
+        nyseOpen: false,
+        sgxOpen: false,
+        nextScheduledRunAt: null,
+        sources: [],
+      } satisfies PriceRefreshStatus);
+
+      expect(startSpy).not.toHaveBeenCalled();
+    });
+  });
 });

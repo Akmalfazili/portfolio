@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, untracked } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import { httpResource } from '@angular/common/http';
 import { Router, RouterLink } from '@angular/router';
 import { MatSortModule, Sort } from '@angular/material/sort';
@@ -15,6 +15,7 @@ import {
 } from '../../core/api/models';
 import { API_ROUTES } from '../../core/api/api-routes';
 import { PriceStore } from '../../core/prices/price-store';
+import { reloadOnRefreshCycle } from '../../core/prices/reload-on-refresh-cycle';
 import { MoneyPipe } from '../../shared/pipes/money.pipe';
 import { QuantityPipe } from '../../shared/pipes/quantity.pipe';
 import { StateMessage } from '../../shared/state-message/state-message';
@@ -285,27 +286,15 @@ export class AssetDetailPage {
     return asOf ? formatCloseDate(asOf) : '';
   });
 
-  private lastAppliedRefreshAt: string | null = null;
-
   constructor() {
     // Same pattern as PortfolioOverviewPage — react to a completed refresh
-    // cycle rather than polling independently (rule #2).
-    effect(() => {
-      const at = this.priceStore.lastRefreshedAt();
-      if (at === null || at === this.lastAppliedRefreshAt) {
-        return;
+    // cycle rather than polling independently (rule #2). See
+    // core/prices/reload-on-refresh-cycle.ts for the shared semantics.
+    reloadOnRefreshCycle(() => {
+      this.summaryResource.reload();
+      if (this.isStock()) {
+        this.performanceResource.reload();
       }
-      const isFirstObservation = this.lastAppliedRefreshAt === null;
-      this.lastAppliedRefreshAt = at;
-      if (isFirstObservation) {
-        return;
-      }
-      untracked(() => {
-        this.summaryResource.reload();
-        if (this.isStock()) {
-          this.performanceResource.reload();
-        }
-      });
     });
   }
 

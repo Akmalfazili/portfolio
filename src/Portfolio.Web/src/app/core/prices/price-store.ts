@@ -94,8 +94,25 @@ export class PriceStore {
   private hubRetryTimer: ReturnType<typeof setInterval> | null = null;
   private cooldownTimer: ReturnType<typeof setInterval> | null = null;
 
+  private readonly onVisibilityChange = () => {
+    if (document.visibilityState !== 'visible') {
+      return;
+    }
+    // A status missed while the tab was throttled/hidden should apply
+    // immediately on focus rather than waiting up to 60s for the next poll —
+    // GET /api/prices/status is explicitly the safe thing to poll (CLAUDE.md:
+    // it can never cost a provider credit).
+    this.fetchStatus();
+    // If the socket died while the tab was frozen, don't wait out the rest of
+    // HUB_RETRY_INTERVAL_MS — try to reconnect right away.
+    if (this._connectionState() === 'polling-fallback') {
+      this.startConnection();
+    }
+  };
+
   constructor() {
     this.connect();
+    document.addEventListener('visibilitychange', this.onVisibilityChange);
     this.destroyRef.onDestroy(() => this.teardown());
   }
 
@@ -232,6 +249,7 @@ export class PriceStore {
   }
 
   private teardown(): void {
+    document.removeEventListener('visibilitychange', this.onVisibilityChange);
     this.stopPollFallback();
     if (this.cooldownTimer) {
       clearInterval(this.cooldownTimer);

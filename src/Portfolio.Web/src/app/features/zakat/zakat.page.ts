@@ -8,6 +8,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { API_ROUTES } from '../../core/api/api-routes';
 import { AssetDto, ZakatAssetStatus, ZakatCryptoLineDto, ZakatPaymentDto, ZakatReportDto, ZakatStockLineDto } from '../../core/api/models';
 import { NotificationService } from '../../core/notifications/notification.service';
+import { reloadOnRefreshCycle } from '../../core/prices/reload-on-refresh-cycle';
 import { MoneyPipe } from '../../shared/pipes/money.pipe';
 import { QuantityPipe } from '../../shared/pipes/quantity.pipe';
 import { StateMessage } from '../../shared/state-message/state-message';
@@ -94,6 +95,17 @@ export class ZakatPage {
   // report itself deliberately carries just the fields the calculation
   // needs, not the whole asset record.
   private readonly assetsResource = httpResource<AssetDto[]>(() => API_ROUTES.assets);
+
+  constructor() {
+    // Reload only the computed report on a completed refresh cycle — never
+    // `paymentsResource` (hand-entered records) or `assetsResource` (asset
+    // metadata), neither of which depends on prices. Same shared hook as
+    // PortfolioOverviewPage/AssetDetailPage — see
+    // core/prices/reload-on-refresh-cycle.ts. `report()` is read through
+    // `lastGoodValue` below (D44's rule), so a background reload cannot blank
+    // a report already on screen.
+    reloadOnRefreshCycle(() => this.reportResource.reload());
+  }
 
   private readonly reportCache = lastGoodValue(this.reportResource);
   readonly report = computed(() => this.reportCache());

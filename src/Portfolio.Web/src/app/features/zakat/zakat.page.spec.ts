@@ -16,6 +16,8 @@ import {
   ZakatStockLineDto,
 } from '../../core/api/models';
 import { NotificationService } from '../../core/notifications/notification.service';
+import { PRICES_HUB_CONNECTION_FACTORY, PriceStore } from '../../core/prices/price-store';
+import { FakeHubConnection } from '../../core/prices/testing/fake-hub-connection';
 
 function stockLine(overrides: Partial<ZakatStockLineDto> = {}): ZakatStockLineDto {
   return {
@@ -96,17 +98,26 @@ describe('ZakatPage', () => {
   let fixture: ComponentFixture<ZakatPage>;
   let httpMock: HttpTestingController;
   let notifySuccess: ReturnType<typeof vi.fn>;
+  let fakeHub: FakeHubConnection;
 
   beforeEach(() => {
+    fakeHub = new FakeHubConnection();
     TestBed.configureTestingModule({
       imports: [ZakatPage],
-      providers: [provideHttpClient(), provideHttpClientTesting(), provideNoopAnimations()],
+      providers: [
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideNoopAnimations(),
+        { provide: PRICES_HUB_CONNECTION_FACTORY, useValue: () => fakeHub },
+      ],
     });
     httpMock = TestBed.inject(HttpTestingController);
     const notifications = TestBed.inject(NotificationService);
     notifySuccess = vi.spyOn(notifications, 'success').mockImplementation(() => {});
     vi.spyOn(notifications, 'error').mockImplementation(() => {});
     vi.spyOn(notifications, 'info').mockImplementation(() => {});
+    // Constructs PriceStore's hub connection eagerly.
+    TestBed.inject(PriceStore);
     fixture = TestBed.createComponent(ZakatPage);
   });
 
@@ -551,5 +562,86 @@ describe('ZakatPage', () => {
 
     // httpMock.verify() in afterEach proves no extra GET /api/zakat fired.
     expect(fixture.nativeElement.textContent).toContain('250.75');
+  });
+
+  // --- Live-price reload (only reportResource depends on prices) ----------
+
+  it('reloads the report after a refresh cycle completes, but not on the first status snapshot', async () => {
+    fixture.detectChanges();
+    flush(report());
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    fakeHub.emit('RefreshStatus', {
+      lastRefreshedAt: '2026-09-06T10:00:00Z',
+      nyseOpen: false,
+      sgxOpen: false,
+      nextScheduledRunAt: null,
+      sources: [],
+    });
+    fixture.detectChanges();
+    httpMock.expectNone(API_ROUTES.zakatReport());
+
+    fakeHub.emit('RefreshStatus', {
+      lastRefreshedAt: '2026-09-06T10:02:00Z',
+      nyseOpen: false,
+      sgxOpen: false,
+      nextScheduledRunAt: null,
+      sources: [],
+    });
+    fixture.detectChanges();
+
+    // Only the report reloads — payments and assets are hand-entered/static
+    // and do not depend on prices.
+    httpMock.expectOne(API_ROUTES.zakatReport()).flush(report());
+    httpMock.expectNone(API_ROUTES.zakatPayments);
+    httpMock.expectNone(API_ROUTES.assets);
+  });
+
+  /**
+   * Mirrors the D44-shaped regression tests on `portfolio-overview.page.spec.ts`
+   * — a background reload triggered by a completed refresh cycle must not
+   * blank a report already on screen, whether the reload is merely in flight
+   * or ends up failing.
+   */
+  it('keeps the report mounted during a background reload — a reload must not blank a report that already has data', async () => {
+    fixture.detectChanges();
+    flush(report({ stocks: [stockLine({ assetId: 1, symbol: 'AAPL' })] }));
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain('AAPL');
+
+    fakeHub.emit('RefreshStatus', {
+      lastRefreshedAt: '2026-09-06T10:00:00Z',
+      nyseOpen: false,
+      sgxOpen: false,
+      nextScheduledRunAt: null,
+      sources: [],
+    });
+    fixture.detectChanges();
+    fakeHub.emit('RefreshStatus', {
+      lastRefreshedAt: '2026-09-06T10:02:00Z',
+      nyseOpen: false,
+      sgxOpen: false,
+      nextScheduledRunAt: null,
+      sources: [],
+    });
+    fixture.detectChanges();
+
+    // The reload is now in flight — reportResource.isLoading() is true — but
+    // the previous value must still render rather than the loading state.
+    const midReloadText = fixture.nativeElement.textContent as string;
+    expect(midReloadText).not.toContain('Calculating zakat');
+    expect(midReloadText).toContain('AAPL');
+
+    httpMock.expectOne(API_ROUTES.zakatReport()).flush('boom', { status: 500, statusText: 'Server Error' });
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    // A failed background reload must not replace good data with a full-page error.
+    const afterFailureText = fixture.nativeElement.textContent as string;
+    expect(afterFailureText).not.toContain("Couldn't load the zakat report");
+    expect(afterFailureText).toContain('AAPL');
   });
 });
