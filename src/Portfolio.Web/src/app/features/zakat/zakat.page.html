@@ -137,9 +137,20 @@
                     <span class="zakat__footnote">Already SGD — no FX conversion applied</span>
                   } @else {
                     {{ line.fxRateUsed | quantity: 8 }}
-                    @if (line.fxCarriedBack) {
-                      <span class="zakat__footnote zakat__footnote--warning">
-                        Carried back from the earliest rate on file
+                    <!-- The rate's OWN date, not the close date -- the two differ
+                         whenever the year end lands on a weekend or holiday (a
+                         normal carry-forward) and, in the fxCarriedBack case, the
+                         FX date is LATER than the close. Rendering the date makes
+                         both visible instead of only the second one. -->
+                    @if (line.fxDateUsed) {
+                      <span
+                        class="zakat__footnote"
+                        [class.zakat__footnote--warning]="line.fxCarriedBack"
+                      >
+                        as of <span class="zakat__date-token">{{ line.fxDateUsed }}</span>
+                        @if (line.fxCarriedBack) {
+                          — carried back from the earliest rate on file
+                        }
                       </span>
                     }
                   }

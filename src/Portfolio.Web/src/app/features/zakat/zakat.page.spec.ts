@@ -231,7 +231,42 @@ describe('ZakatPage', () => {
 
     const text = fixture.nativeElement.textContent as string;
     expect(text).toContain('1.29473512');
+    expect(text).toContain('as of 2025-09-26');
     expect(text).not.toContain('Already SGD');
+  });
+
+  // The FX date is the RATE's own date, which is not necessarily the close
+  // date -- a carried-back rate is dated AFTER the close it converts. Showing
+  // it turns the warning from an assertion into something checkable.
+  it('dates the FX rate, and says so when it was carried back from a later row', async () => {
+    fixture.detectChanges();
+    flush(
+      report({
+        stocks: [
+          stockLine({
+            assetId: 1,
+            symbol: 'AAPL',
+            currency: 'USD',
+            status: 'Included',
+            fiscalYearEndDate: '2020-09-27',
+            quantityHeld: 10,
+            closeNative: 200,
+            closeDateUsed: '2020-09-25',
+            closeDateExact: false,
+            fxDateUsed: '2024-01-02',
+            fxCarriedBack: true,
+            fxRateUsed: 1.35,
+            valueSgd: 2700,
+          }),
+        ],
+      }),
+    );
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('as of 2024-01-02');
+    expect(text).toContain('carried back from the earliest rate on file');
   });
 
   it('shows a no-conversion note, not a bare dash, for an SGD-native stock', async () => {
@@ -263,6 +298,10 @@ describe('ZakatPage', () => {
     const text = fixture.nativeElement.textContent as string;
     expect(text).toContain('Already SGD');
     expect(text).toContain('no FX conversion applied');
+    // No FX happened, so there is no FX date to stamp -- the cell must not
+    // borrow the close date and present it as a rate date.
+    const fxCell = fixture.nativeElement.querySelector('tbody tr td:nth-child(6)') as HTMLElement;
+    expect(fxCell.textContent).not.toContain('as of');
   });
 
   it('renders the placeholder dash for a non-Included stock line, never a rate or the SGD note', async () => {
