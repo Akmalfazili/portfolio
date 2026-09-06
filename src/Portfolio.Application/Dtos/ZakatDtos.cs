@@ -34,7 +34,10 @@ public enum ZakatAssetStatus
     NoCloseOnOrBeforeFiscalYearEnd,
 
     /// <summary>
-    /// No USD/SGD <c>FxRate</c> rows exist at all — not even one to carry forward or fall back to.
+    /// No USD/SGD <c>FxRate</c> rows exist at all for that currency pair — not even one to carry
+    /// forward or fall back to. (The member name predates resolving the rate at the fiscal year end
+    /// rather than the close date; the guard itself has never looked at either date, only at whether
+    /// any row exists — kept as-is because enums cross the wire as strings the frontend reads.)
     /// Excluded. See zakat.md §7.4: every USD/SGD row in this database exists only because Z74 is an
     /// SGD asset, so this failure is structurally possible for the whole report, not only for one
     /// asset, if Z74 is ever sold out of entirely.
@@ -130,17 +133,22 @@ public sealed record ZakatStockLineDto(
 
     /// <summary>
     /// The date of the USD/SGD <c>FxRate</c> row actually used to convert <see cref="CloseNative"/>
-    /// to SGD. Null for an SGD-native asset (no FX conversion at all — see zakat.md §4.2) and null
-    /// unless <see cref="Status"/> is <see cref="ZakatAssetStatus.Included"/>.
+    /// to SGD — resolved against <see cref="FiscalYearEndDate"/>, not <see cref="CloseDateUsed"/>,
+    /// and carried forward on the FX series' own calendar (which is not weekday-only — see
+    /// zakat.md §4.2). It therefore need not equal <see cref="CloseDateUsed"/>: the equity close can
+    /// carry back across a market closure that has nothing to do with FX. Null for an SGD-native
+    /// asset (no FX conversion at all) and null unless <see cref="Status"/> is
+    /// <see cref="ZakatAssetStatus.Included"/>.
     /// </summary>
     DateOnly? FxDateUsed,
 
     /// <summary>
-    /// True when <see cref="FxDateUsed"/> is AFTER <see cref="CloseDateUsed"/> — meaning no FX rate
-    /// existed at or before the close date at all, and the resolver fell back to the earliest rate
-    /// on file rather than genuinely carrying one forward (see
+    /// True when <see cref="FxDateUsed"/> is AFTER <see cref="FiscalYearEndDate"/> — meaning no FX
+    /// rate existed at or before the fiscal year end at all, and the resolver fell back to the
+    /// earliest rate on file rather than genuinely carrying one forward (see
     /// <c>Services.Calculators.FxRateResolution.CarriedBack</c>). False for a normal forward
-    /// carry-forward (a weekend). Null for an SGD-native asset or when not <see cref="ZakatAssetStatus.Included"/>.
+    /// carry-forward (a weekend or holiday on the FX calendar). Null for an SGD-native asset or when
+    /// not <see cref="ZakatAssetStatus.Included"/>.
     /// </summary>
     bool? FxCarriedBack,
 
@@ -153,8 +161,8 @@ public sealed record ZakatStockLineDto(
     /// non-<see cref="ZakatAssetStatus.Included"/> status.
     ///
     /// <para>No <c>FxSource</c>/<c>FxAsOf</c> pair here the way <see cref="ZakatCryptoLineDto"/>
-    /// has one — a stock line always uses the close date's own <c>FxRate</c> row (zakat.md §4.2,
-    /// the MUIS method) and never a live spot, so a "spot vs. daily close" field here would be
+    /// has one — a stock line always uses the fiscal year end date's own <c>FxRate</c> row
+    /// (zakat.md §4.2) and never a live spot, so a "spot vs. daily close" field here would be
     /// null forever rather than a genuine distinction.</para>
     /// </summary>
     decimal? FxRateUsed,

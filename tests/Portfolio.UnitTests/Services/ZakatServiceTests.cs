@@ -121,6 +121,47 @@ public sealed class ZakatServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task GetReportAsync_UsdAsset_FxResolvedAtFiscalYearEnd_NotAtTheCarriedForwardCloseDate()
+    {
+        // Mirrors the measured AVGO/HLAL divergence: the fiscal year end (2025-11-02, a Sunday) has
+        // no price history of its own — the equity market was shut — so the close carries back to
+        // the prior trading day, 2025-10-31. The FX series runs its own calendar and DOES have a row
+        // dated exactly 2025-11-02 (Twelve Data's USD/SGD daily series is not weekday-only). The FX
+        // leg must resolve against the fiscal year end, not the close date it happens to have carried
+        // back to — reverting Application/Services/ZakatService.cs's BuildStockLine to resolve FX
+        // against closeRow.Date instead of fyEnd.Value must fail this test.
+        var avgo = AddStock(1, "AVGO", "USD", 11, 2);
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = avgo.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2025, 1, 1),
+            Quantity = 5m, PricePerUnit = 250m, Fees = 0m, Currency = "USD",
+        });
+        // No PriceHistory row on 2025-11-02 itself — carries back to the prior trading day.
+        _db.PriceHistories.Add(new PriceHistory { AssetId = avgo.Id, Date = new DateOnly(2025, 10, 31), Close = 300m, Currency = "USD" });
+        // The close date's own rate — what the OLD (reverted) coupling would use.
+        AddUsdSgdRate(new DateOnly(2025, 10, 31), 1.30160m);
+        // The fiscal year end's own rate — what the NEW behaviour under test must use.
+        AddUsdSgdRate(new DateOnly(2025, 11, 2), 1.28000m);
+        await _db.SaveChangesAsync();
+
+        var report = await _sut.GetReportAsync(Today, CancellationToken.None);
+
+        var line = report.Stocks.Should().ContainSingle().Subject;
+        line.Status.Should().Be(ZakatAssetStatus.Included);
+        line.FiscalYearEndDate.Should().Be(new DateOnly(2025, 11, 2));
+        line.CloseDateUsed.Should().Be(new DateOnly(2025, 10, 31));
+        line.CloseDateExact.Should().BeFalse(); // the equity close carried back
+        line.FxDateUsed.Should().Be(new DateOnly(2025, 11, 2)); // the FX leg did NOT carry back
+        line.FxCarriedBack.Should().BeFalse(); // an exact FX row exists for the year end
+        line.FxRateUsed.Should().Be(1.28000m);
+
+        // 5 units * 300 USD * 1.28000 = 1920 SGD — the year-end rate, never the close date's 1.30160
+        // (which would give 1952.40 SGD instead).
+        line.ValueSgd.Should().Be(1920m);
+        report.StockZakatableSgd.Should().Be(1920m);
+    }
+
+    [Fact]
     public async Task GetReportAsync_SgdAsset_Included_NoFxConversionAtAll()
     {
         var z74 = AddStock(1, "Z74", "SGD", 3, 31);

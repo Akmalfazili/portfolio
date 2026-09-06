@@ -178,7 +178,14 @@ public sealed class ZakatService(
                     fyEnd, quantity, closeRow.Close, closeRow.Date, closeDateExact, null, null, null, null);
             }
 
-            var fx = FxRateResolver.ResolveDetailed(usdSgdRatesAscending, closeRow.Date);
+            // Resolved at the fiscal year end, not the close's own date. The equity close can be
+            // carried back by a market closure (weekend, holiday, 52/53-week drift) that has
+            // nothing to do with the FX series, which runs on its own calendar and is not
+            // weekday-only. Coupling the FX lookup to the equity close date let an equity
+            // closure silently rewind the FX leg past a rate that exists for the year-end date
+            // itself — see zakat.md §4.2. Each input therefore carries forward independently, on
+            // its own calendar.
+            var fx = FxRateResolver.ResolveDetailed(usdSgdRatesAscending, fyEnd.Value);
             var valueSgd = ConvertUsdToSgd(quantity * closeRow.Close, fx.Rate);
             return new ZakatStockLineDto(
                 asset.Id, asset.Symbol, asset.Name, asset.Currency, ZakatAssetStatus.Included,
