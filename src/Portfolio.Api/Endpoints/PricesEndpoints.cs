@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using Portfolio.Application.Abstractions;
 using Portfolio.Application.Dtos;
 using Portfolio.Application.Services;
+using Portfolio.Application.Services.Calendar;
 using Portfolio.Domain.Enums;
 
 namespace Portfolio.Api.Endpoints;
@@ -66,7 +67,10 @@ public static class PricesEndpoints
                 {
                     await using var scope = scopeFactory.CreateAsyncScope();
                     var backfillService = scope.ServiceProvider.GetRequiredService<IPriceBackfillService>();
-                    await backfillService.RunAsync(RefreshTrigger.BackfillManual, CancellationToken.None);
+                    // Manual trigger bypasses due-ness entirely and always covers every market
+                    // (D47) — unlike the scheduled path, this is a deliberate on-demand request,
+                    // not something the market calendar should be allowed to defer.
+                    await backfillService.RunAsync(RefreshTrigger.BackfillManual, ProviderMarkets.All, CancellationToken.None);
                 }
                 catch (Exception ex)
                 {

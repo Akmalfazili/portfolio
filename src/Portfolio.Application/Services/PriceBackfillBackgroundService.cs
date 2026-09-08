@@ -33,13 +33,25 @@ public sealed class PriceBackfillBackgroundService(
                 var backfillService = scope.ServiceProvider.GetRequiredService<IPriceBackfillService>();
                 var result = await backfillService.RunIfDueAsync(stoppingToken);
 
-                if (result is { Outcome: PriceBackfillOutcome.Completed, Summary: { } summary })
+                // D47: per-market, not one collapsed outcome — a tick can run one market and skip
+                // the other for entirely different reasons, and logging only "completed"/"not due"
+                // for the whole tick is exactly the kind of collapsed skip list CLAUDE.md warns
+                // against (D10, D26, D33, D35, D38, D45).
+                if (result is { MarketsRun.Count: > 0, Summary: { } summary })
                 {
                     logger.LogInformation(
-                        "Scheduled price backfill completed: {AssetsProcessed} asset(s) processed, {PointsInserted} price history point(s) inserted, {CallsUsed} provider call(s) used",
+                        "Scheduled price backfill completed for {Markets}: {AssetsProcessed} asset(s) processed, {PointsInserted} price history point(s) inserted, {CallsUsed} provider call(s) used",
+                        string.Join(", ", result.MarketsRun),
                         summary.AssetsProcessed.Count,
                         summary.PriceHistoryPointsInserted,
                         summary.ProviderCallsUsed);
+                }
+
+                if (result.MarketsSkipped.Count > 0)
+                {
+                    logger.LogDebug(
+                        "Scheduled price backfill not due for {SkippedMarkets}",
+                        string.Join(", ", result.MarketsSkipped.Select(skip => $"{skip.Market}:{skip.Reason}")));
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

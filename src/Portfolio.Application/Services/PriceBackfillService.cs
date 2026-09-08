@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using Portfolio.Application.Abstractions;
 using Portfolio.Application.Dtos;
 using Portfolio.Application.Services.Calculators;
+using Portfolio.Application.Services.Calendar;
 using Portfolio.Domain.Entities;
 using Portfolio.Domain.Enums;
 
@@ -16,6 +17,21 @@ namespace Portfolio.Application.Services;
 ///
 /// Stocks only, by decision — crypto is gain/loss only and keeps no <see cref="PriceHistory"/> at
 /// all, so backfilling it would spend Twelve Data/CoinGecko rate limit on data nothing reads.
+///
+/// <para><b>D47: due-ness and the run itself are scoped per <see cref="Market"/>, not global.</b>
+/// The bug this closed: NYSE and SGX close at very different local times but were gated by ONE
+/// NYSE-keyed "is the market open" check plus ONE once-per-Singapore-day latch, applied to every
+/// asset. NYSE closing at ~04:00 SGT satisfied both gates for the whole run, including Z74 — but
+/// SGX's own session for that same calendar day had not even opened yet at 04:00 SGT, so Z74 only
+/// ever got the PREVIOUS day's close at that point. By the time SGX actually published its close
+/// (17:00 SGT), the once-per-day latch had already fired (from the 04:00 run) and blocked a
+/// second attempt — and NYSE reopening at 21:30 SGT then blocked everything again until the next
+/// 04:00. Z74's close landed roughly 11 hours late, every single day, with 100% uptime — a
+/// structural gating bug, not a downtime symptom. The read path
+/// (<c>PortfolioSummaryService</c>'s live/close fallback) was never wrong; the close it fell back
+/// to just usually was not on file yet. The fix gates each market on its OWN session and its OWN
+/// last close (<see cref="IMarketCalendar.LastSessionCloseAt"/>) rather than NYSE's or a shared
+/// calendar-day latch — see <c>RunIfDueAsync</c> and tracker.md's D47 entry.</para>
 /// </summary>
 public sealed class PriceBackfillService(
     IPortfolioDbContext db,
@@ -33,36 +49,54 @@ public sealed class PriceBackfillService(
     {
         var now = timeProvider.GetUtcNow();
 
-        // Don't spend a call mid-session — the day's own close is not on the wire yet, and this
-        // would just re-fetch yesterday's, which is already in PriceHistory from the last run.
-        if (calendar.IsOpen(Market.Nyse, now))
+        var dueMarkets = new List<Market>();
+        var skipped = new List<PriceBackfillMarketSkip>();
+
+        foreach (var market in ProviderMarkets.All)
         {
-            return new PriceBackfillRunResult(PriceBackfillOutcome.MarketOpen, null);
+            // Don't spend a call mid-session for THIS market — its own day's close is not on the
+            // wire yet. NYSE being open must never gate SGX's due-ness, and vice versa (D47):
+            // each market is evaluated entirely on its own session.
+            if (calendar.IsOpen(market, now))
+            {
+                skipped.Add(new PriceBackfillMarketSkip(market, PriceBackfillSkipReason.SessionOpen));
+                continue;
+            }
+
+            // A market publishes exactly one close per session, so "has a scheduled run completed
+            // for this market since ITS OWN last close?" is both the due-ness check and, for free,
+            // the once-per-session throttle the old global once-per-day latch used to provide
+            // separately (and wrongly — see the class remarks). Self-correcting after downtime: on
+            // startup, any market closed and uncovered since its own last close is immediately due.
+            var lastClose = calendar.LastSessionCloseAt(market, now);
+            var lastRunCompletedAt = await db.RefreshRuns
+                .Where(r => r.Trigger == RefreshTrigger.BackfillScheduled && r.Market == market)
+                .MaxAsync(r => (DateTimeOffset?)r.CompletedAt, cancellationToken);
+
+            if (lastRunCompletedAt is { } completed && completed >= lastClose)
+            {
+                skipped.Add(new PriceBackfillMarketSkip(market, PriceBackfillSkipReason.AlreadyCoveredSinceLastClose));
+                continue;
+            }
+
+            dueMarkets.Add(market);
         }
 
-        // Reporting-day gate, not a UTC one — see ReportingClock. Both sides of this comparison
-        // must move together: the stored StartedAt instant and "today" are converted to the same
-        // Singapore calendar day, or the gate compares two different clocks.
-        var today = ReportingClock.Today(timeProvider);
-        var lastScheduledRunAt = await db.RefreshRuns
-            .Where(r => r.Trigger == RefreshTrigger.BackfillScheduled)
-            .OrderByDescending(r => r.StartedAt)
-            .Select(r => (DateTimeOffset?)r.StartedAt)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        if (lastScheduledRunAt is { } last && ReportingClock.DateFor(last) == today)
+        if (dueMarkets.Count == 0)
         {
-            return new PriceBackfillRunResult(PriceBackfillOutcome.AlreadyRanToday, null);
+            return new PriceBackfillRunResult([], skipped, null);
         }
 
-        var summary = await RunAsync(RefreshTrigger.BackfillScheduled, cancellationToken);
-        return new PriceBackfillRunResult(PriceBackfillOutcome.Completed, summary);
+        var summary = await RunAsync(RefreshTrigger.BackfillScheduled, dueMarkets, cancellationToken);
+        return new PriceBackfillRunResult(dueMarkets, skipped, summary);
     }
 
-    public async Task<PriceBackfillSummary> RunAsync(RefreshTrigger trigger, CancellationToken cancellationToken)
+    public async Task<PriceBackfillSummary> RunAsync(
+        RefreshTrigger trigger, IReadOnlyCollection<Market> markets, CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
         var today = ReportingClock.Today(timeProvider);
+        var marketSet = markets.ToHashSet();
 
         // D37: the budget is derived from what Twelve Data's persisted daily ledger says is
         // actually left today, not a hardcoded constant — a fixed budget smaller than one full
@@ -84,9 +118,23 @@ public sealed class PriceBackfillService(
 
         // Crypto is gain/loss only, by decision — it keeps no PriceHistory at all, so backfilling
         // it would spend provider rate limit on data nothing reads. See the Phase 6 decision.
+        //
+        // D47: further filtered to only the assets whose OWN market (via ProviderMarkets, the
+        // single provider-to-market table — see its own doc comment and D7) is in scope for this
+        // run. This is what makes an SGX-only run spend zero Twelve Data credits on NYSE assets —
+        // they are never even loaded into the ordering/FX derivation below, not merely skipped
+        // after the fact.
         var assets = await db.Assets
             .Where(a => a.IsActive && a.AssetClass == AssetClass.Stock)
             .ToListAsync(cancellationToken);
+
+        assets = assets
+            .Where(a => ProviderMarkets.For(a.QuoteProviderKind) is { } assetMarket && marketSet.Contains(assetMarket))
+            .ToList();
+
+        var marketByAssetSymbol = assets.ToDictionary(
+            a => a.Symbol,
+            a => ProviderMarkets.For(a.QuoteProviderKind)!.Value);
 
         // D37: least-recently-backfilled first (nulls — never backfilled at all — first of all),
         // not the implicit clustered-index (Id) order EF/SQL Server return with no ORDER BY. That
@@ -111,7 +159,9 @@ public sealed class PriceBackfillService(
             .ToDictionaryAsync(x => x.AssetId, x => x.Earliest, cancellationToken);
 
         // Derived up front, before either loop spends a call, so the FX loop below can run first
-        // without waiting on the asset loop to discover which currencies are in play.
+        // without waiting on the asset loop to discover which currencies are in play. Derived from
+        // the already market-filtered `assets`, so an SGX-only run only ever asks for USD/SGD, not
+        // any currency pair only an out-of-scope NYSE asset would need.
         var currenciesNeedingFx = assets
             .Where(a => earliestTradeDateByAsset.ContainsKey(a.Id) && a.Currency != ReportingCurrency)
             .Select(a => a.Currency)
@@ -306,19 +356,32 @@ public sealed class PriceBackfillService(
             assetsProcessed.Add(asset.Symbol);
         }
 
-        // Audit row alongside the quote-refresh RefreshRuns (see RefreshTrigger), so the manual
-        // POST /api/prices/backfill endpoint and the daily scheduled run both leave a durable
-        // record — and so RunIfDueAsync's own "already ran today" check has something to read.
-        db.AddRefreshRun(new RefreshRun
+        // Audit row alongside the quote-refresh RefreshRuns (see RefreshTrigger) — one row PER
+        // MARKET covered by this run (D47), not one row for the whole run, so RunIfDueAsync's
+        // per-market due-ness query (Trigger + Market) has something to read for each exchange
+        // independently. SymbolsRefreshed is counted per market (an asset's own processed/failed
+        // outcome is shared across the run, but how many symbols a given market's row can claim
+        // credit for is market-specific — see D45's reminder that internal bookkeeping numbers
+        // need the same "which one actually happened" care as outward-facing DTOs).
+        var runSummaryText = BuildRunSummary(assetsSkippedForBudget, assetsFailed, assetsSkippedTodayNotClosed, assetsTruncated);
+        var completedAt = timeProvider.GetUtcNow();
+        foreach (var market in markets)
         {
-            Trigger = trigger,
-            AssetClass = AssetClass.Stock,
-            StartedAt = now,
-            CompletedAt = timeProvider.GetUtcNow(),
-            Success = assetsFailed.Count == 0,
-            ErrorMessage = BuildRunSummary(assetsSkippedForBudget, assetsFailed, assetsSkippedTodayNotClosed, assetsTruncated),
-            SymbolsRefreshed = assetsProcessed.Count,
-        });
+            var symbolsForMarket = assetsProcessed.Count(symbol =>
+                marketByAssetSymbol.TryGetValue(symbol, out var assetMarket) && assetMarket == market);
+
+            db.AddRefreshRun(new RefreshRun
+            {
+                Trigger = trigger,
+                AssetClass = AssetClass.Stock,
+                Market = market,
+                StartedAt = now,
+                CompletedAt = completedAt,
+                Success = assetsFailed.Count == 0,
+                ErrorMessage = runSummaryText,
+                SymbolsRefreshed = symbolsForMarket,
+            });
+        }
 
         await db.SaveChangesAsync(cancellationToken);
 

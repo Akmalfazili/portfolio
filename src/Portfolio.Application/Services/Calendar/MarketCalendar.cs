@@ -1,4 +1,5 @@
 using Portfolio.Application.Abstractions;
+using Portfolio.Domain.Enums;
 
 namespace Portfolio.Application.Services.Calendar;
 
@@ -38,10 +39,54 @@ public sealed class MarketCalendar : IMarketCalendar
     public DateOnly LocalDateOn(Market market, DateTimeOffset instant) =>
         DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(instant, ZoneFor(market)).DateTime);
 
+    /// <summary>See <see cref="IMarketCalendar.LastSessionCloseAt"/> — deliberately does consult
+    /// the holiday table, unlike <see cref="LocalDateOn"/>.</summary>
+    public DateTimeOffset LastSessionCloseAt(Market market, DateTimeOffset instant)
+    {
+        var zone = ZoneFor(market);
+        var closeTime = CloseTimeFor(market);
+        var local = TimeZoneInfo.ConvertTime(instant, zone);
+
+        var date = DateOnly.FromDateTime(local.DateTime);
+        var timeOfDay = TimeOnly.FromDateTime(local.DateTime);
+
+        // If the instant falls before today's close, today's session (even if it is otherwise a
+        // trading day) has not finished yet, so the most recently COMPLETED close is an earlier
+        // day's — start the walk-back from yesterday. If the instant is at or after today's close,
+        // today's own close (once confirmed to be an actual trading day below) is the answer.
+        if (timeOfDay < closeTime)
+        {
+            date = date.AddDays(-1);
+        }
+
+        while (IsWeekend(date.DayOfWeek) || IsHoliday(market, date))
+        {
+            date = date.AddDays(-1);
+        }
+
+        var closeLocal = new DateTime(date.Year, date.Month, date.Day, closeTime.Hour, closeTime.Minute, 0, DateTimeKind.Unspecified);
+        var closeUtc = TimeZoneInfo.ConvertTimeToUtc(closeLocal, zone);
+        return new DateTimeOffset(closeUtc, TimeSpan.Zero);
+    }
+
     private static TimeZoneInfo ZoneFor(Market market) => market switch
     {
         Market.Nyse => NyseZone,
         Market.Sgx => SgxZone,
+        _ => throw new ArgumentOutOfRangeException(nameof(market), market, "Unknown market."),
+    };
+
+    private static TimeOnly CloseTimeFor(Market market) => market switch
+    {
+        Market.Nyse => NyseClose,
+        Market.Sgx => SgxAfternoonClose,
+        _ => throw new ArgumentOutOfRangeException(nameof(market), market, "Unknown market."),
+    };
+
+    private static bool IsHoliday(Market market, DateOnly date) => market switch
+    {
+        Market.Nyse => NyseHolidayCalendar.IsHoliday(date),
+        Market.Sgx => SgxHolidayCalendar.IsHoliday(date),
         _ => throw new ArgumentOutOfRangeException(nameof(market), market, "Unknown market."),
     };
 

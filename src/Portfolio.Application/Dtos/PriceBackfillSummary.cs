@@ -1,3 +1,5 @@
+using Portfolio.Domain.Enums;
+
 namespace Portfolio.Application.Dtos;
 
 /// <summary>One asset that was requested from the provider but did not come back successfully —
@@ -44,26 +46,47 @@ public sealed record PriceBackfillSummary(
     int ProviderCallsUsed,
     IReadOnlyList<string> AssetsWithTruncatedHistory);
 
-/// <summary>How one <c>IPriceBackfillService.RunIfDueAsync</c> check concluded — see D12.</summary>
-public enum PriceBackfillOutcome
+/// <summary>
+/// Why <c>IPriceBackfillService.RunIfDueAsync</c> decided one particular market was not due this
+/// tick — see D47. Replaces the old NYSE-global <c>PriceBackfillOutcome.MarketOpen</c> /
+/// <c>AlreadyRanToday</c> scalars, which asserted a single reason for the whole run even though
+/// NYSE and SGX keep entirely separate session calendars: NYSE being open must never explain why
+/// SGX's close backfill didn't run, and vice versa. A skip list whose name asserts a single
+/// reason is the most repeated defect family in this project (D10, D26, D33, D35, D38, D45) —
+/// this enum exists so "why" is carried per market rather than collapsed into one label.
+/// </summary>
+public enum PriceBackfillSkipReason
 {
-    /// <summary>A backfill actually ran; <see cref="PriceBackfillRunResult.Summary"/> is set.</summary>
-    Completed,
+    /// <summary>This market's regular session is still open at the instant this tick ran, so
+    /// today's close is not yet on the wire — fetching now would just re-return yesterday's close,
+    /// already on file from an earlier run. Not an error; the next poll tick after this market's
+    /// own close will pick it up.</summary>
+    SessionOpen,
 
-    /// <summary>NYSE — the later-closing of the two exchanges backfill covers — is still in its
-    /// regular session, so a close for today is not yet available. Not an error; the next poll
-    /// tick after the close will run it.</summary>
-    MarketOpen,
-
-    /// <summary>A scheduled backfill has already completed once today; running again would only
-    /// re-spend provider calls to insert nothing new, since <c>PriceHistory</c> gains at most one
-    /// new row per asset per calendar day.</summary>
-    AlreadyRanToday,
+    /// <summary>A scheduled backfill has already completed for this market since its own last
+    /// session close (see <c>IMarketCalendar.LastSessionCloseAt</c>). Running again would only
+    /// re-spend a provider call to insert nothing new, since a market publishes exactly one close
+    /// per session and <c>PriceHistory</c> gains at most one new row per asset per session.</summary>
+    AlreadyCoveredSinceLastClose,
 }
 
-/// <summary>Result of one <c>IPriceBackfillService.RunIfDueAsync</c> check, called by
-/// <c>PriceBackfillBackgroundService</c> on every poll tick.</summary>
-public sealed record PriceBackfillRunResult(PriceBackfillOutcome Outcome, PriceBackfillSummary? Summary);
+/// <summary>One market <c>RunIfDueAsync</c> decided not to cover this tick, and why — see
+/// <see cref="PriceBackfillSkipReason"/>.</summary>
+public sealed record PriceBackfillMarketSkip(Market Market, PriceBackfillSkipReason Reason);
+
+/// <summary>
+/// Result of one <c>IPriceBackfillService.RunIfDueAsync</c> check, called by
+/// <c>PriceBackfillBackgroundService</c> on every poll tick. Per-market by design (D47): a single
+/// tick can run one market, skip the other, run both, or skip both, and every market ends up in
+/// exactly one of <see cref="MarketsRun"/> or <see cref="MarketsSkipped"/> — never both, never
+/// neither. <see cref="Summary"/> is non-null if and only if <see cref="MarketsRun"/> is
+/// non-empty, and (when set) covers exactly the markets in <see cref="MarketsRun"/> — see
+/// <c>IPriceBackfillService.RunAsync</c>'s <c>markets</c> parameter.
+/// </summary>
+public sealed record PriceBackfillRunResult(
+    IReadOnlyList<Market> MarketsRun,
+    IReadOnlyList<PriceBackfillMarketSkip> MarketsSkipped,
+    PriceBackfillSummary? Summary);
 
 /// <summary>
 /// Response for <c>POST /api/prices/backfill</c>. Found live while verifying D37/D38: once every

@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.SignalR;
 using Portfolio.Application.Abstractions;
 using Portfolio.Application.Services;
+using Portfolio.Domain.Enums;
 
 namespace Portfolio.Api.Hubs;
 

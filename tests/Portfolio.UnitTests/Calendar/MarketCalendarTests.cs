@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Portfolio.Application.Abstractions;
 using Portfolio.Application.Services.Calendar;
+using Portfolio.Domain.Enums;
 
 namespace Portfolio.UnitTests.Calendar;
 
@@ -176,5 +177,67 @@ public sealed class MarketCalendarTests
         // 08:59 SGT = 00:59 UTC.
         var instant = new DateTimeOffset(2026, 7, 29, 0, 59, 0, TimeSpan.Zero);
         _sut.IsOpen(Market.Sgx, instant).Should().BeFalse();
+    }
+
+    // ---- LastSessionCloseAt (D47) ----
+    //
+    // Unlike LocalDateOn, this DOES consult the holiday table — see the method's own remarks on
+    // IMarketCalendar for why that's the correct side to be wrong on here.
+
+    [Fact]
+    public void LastSessionCloseAt_Nyse_ReturnsTodaysCloseWhenCalledAfterCloseOnANormalTradingDay()
+    {
+        // 2026-08-04 is an ordinary Tuesday (August is EDT, UTC-4). 21:00 UTC = 17:00 ET, one hour
+        // after NYSE's 16:00 ET close — no walk-back needed at all.
+        var instant = new DateTimeOffset(2026, 8, 4, 21, 0, 0, TimeSpan.Zero);
+        var expectedClose = new DateTimeOffset(2026, 8, 4, 20, 0, 0, TimeSpan.Zero); // 16:00 EDT = 20:00 UTC
+        _sut.LastSessionCloseAt(Market.Nyse, instant).Should().Be(expectedClose);
+    }
+
+    [Fact]
+    public void LastSessionCloseAt_Nyse_WalksBackOverAWeekend()
+    {
+        // Sunday 2026-08-02, 23:00 UTC = 19:00 EDT — well after Friday's close would have been,
+        // with Saturday and Sunday in between having no session at all. Must land on the PRECEDING
+        // Friday (2026-07-31), not on the Saturday or Sunday themselves.
+        var instant = new DateTimeOffset(2026, 8, 2, 23, 0, 0, TimeSpan.Zero);
+        var expectedClose = new DateTimeOffset(2026, 7, 31, 20, 0, 0, TimeSpan.Zero); // Fri 16:00 EDT = 20:00 UTC
+        _sut.LastSessionCloseAt(Market.Nyse, instant).Should().Be(expectedClose);
+    }
+
+    [Fact]
+    public void LastSessionCloseAt_Nyse_WalksBackOverLaborDay2026AndTheWeekendBeforeIt()
+    {
+        // Labor Day 2026 = 2026-09-07, the first Monday of September. Calling early Tuesday
+        // 2026-09-08 (before NYSE's own close that day, so the walk starts at Monday, not Tuesday)
+        // must walk Mon (holiday) -> Sun -> Sat -> land on Fri 2026-09-04.
+        var instant = new DateTimeOffset(2026, 9, 8, 10, 0, 0, TimeSpan.Zero); // 06:00 EDT, before close
+        var expectedClose = new DateTimeOffset(2026, 9, 4, 20, 0, 0, TimeSpan.Zero); // Fri 16:00 EDT = 20:00 UTC
+        _sut.LastSessionCloseAt(Market.Nyse, instant).Should().Be(expectedClose);
+    }
+
+    [Fact]
+    public void LastSessionCloseAt_Sgx_WalksBackOverAnObservedHolidayAndTheWeekendBeforeIt()
+    {
+        // SGX's National Day (9 August) falls on Sunday in 2026 and is observed the following
+        // Monday, 2026-08-10 (SgxHolidayCalendar's Sunday-only observance rule). Calling on the
+        // holiday itself, after its would-be close, must walk Mon (observed holiday) -> Sun (the
+        // actual 9 Aug) -> Sat -> land on Fri 2026-08-07.
+        var instant = new DateTimeOffset(2026, 8, 10, 12, 0, 0, TimeSpan.Zero); // 20:00 SGT
+        var expectedClose = new DateTimeOffset(2026, 8, 7, 9, 0, 0, TimeSpan.Zero); // Fri 17:00 SGT = 09:00 UTC
+        _sut.LastSessionCloseAt(Market.Sgx, instant).Should().Be(expectedClose);
+    }
+
+    [Fact]
+    public void LastSessionCloseAt_Nyse_IsCorrectAcrossTheSpringForwardBoundary()
+    {
+        // The reason this class exists. "Now" is Monday 2026-03-09, the first trading day AFTER
+        // the spring-forward (2026-03-08, 2am EST -> 3am EDT) — early enough (06:00 EDT) that the
+        // walk-back must skip the weekend and land on the PRECEDING Friday, 2026-03-06, which is
+        // still EST (UTC-5) — a DIFFERENT UTC offset than "now" itself is in. A hard-coded offset
+        // would compute Friday's close using Monday's own (EDT) offset and be off by an hour.
+        var instant = new DateTimeOffset(2026, 3, 9, 10, 0, 0, TimeSpan.Zero); // 06:00 EDT
+        var expectedClose = new DateTimeOffset(2026, 3, 6, 21, 0, 0, TimeSpan.Zero); // Fri 16:00 EST = 21:00 UTC
+        _sut.LastSessionCloseAt(Market.Nyse, instant).Should().Be(expectedClose);
     }
 }

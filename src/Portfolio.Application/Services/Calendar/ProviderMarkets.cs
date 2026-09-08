@@ -1,4 +1,3 @@
-using Portfolio.Application.Abstractions;
 using Portfolio.Domain.Enums;
 
 namespace Portfolio.Application.Services.Calendar;
@@ -27,4 +26,10 @@ public static class ProviderMarkets
 
     /// <summary>The market gating <paramref name="kind"/>, or null if it has none (crypto).</summary>
     public static Market? For(QuoteProviderKind kind) => ByProvider.GetValueOrDefault(kind);
+
+    /// <summary>Every market this app polls a calendar for. Used wherever "cover every market" is
+    /// the correct scope — the manual backfill endpoint, and <c>PriceBackfillService.RunIfDueAsync</c>'s
+    /// per-market due-ness scan (D47) — so both stay in sync with <see cref="Market"/>'s own enum
+    /// members rather than each hand-rolling the list.</summary>
+    public static readonly IReadOnlyList<Market> All = [Market.Nyse, Market.Sgx];
 }

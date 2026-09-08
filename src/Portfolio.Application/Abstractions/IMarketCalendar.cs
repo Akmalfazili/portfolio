@@ -1,19 +1,6 @@
+using Portfolio.Domain.Enums;
+
 namespace Portfolio.Application.Abstractions;
-
-/// <summary>
-/// The equity markets the refresh service polls. Crypto has no market — it trades 24/7 and is
-/// never gated by <see cref="IMarketCalendar"/>.
-/// </summary>
-public enum Market
-{
-    /// <summary>NYSE/NASDAQ regular session — covers every US-listed equity, quoted by Twelve
-    /// Data. Time zone <c>America/New_York</c>.</summary>
-    Nyse,
-
-    /// <summary>Singapore Exchange — covers Z74, quoted by Yahoo Finance. Time zone
-    /// <c>Asia/Singapore</c>.</summary>
-    Sgx,
-}
 
 /// <summary>
 /// Answers "is this exchange in a regular trading session right now?" so the refresh service
@@ -40,4 +27,23 @@ public interface IMarketCalendar
     /// whole point is to catch the days the table gets wrong.</para>
     /// </summary>
     DateOnly LocalDateOn(Market market, DateTimeOffset instant);
+
+    /// <summary>
+    /// The instant of the most recently <b>completed</b> regular session close for
+    /// <paramref name="market"/> at or before <paramref name="instant"/> — walking back over
+    /// weekends and holidays until it lands on an actual trading day. If <paramref name="instant"/>
+    /// itself is at or after that day's close, the close returned is <i>today's own</i>; otherwise
+    /// it walks back to the prior trading day's close.
+    ///
+    /// <para>Unlike <see cref="LocalDateOn"/>, this <b>does</b> consult the holiday table
+    /// (<c>NyseHolidayCalendar</c> / <c>SgxHolidayCalendar</c>) — the two methods answer different
+    /// questions. <see cref="LocalDateOn"/> exists specifically to catch the days the holiday table
+    /// is wrong (D4), so it must never trust that table. This method instead answers "when did the
+    /// close I should have on file get published?" for a scheduled backfill's due-ness check
+    /// (D47) — a wrong answer here means re-fetching a close that was never actually published
+    /// (harmless — Yahoo/Twelve Data just return the same data again) rather than a stale quote
+    /// masquerading as current (D4's failure mode), so trusting the holiday table's incompleteness
+    /// is the acceptable side to be wrong on for this method, unlike <see cref="LocalDateOn"/>.</para>
+    /// </summary>
+    DateTimeOffset LastSessionCloseAt(Market market, DateTimeOffset instant);
 }

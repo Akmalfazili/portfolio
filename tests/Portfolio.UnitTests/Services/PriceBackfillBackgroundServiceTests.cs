@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using Portfolio.Application.Dtos;
 using Portfolio.Application.Services;
+using Portfolio.Domain.Enums;
 
 namespace Portfolio.UnitTests.Services;
 
@@ -157,10 +158,17 @@ public sealed class PriceBackfillBackgroundServiceTests
                 await OnCall(call);
             }
 
-            return new PriceBackfillRunResult(PriceBackfillOutcome.AlreadyRanToday, null);
+            // Not due for either market — mirrors a real AlreadyCoveredSinceLastClose tick.
+            return new PriceBackfillRunResult(
+                [],
+                [
+                    new PriceBackfillMarketSkip(Market.Nyse, PriceBackfillSkipReason.AlreadyCoveredSinceLastClose),
+                    new PriceBackfillMarketSkip(Market.Sgx, PriceBackfillSkipReason.AlreadyCoveredSinceLastClose),
+                ],
+                null);
         }
 
-        public Task<PriceBackfillSummary> RunAsync(Portfolio.Domain.Enums.RefreshTrigger trigger, CancellationToken cancellationToken) =>
+        public Task<PriceBackfillSummary> RunAsync(RefreshTrigger trigger, IReadOnlyCollection<Market> markets, CancellationToken cancellationToken) =>
             throw new NotSupportedException("The background loop must only ever call RunIfDueAsync, never RunAsync directly.");
     }
 
