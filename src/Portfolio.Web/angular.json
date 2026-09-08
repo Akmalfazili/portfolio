@@ -86,6 +86,15 @@
           },
           "defaultConfiguration": "development"
         },
+        "lint": {
+          "builder": "@angular-eslint/builder:lint",
+          "options": {
+            "lintFilePatterns": [
+              "."
+            ],
+            "maxWarnings": 0
+          }
+        },
         "test": {
           "builder": "@angular/build:unit-test",
           "options": {

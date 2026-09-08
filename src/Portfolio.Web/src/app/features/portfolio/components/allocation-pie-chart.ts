@@ -4,7 +4,7 @@ import { NgxEchartsDirective } from 'ngx-echarts';
 import type { EChartsCoreOption } from 'echarts/core';
 
 import { MoneyPipe } from '../../../shared/pipes/money.pipe';
-import { foldToOther, itemTooltip, legend, readChartTokens, seriesColor } from '../../../shared/charts/chart-theme';
+import { foldToOther, itemTooltip, readChartTokens, seriesColor } from '../../../shared/charts/chart-theme';
 
 export interface AllocationSlice {
   assetId: number;

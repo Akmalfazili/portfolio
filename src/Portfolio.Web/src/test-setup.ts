@@ -69,7 +69,6 @@ if (typeof HTMLCanvasElement !== 'undefined') {
     createRadialGradient: () => stub2dContext,
     createPattern: () => null,
     addColorStop: () => {},
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as unknown as CanvasRenderingContext2D;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
