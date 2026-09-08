@@ -74,6 +74,21 @@ function readVar(style: CSSStyleDeclaration, name: string, fallback: string): st
 // supports — and `readChartTokens()` reads it (value unused) purely to
 // register the dependency, so every chart's option `computed()` re-runs, and
 // therefore re-resolves colours, on either kind of theme change.
+//
+// F6 — the two listeners used to be installed as a *module-level* side
+// effect, at `import` time, unconditionally and never torn down. That meant
+// merely importing this file to unit-test a pure function like `foldToOther`
+// attached a real global `matchMedia` listener and `MutationObserver`.
+// Installation is now lazy: `ensureThemeListeners()` runs on the *first*
+// `readChartTokens()` call, not on import, so a caller that never resolves a
+// token never pays for (or leaks) either listener. This is a deliberate
+// choice over a `provideChartTheme()` DI seam — see the plan writeup in
+// `frontend-solid.md` for why: nothing here is component-lifecycle-scoped
+// (it is one app-wide colour cache, alive for as long as the tab is), so a
+// `DestroyRef` teardown hook would only ever fire on environment-injector
+// teardown (i.e. in tests), and every existing call site can stay exactly as
+// it is — `readChartTokens()` keeps its current signature and every chart
+// component keeps calling it exactly as before.
 // ---------------------------------------------------------------------------
 export const themeVersion = signal(0);
 
@@ -81,25 +96,38 @@ function bumpThemeVersion(): void {
   themeVersion.update((v) => v + 1);
 }
 
-// jsdom (unit tests) implements neither API — guarded the same way
-// `src/test-setup.ts` guards `ResizeObserver`, so importing this module
-// never throws outside a real browser.
-if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', bumpThemeVersion);
-}
-if (typeof document !== 'undefined' && typeof MutationObserver !== 'undefined') {
-  new MutationObserver(bumpThemeVersion).observe(document.documentElement, {
-    attributes: true,
-    attributeFilter: ['data-theme'],
-  });
+let themeListenersInstalled = false;
+
+/** Installs the two theme-change listeners at most once, on the first call
+ *  — never at module-import time (F6). Safe to call repeatedly; every call
+ *  after the first is a no-op. jsdom (unit tests) implements neither
+ *  `matchMedia` nor `MutationObserver` by default — guarded the same way
+ *  `src/test-setup.ts` guards `ResizeObserver`, so calling this never throws
+ *  outside a real browser. */
+function ensureThemeListeners(): void {
+  if (themeListenersInstalled) {
+    return;
+  }
+  themeListenersInstalled = true;
+  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', bumpThemeVersion);
+  }
+  if (typeof document !== 'undefined' && typeof MutationObserver !== 'undefined') {
+    new MutationObserver(bumpThemeVersion).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    });
+  }
 }
 
 /** Resolves the live design tokens off the DOM — call this at chart-build
  *  time (inside a `computed()`), never cache it module-wide, so a light/dark
  *  toggle or a stock/crypto section change is picked up on the next render.
- *  Reads `themeVersion()` itself (see above) so callers don't each have to
+ *  Lazily installs the theme-change listeners on first call (see F6 note
+ *  above), then reads `themeVersion()` itself so callers don't each have to
  *  remember to. */
 export function readChartTokens(root: HTMLElement = document.documentElement): ChartTokens {
+  ensureThemeListeners();
   themeVersion();
   const style = getComputedStyle(root);
   return {

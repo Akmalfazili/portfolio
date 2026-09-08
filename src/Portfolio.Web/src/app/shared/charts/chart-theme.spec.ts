@@ -83,6 +83,99 @@ describe('chart-theme', () => {
     });
   });
 
+  // F6 — the two theme-change listeners used to be installed as a
+  // module-level side effect at `import` time. These tests mock
+  // `window.matchMedia` and the global `MutationObserver` *before* loading a
+  // fresh copy of the module (`vi.resetModules()` + a dynamic `import()`),
+  // so the assertions are about the module itself, not about whatever the
+  // statically-imported copy above already did as a side effect of this
+  // file's earlier `describe` blocks calling `readChartTokens()`.
+  describe('module-level side effects (F6)', () => {
+    let originalMatchMedia: typeof window.matchMedia;
+    let originalMutationObserver: typeof MutationObserver;
+
+    beforeEach(() => {
+      originalMatchMedia = window.matchMedia;
+      originalMutationObserver = globalThis.MutationObserver;
+      vi.resetModules();
+    });
+
+    afterEach(() => {
+      window.matchMedia = originalMatchMedia;
+      globalThis.MutationObserver = originalMutationObserver;
+    });
+
+    it('registers nothing merely by importing the module', async () => {
+      const matchMediaSpy = vi.fn(() => ({
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      window.matchMedia = matchMediaSpy as any;
+      const observeSpy = vi.fn();
+      const mutationObserverCtorSpy = vi.fn(function (this: unknown) {
+        return { observe: observeSpy, disconnect: vi.fn() };
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      globalThis.MutationObserver = mutationObserverCtorSpy as any;
+
+      await import('./chart-theme');
+
+      expect(matchMediaSpy).not.toHaveBeenCalled();
+      expect(mutationObserverCtorSpy).not.toHaveBeenCalled();
+    });
+
+    it('installs both listeners on the first readChartTokens() call, and the OS-preference listener still bumps themeVersion so tokens re-resolve', async () => {
+      const changeListeners: (() => void)[] = [];
+      const matchMediaSpy = vi.fn(() => ({
+        addEventListener: (_event: string, handler: () => void) => changeListeners.push(handler),
+        removeEventListener: vi.fn(),
+      }));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      window.matchMedia = matchMediaSpy as any;
+      const observeSpy = vi.fn();
+      const mutationObserverCtorSpy = vi.fn(function (this: unknown) {
+        return { observe: observeSpy, disconnect: vi.fn() };
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      globalThis.MutationObserver = mutationObserverCtorSpy as any;
+
+      const fresh = await import('./chart-theme');
+
+      // Not installed yet — importing alone still registers nothing.
+      expect(matchMediaSpy).not.toHaveBeenCalled();
+      expect(mutationObserverCtorSpy).not.toHaveBeenCalled();
+
+      document.documentElement.style.setProperty('--ui-color-gain', '#111111');
+      const tokens = computed(() => fresh.readChartTokens());
+      expect(tokens().gain).toBe('#111111');
+
+      // First call installed both listeners exactly once.
+      expect(matchMediaSpy).toHaveBeenCalledTimes(1);
+      expect(mutationObserverCtorSpy).toHaveBeenCalledTimes(1);
+      expect(observeSpy).toHaveBeenCalledWith(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['data-theme'],
+      });
+      expect(changeListeners).toHaveLength(1);
+
+      // A second call must not install a second pair.
+      fresh.readChartTokens();
+      expect(matchMediaSpy).toHaveBeenCalledTimes(1);
+      expect(mutationObserverCtorSpy).toHaveBeenCalledTimes(1);
+
+      // The theme-change path: firing the captured OS-preference handler
+      // (what the browser would do on a real light/dark toggle) bumps
+      // themeVersion, which is exactly the signal readChartTokens()'s
+      // callers rely on to re-resolve colours.
+      document.documentElement.style.setProperty('--ui-color-gain', '#222222');
+      changeListeners[0]();
+      expect(tokens().gain).toBe('#222222');
+
+      document.documentElement.style.removeProperty('--ui-color-gain');
+    });
+  });
+
   describe('foldToOther', () => {
     it('leaves 8 or fewer items untouched', () => {
       const items = Array.from({ length: 8 }, (_, i) => ({ value: i }));
