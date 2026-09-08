@@ -9,6 +9,7 @@ import {
   QuoteUpdateNotification,
   RefreshCooldownProblemDetails,
 } from '../api/models';
+import { createCountdown } from './countdown';
 
 export type PriceConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'polling-fallback';
 
@@ -69,7 +70,9 @@ export class PriceStore {
   private readonly _prices = signal<ReadonlyMap<number, QuoteUpdateNotification>>(new Map());
   private readonly _status = signal<PriceRefreshStatus | null>(null);
   private readonly _connectionState = signal<PriceConnectionState>('connecting');
-  private readonly _cooldownSecondsRemaining = signal<number | null>(null);
+  /** F4 — the 30-second manual-refresh cooldown, extracted into a
+   *  self-contained factory (`countdown.ts`) with nothing to do with prices. */
+  private readonly cooldown = createCountdown();
   private readonly _refreshing = signal(false);
   private readonly _lastRefreshResult = signal<PriceRefreshCycleResult | null>(null);
   private readonly _lastError = signal<string | null>(null);
@@ -80,7 +83,7 @@ export class PriceStore {
   readonly status = this._status.asReadonly();
   readonly connectionState = this._connectionState.asReadonly();
   /** Non-null while a 429 cooldown is counting down; drives the disabled button state. */
-  readonly cooldownSecondsRemaining = this._cooldownSecondsRemaining.asReadonly();
+  readonly cooldownSecondsRemaining = this.cooldown.secondsRemaining;
   readonly refreshing = this._refreshing.asReadonly();
   /** D5 messaging source — describeRefreshOutcome() turns this into UI copy. */
   readonly lastRefreshResult = this._lastRefreshResult.asReadonly();
@@ -92,7 +95,6 @@ export class PriceStore {
   private hubConnection: PricesHubConnection | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private hubRetryTimer: ReturnType<typeof setInterval> | null = null;
-  private cooldownTimer: ReturnType<typeof setInterval> | null = null;
 
   private readonly onVisibilityChange = () => {
     if (document.visibilityState !== 'visible') {
@@ -122,7 +124,7 @@ export class PriceStore {
 
   /** POST /api/prices/refresh. Handles the 429 cooldown by counting down, not by showing an error toast. */
   refreshNow(): void {
-    if (this._refreshing() || this._cooldownSecondsRemaining() !== null) {
+    if (this._refreshing() || this.cooldown.secondsRemaining() !== null) {
       return;
     }
     this._refreshing.set(true);
@@ -138,7 +140,7 @@ export class PriceStore {
         this._refreshing.set(false);
         if (error instanceof HttpErrorResponse && error.status === 429) {
           const problem = error.error as RefreshCooldownProblemDetails | undefined;
-          this.startCooldown(problem?.secondsRemaining ?? 30);
+          this.cooldown.start(problem?.secondsRemaining ?? 30);
         } else {
           this._lastError.set('Manual refresh failed — try again shortly.');
         }
@@ -229,31 +231,10 @@ export class PriceStore {
     this._prices.set(next);
   }
 
-  private startCooldown(seconds: number): void {
-    this._cooldownSecondsRemaining.set(seconds);
-    if (this.cooldownTimer) {
-      clearInterval(this.cooldownTimer);
-    }
-    this.cooldownTimer = setInterval(() => {
-      const remaining = this._cooldownSecondsRemaining();
-      if (remaining === null || remaining <= 1) {
-        this._cooldownSecondsRemaining.set(null);
-        if (this.cooldownTimer) {
-          clearInterval(this.cooldownTimer);
-          this.cooldownTimer = null;
-        }
-      } else {
-        this._cooldownSecondsRemaining.set(remaining - 1);
-      }
-    }, 1000);
-  }
-
   private teardown(): void {
     document.removeEventListener('visibilitychange', this.onVisibilityChange);
     this.stopPollFallback();
-    if (this.cooldownTimer) {
-      clearInterval(this.cooldownTimer);
-    }
+    this.cooldown.stop();
     void this.hubConnection?.stop();
   }
 }
