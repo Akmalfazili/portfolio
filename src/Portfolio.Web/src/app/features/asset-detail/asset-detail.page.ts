@@ -21,7 +21,7 @@ import { QuantityPipe } from '../../shared/pipes/quantity.pipe';
 import { StateMessage } from '../../shared/state-message/state-message';
 import { StatTile } from '../../shared/stat-tile/stat-tile';
 import { formatCloseDate } from '../../shared/util/local-date';
-import { lastGoodValue } from '../../shared/util/last-good-value';
+import { resourceState } from '../../shared/util/resource-state';
 import { TablePager } from '../../shared/table/table-pager/table-pager';
 import { ALL_ROWS, TableSort, createTableState } from '../../shared/table/table-state';
 import { TRANSACTION_ROW_HEIGHT_PX } from '../../shared/table/table-row-height';
@@ -76,11 +76,12 @@ export class AssetDetailPage {
   );
 
   /**
-   * `lastGoodValue` (`shared/util/last-good-value.ts`) — NOT the resource's
-   * own `.value()` — is what the page renders from. Two distinct reasons,
-   * both from `httpResource.reload()`'s behaviour (fired every time
-   * `PriceStore` completes a refresh cycle — see the constructor effect
-   * below, and `retry()`, which reloads `assetsResource` too):
+   * `resourceState` (`shared/util/resource-state.ts`, built on
+   * `lastGoodValue`) — NOT the resource's own `.value()` — is what the page
+   * renders from. Two distinct reasons, both from `httpResource.reload()`'s
+   * behaviour (fired every time `PriceStore` completes a refresh cycle — see
+   * the constructor effect below, and `retry()`, which reloads
+   * `assetsResource` too):
    *
    * 1. A reload that is merely IN FLIGHT preserves the previous value while
    *    `isLoading()` flips back to `true`. Gating content on `isLoading()`
@@ -91,30 +92,29 @@ export class AssetDetailPage {
    *    `hasValue()` alone is not enough to keep showing good data across a
    *    failed background reload.
    *
-   * See tracker.md's "reload must not blank the page" entry.
+   * See tracker.md's "reload must not blank the page" entry. EVERY resource
+   * on this page goes through it — `performanceResource` used to be the
+   * exception, and a single failed cycle reload blanked the cost-vs-market
+   * chart while its siblings on the same page rode the failure out.
    */
-  private readonly assetsCache = lastGoodValue(this.assetsResource);
-  private readonly summaryCache = lastGoodValue(this.summaryResource);
+  private readonly assetsState = resourceState(this.assetsResource);
+  private readonly summaryState = resourceState(this.summaryResource);
 
-  readonly isLoading = computed(
-    () =>
-      (this.assetsResource.isLoading() && this.assetsCache() === undefined) ||
-      (this.summaryResource.isLoading() && this.summaryCache() === undefined),
-  );
+  /** The page shell needs BOTH the asset list (to resolve the symbol) and the
+   *  summary (for the holding), so the two states compose with `||` — each
+   *  resource still judges itself by its own cached value. */
+  readonly isLoading = computed(() => this.assetsState.isLoading() || this.summaryState.isLoading());
   /**
    * A *reload* that fails while good data is already on screen must not
    * blow the page away — `PriceStore`'s toolbar refresh indicator already
    * surfaces refresh health (rule #3). Only a failure with no value EVER
-   * loaded blocks the page — a deliberate choice, not an oversight.
+   * loaded blocks the page — a deliberate choice, not an oversight, and the
+   * reason `resourceState.hasError` gates on the cached value.
    */
-  readonly hasError = computed(
-    () =>
-      (this.assetsResource.error() != null && this.assetsCache() === undefined) ||
-      (this.summaryResource.error() != null && this.summaryCache() === undefined),
-  );
+  readonly hasError = computed(() => this.assetsState.hasError() || this.summaryState.hasError());
 
   readonly asset = computed(() =>
-    (this.assetsCache() ?? []).find(
+    (this.assetsState.value() ?? []).find(
       (candidate) => candidate.symbol === this.symbol() && candidate.assetClass === this.assetClass(),
     ),
   );
@@ -139,7 +139,7 @@ export class AssetDetailPage {
     if (!asset) {
       return undefined;
     }
-    return this.summaryCache()?.holdings.find((h) => h.assetId === asset.id);
+    return this.summaryState.value()?.holdings.find((h) => h.assetId === asset.id);
   });
 
   readonly hasNoTransactions = computed(
@@ -151,7 +151,27 @@ export class AssetDetailPage {
     return asset && this.isStock() ? API_ROUTES.assetPerformance(asset.id) : undefined;
   });
 
-  readonly performancePoints = computed(() => this.performanceResource.value()?.points ?? []);
+  /**
+   * Through `resourceState` for the same reason as everything else on this
+   * page, and more urgently: this resource is reloaded on EVERY completed
+   * refresh cycle (see the constructor), so it is the one most exposed to a
+   * transient failure. Reading `performanceResource.value()` raw — which is
+   * what this did — meant a single failed ~5-minute reload replaced the
+   * resolved stream with `{ error }`, while the summary and dividends panels
+   * beside it rode the same failure out untouched.
+   *
+   * Measured, not assumed, and WORSE than the "chart goes blank" the review
+   * predicted: Angular's `ResourceImpl.value` computed THROWS
+   * ("Resource is currently in an error state") once the resource errors, so
+   * the raw read blew up inside change detection rather than quietly
+   * returning `undefined`. `lastGoodValue` never hits that path — its source
+   * guards on `hasValue()` first. See the regression test in
+   * `asset-detail.page.spec.ts`, which reproduces the throw against the
+   * pre-fix component.
+   */
+  private readonly performanceState = resourceState(this.performanceResource);
+
+  readonly performancePoints = computed(() => this.performanceState.value()?.points ?? []);
 
   /**
    * Dividend income tracking (2026-08-28) — stocks only, same
@@ -164,17 +184,15 @@ export class AssetDetailPage {
     return asset && this.isStock() ? API_ROUTES.assetDividends(asset.id) : undefined;
   });
 
-  /** Same `lastGoodValue` rule as the page-level `isLoading`/`hasError`
+  /** Same `resourceState` rule as the page-level `isLoading`/`hasError`
    *  above — `retryDividends()` reloads this resource, and neither an
    *  in-flight reload nor a FAILED one may blank a payment table that's
-   *  already on screen (see the long comment on `assetsCache` for why a
+   *  already on screen (see the long comment on `assetsState` for why a
    *  failed reload needs the cache and `hasValue()` alone isn't enough). */
-  private readonly dividendsCache = lastGoodValue(this.dividendsResource);
+  private readonly dividendsState = resourceState(this.dividendsResource);
 
-  readonly isDividendsLoading = computed(
-    () => this.dividendsResource.isLoading() && this.dividendsCache() === undefined,
-  );
-  readonly dividendHistory = computed(() => this.dividendsCache());
+  readonly isDividendsLoading = this.dividendsState.isLoading;
+  readonly dividendHistory = this.dividendsState.value;
   readonly dividendCoverageStatus = computed(() => this.dividendHistory()?.coverageStatus ?? null);
   readonly dividendPayments = computed(() => this.dividendHistory()?.payments ?? []);
   readonly hasDividendPayments = computed(() => this.dividendPayments().length > 0);
@@ -188,9 +206,7 @@ export class AssetDetailPage {
    * force a new Yahoo call itself.
    */
   readonly dividendsUnavailable = computed(
-    () =>
-      (this.dividendsResource.error() != null && this.dividendsCache() === undefined) ||
-      this.dividendCoverageStatus() === 'FetchFailed',
+    () => this.dividendsState.hasError() || this.dividendCoverageStatus() === 'FetchFailed',
   );
 
   readonly dividendTableState = createTableState<DividendPaymentDto, DividendColumn>({
@@ -218,7 +234,13 @@ export class AssetDetailPage {
     return asset ? API_ROUTES.transactionsByAsset(asset.id) : undefined;
   });
 
-  readonly transactions = computed(() => this.transactionsResource.value() ?? []);
+  /** Latent rather than live today — nothing reloads this resource on the
+   *  refresh cycle — but it had the identical unprotected shape
+   *  `performanceResource` did, so it gets the same treatment rather than
+   *  waiting to become a second instance of the same defect. */
+  private readonly transactionsState = resourceState(this.transactionsResource);
+
+  readonly transactions = computed(() => this.transactionsState.value() ?? []);
 
   /** Sorting/pagination — see `shared/table/table-state.ts`. Same default
    *  sort (trade date descending, stable id tiebreak) as the main

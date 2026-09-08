@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { httpResource, HttpClient } from '@angular/common/http';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog } from '@angular/material/dialog';
@@ -14,7 +14,7 @@ import { QuantityPipe } from '../../shared/pipes/quantity.pipe';
 import { StateMessage } from '../../shared/state-message/state-message';
 import { StatTile } from '../../shared/stat-tile/stat-tile';
 import { ConfirmDialog, ConfirmDialogData } from '../../shared/confirm-dialog/confirm-dialog';
-import { lastGoodValue } from '../../shared/util/last-good-value';
+import { resourceState } from '../../shared/util/resource-state';
 import { formatDateOnlyLong, formatFxAsOf } from '../../shared/util/local-date';
 import { AssetFormDialog, AssetFormDialogData, AssetFormDialogResult } from '../asset-management/asset-form.dialog';
 import {
@@ -102,16 +102,16 @@ export class ZakatPage {
     // metadata), neither of which depends on prices. Same shared hook as
     // PortfolioOverviewPage/AssetDetailPage — see
     // core/prices/reload-on-refresh-cycle.ts. `report()` is read through
-    // `lastGoodValue` below (D44's rule), so a background reload cannot blank
+    // `resourceState` below (D44's rule), so a background reload cannot blank
     // a report already on screen.
     reloadOnRefreshCycle(() => this.reportResource.reload());
   }
 
-  private readonly reportCache = lastGoodValue(this.reportResource);
-  readonly report = computed(() => this.reportCache());
+  private readonly reportState = resourceState(this.reportResource);
+  readonly report = this.reportState.value;
 
-  readonly isLoading = computed(() => this.reportResource.isLoading() && this.report() === undefined);
-  readonly hasError = computed(() => this.reportResource.error() != null && this.report() === undefined);
+  readonly isLoading = this.reportState.isLoading;
+  readonly hasError = this.reportState.hasError;
 
   readonly stockLines = computed<ZakatStockLineDto[]>(() => sortLinesBySymbol(this.report()?.stocks ?? []));
   readonly cryptoLines = computed<ZakatCryptoLineDto[]>(() => sortLinesBySymbol(this.report()?.crypto ?? []));
@@ -232,12 +232,11 @@ export class ZakatPage {
   // --- Payment history (§3.2) — a recorded fact, never derived from the ---
   // --- computed report above. --------------------------------------------
 
-  private readonly paymentsCache = lastGoodValue(this.paymentsResource);
-  private readonly payments = computed(() => this.paymentsCache());
+  private readonly paymentsState = resourceState(this.paymentsResource);
 
-  readonly paymentsLoading = computed(() => this.paymentsResource.isLoading() && this.payments() === undefined);
-  readonly paymentsHasError = computed(() => this.paymentsResource.error() != null && this.payments() === undefined);
-  readonly sortedPayments = computed(() => sortPayments(this.payments() ?? []));
+  readonly paymentsLoading = this.paymentsState.isLoading;
+  readonly paymentsHasError = this.paymentsState.hasError;
+  readonly sortedPayments = computed(() => sortPayments(this.paymentsState.value() ?? []));
   readonly paymentsEmpty = computed(
     () => !this.paymentsLoading() && !this.paymentsHasError() && this.sortedPayments().length === 0,
   );

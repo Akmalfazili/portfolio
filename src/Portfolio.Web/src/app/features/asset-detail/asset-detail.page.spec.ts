@@ -300,6 +300,67 @@ describe('AssetDetailPage', () => {
     expect(text).toContain('AAPL');
   });
 
+  /**
+   * F3's live bug. `performanceResource` is reloaded on EVERY completed
+   * refresh cycle, but `performancePoints` used to read
+   * `performanceResource.value()` raw, with no `lastGoodValue`. Per
+   * `last-good-value.ts`'s documented asymmetry a FAILED reload replaces the
+   * resolved stream wholesale with `{ error }` — so one transient failure on
+   * the ~5-minute cycle took out a chart the user was looking at, while every
+   * sibling resource on this page survived exactly the same failure.
+   *
+   * Run against the pre-fix component this fails, and the failure is worse
+   * than the predicted blank chart: Angular's `ResourceImpl.value` computed
+   * THROWS "Resource is currently in an error state" once the resource
+   * errors, so the raw `.value()` read blew up inside change detection
+   * instead of returning `undefined`. `lastGoodValue`'s source guards on
+   * `hasValue()` first and never reaches that path.
+   */
+  it('does not blank the cost-vs-market chart when the performance reload fails on a refresh cycle', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY_WITH_HOLDING);
+    await flushStockAssetRequests();
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.performancePoints()).toEqual(PERFORMANCE.points);
+    expect(fixture.nativeElement.textContent).not.toContain('No priced history yet');
+
+    // Two RefreshStatus frames = one completed refresh cycle, which is what
+    // reloadOnRefreshCycle reacts to (skip-first, then skip-unchanged).
+    fakeHub.emit('RefreshStatus', {
+      lastRefreshedAt: '2026-08-01T10:00:00Z',
+      nyseOpen: false,
+      sgxOpen: false,
+      nextScheduledRunAt: null,
+      sources: [],
+    });
+    fixture.detectChanges();
+    fakeHub.emit('RefreshStatus', {
+      lastRefreshedAt: '2026-08-01T10:05:00Z',
+      nyseOpen: false,
+      sgxOpen: false,
+      nextScheduledRunAt: null,
+      sources: [],
+    });
+    fixture.detectChanges();
+
+    httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY_WITH_HOLDING);
+    (await waitForRequest(httpMock, API_ROUTES.assetPerformance(1))).flush('boom', {
+      status: 500,
+      statusText: 'Server Error',
+    });
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    // The resource itself is now in its error state, but the chart keeps the
+    // last good series rather than collapsing to its empty branch.
+    expect(fixture.componentInstance.performancePoints()).toEqual(PERFORMANCE.points);
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('Cost vs market value');
+    expect(text).not.toContain('No priced history yet');
+  });
+
   it('shows a "no transactions yet" state when the asset exists but has no holding', async () => {
     fixture.detectChanges();
     httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
