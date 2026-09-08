@@ -39,5 +39,26 @@ export default defineConfig({
     pool: 'threads',
     maxWorkers: 2,
     minWorkers: 1,
+    /**
+     * F9 — raised from Vitest's 5s default, which one test in
+     * `asset-detail.page.spec.ts` ("does not blank the cost-vs-market chart
+     * when the performance reload fails on a refresh cycle") blew on a cold
+     * run: it is a `HttpTestingController`-driven `fixture.detectChanges()`
+     * flow with no `await`/timer of its own, so the 5s it burned was entirely
+     * the D22 thread-pool contention this file already documents above, not
+     * genuine test work. Measured directly with `--reporters=verbose`
+     * (`ng test --include=asset-detail.page.spec.ts`): that same test's own
+     * reported duration was **33149ms** on the cold run that reproduced the
+     * flake, 24s for the whole file warm per the original F9 report. 45s is
+     * chosen deliberately, not rounded up to "safely large" — it gives ~35%
+     * headroom over the one worst measurement taken, anchored to a real
+     * number rather than a guess, and specifically *not* so high that a
+     * genuine hang (an unresolved promise, a `fixture.whenStable()` that
+     * never settles) degrades into a multi-minute wait instead of a failure.
+     * If a future cold run blows past 45s, that is new evidence the
+     * contention got worse, not a signal to raise this further without
+     * re-measuring.
+     */
+    testTimeout: 45_000,
   },
 });
