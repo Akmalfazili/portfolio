@@ -12,6 +12,8 @@ import { MatInputModule } from '@angular/material/input';
 import { API_ROUTES } from '../../core/api/api-routes';
 import { CreateZakatPaymentRequest, ValidationProblemDetails, ZakatPaymentDto } from '../../core/api/models';
 import { decimalPrecisionValidator, positiveNumberValidator } from '../../shared/validators/decimal-precision.validator';
+import { describeValidationError } from '../../shared/forms/describe-error';
+import { applyServerErrors } from '../../shared/forms/server-errors';
 import { fromDateOnlyString, toDateOnlyString, todayDateOnly } from '../../shared/util/local-date';
 
 export interface ZakatPaymentFormDialogData {
@@ -94,25 +96,15 @@ export class ZakatPaymentFormDialog {
     return this.describeError(name, control.errors);
   }
 
+  /** Only the last-resort string is this dialog's own — the codes and their
+   *  precedence are shared (`shared/forms/describe-error.ts`). `paidOn`'s
+   *  fallback names the future-date rule specifically, which is the one thing
+   *  a bare "Invalid date." would leave the reader guessing at. */
   private describeError(name: keyof ZakatPaymentFormControls, errors: ValidationErrors): string {
-    if (errors['server']) {
-      return errors['server'] as string;
-    }
-    if (errors['required']) {
-      return 'Required.';
-    }
-    if (errors['positive']) {
-      return 'Must be greater than zero.';
-    }
-    if (errors['maxDecimals']) {
-      const { max } = errors['maxDecimals'] as { max: number };
-      return `No more than ${max} decimal places.`;
-    }
-    if (errors['maxSignificantDigits']) {
-      const { max } = errors['maxSignificantDigits'] as { max: number };
-      return `Too precise to store reliably — ${max} significant digits maximum.`;
-    }
-    return name === 'paidOn' ? 'Invalid date — it cannot be in the future.' : 'Invalid value.';
+    return describeValidationError(
+      errors,
+      name === 'paidOn' ? 'Invalid date — it cannot be in the future.' : 'Invalid value.',
+    );
   }
 
   submit(): void {
@@ -156,33 +148,18 @@ export class ZakatPaymentFormDialog {
       if (error.status === 400) {
         const problem = error.error as ValidationProblemDetails | undefined;
         if (problem?.errors) {
-          this.applyServerErrors(problem.errors);
+          // Anything the server complained about that has no control of its
+          // own still has to reach the user — as this dialog's banner.
+          const unmapped = applyServerErrors(this.form, SERVER_ERROR_FIELDS, problem.errors);
+          if (unmapped.length > 0) {
+            this.serverError.set(unmapped.join(' '));
+          }
           return;
         }
       }
     }
 
     this.serverError.set('Could not save this payment — check your connection and try again.');
-  }
-
-  private applyServerErrors(errors: Record<string, string[]>): void {
-    const unmapped: string[] = [];
-
-    for (const [field, messages] of Object.entries(errors)) {
-      const message = messages[0] ?? 'Invalid value.';
-      const controlName = SERVER_ERROR_FIELDS.find((name) => name === field);
-      if (controlName) {
-        const control = this.form.controls[controlName];
-        control.setErrors({ ...control.errors, server: message });
-        control.markAsTouched();
-      } else {
-        unmapped.push(message);
-      }
-    }
-
-    if (unmapped.length > 0) {
-      this.serverError.set(unmapped.join(' '));
-    }
   }
 
   close(): void {

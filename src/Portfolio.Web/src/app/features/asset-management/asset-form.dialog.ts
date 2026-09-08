@@ -17,6 +17,8 @@ import {
   UpdateAssetRequest,
   ValidationProblemDetails,
 } from '../../core/api/models';
+import { describeValidationError } from '../../shared/forms/describe-error';
+import { applyServerErrors } from '../../shared/forms/server-errors';
 
 export type AssetFormDialogData = { mode: 'create' } | { mode: 'edit'; asset: AssetDto };
 
@@ -243,28 +245,33 @@ export class AssetFormDialog {
     return this.describeError(name, control.errors);
   }
 
+  /**
+   * Shares the codes and their precedence with the other form dialogs
+   * (`shared/forms/describe-error.ts`), but keeps three pieces of copy that
+   * are genuinely this form's own and must not drift into the shared wording:
+   *
+   * - `pattern` — only `currency` has one, and naming the expected shape is
+   *   far more useful there than a generic "Invalid format."
+   * - `min` — here it is a RANGE bound (month 1-12, day 1-31), not the sign
+   *   check `Validators.min(0)` performs in the transaction and zakat-payment
+   *   dialogs, so "Cannot be negative." would be wrong. `max` needs no
+   *   override: its shared wording is already this range wording, because
+   *   this form is its only caller.
+   * - `fiscalYearEndPair` — zakat.md §3.1's "both set or both null" rule,
+   *   passed as the fallback because it was, and stays, the last check before
+   *   the generic one. No other code it can co-occur with reaches this point:
+   *   the pair validator only fires on an EMPTY control, where min/max are
+   *   silent by definition.
+   */
   private describeError(name: keyof AssetFormControls, errors: ValidationErrors): string {
-    if (errors['server']) {
-      return errors['server'] as string;
-    }
-    if (errors['required']) {
-      return 'Required.';
-    }
-    if (errors['pattern']) {
-      return name === 'currency' ? 'A 3-letter ISO currency code, e.g. USD.' : 'Invalid format.';
-    }
-    if (errors['min']) {
-      const { min } = errors['min'] as { min: number };
-      return `Must be ${min} or greater.`;
-    }
-    if (errors['max']) {
-      const { max } = errors['max'] as { max: number };
-      return `Must be ${max} or less.`;
-    }
-    if (errors['fiscalYearEndPair']) {
-      return 'Set both month and day, or leave both blank.';
-    }
-    return 'Invalid value.';
+    return describeValidationError(
+      errors,
+      errors['fiscalYearEndPair'] ? 'Set both month and day, or leave both blank.' : 'Invalid value.',
+      {
+        pattern: () => (name === 'currency' ? 'A 3-letter ISO currency code, e.g. USD.' : 'Invalid format.'),
+        min: (detail: { min: number }) => `Must be ${detail.min} or greater.`,
+      },
+    );
   }
 
   submit(): void {
@@ -312,36 +319,20 @@ export class AssetFormDialog {
     if (error instanceof HttpErrorResponse && error.status === 400) {
       const problem = error.error as ValidationProblemDetails | undefined;
       if (problem?.errors) {
-        this.applyServerErrors(problem.errors);
+        // Verified live: ValidationProblemDetails keys errors by the camelCase
+        // request-body field name ("providerCoinId", "providerSymbol"), which
+        // matches this form's control names 1:1 — see
+        // shared/forms/server-errors.ts. Anything it could not place still has
+        // to reach the user, as this dialog's banner.
+        const unmapped = applyServerErrors(this.form, SERVER_ERROR_FIELDS, problem.errors);
+        if (unmapped.length > 0) {
+          this.serverError.set(unmapped.join(' '));
+        }
         return;
       }
     }
 
     this.serverError.set('Could not save this asset — check your connection and try again.');
-  }
-
-  private applyServerErrors(errors: Record<string, string[]>): void {
-    const unmapped: string[] = [];
-
-    for (const [field, messages] of Object.entries(errors)) {
-      const message = messages[0] ?? 'Invalid value.';
-      // Verified live: ValidationProblemDetails keys errors by the camelCase
-      // request-body field name ("providerCoinId", "providerSymbol"), which
-      // matches this form's control names 1:1 — same convention as
-      // TransactionFormDialog's SERVER_ERROR_FIELDS lookup.
-      const controlName = SERVER_ERROR_FIELDS.find((name) => name === field);
-      if (controlName) {
-        const control = this.form.controls[controlName];
-        control.setErrors({ ...control.errors, server: message });
-        control.markAsTouched();
-      } else {
-        unmapped.push(message);
-      }
-    }
-
-    if (unmapped.length > 0) {
-      this.serverError.set(unmapped.join(' '));
-    }
   }
 
   close(): void {

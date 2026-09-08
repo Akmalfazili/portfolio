@@ -17,6 +17,8 @@ import {
   nonNegativeNumberValidator,
   positiveNumberValidator,
 } from '../../shared/validators/decimal-precision.validator';
+import { describeValidationError } from '../../shared/forms/describe-error';
+import { applyServerErrors } from '../../shared/forms/server-errors';
 import { fromDateOnlyString, toDateOnlyString, todayDateOnly } from '../../shared/util/local-date';
 
 export interface TransactionFormDialogData {
@@ -153,28 +155,10 @@ export class TransactionFormDialog {
     return this.describeError(name, control.errors);
   }
 
+  /** Only the last-resort string is this dialog's own — the codes and their
+   *  precedence are shared (`shared/forms/describe-error.ts`). */
   private describeError(name: keyof TransactionFormControls, errors: ValidationErrors): string {
-    if (errors['server']) {
-      return errors['server'] as string;
-    }
-    if (errors['required']) {
-      return 'Required.';
-    }
-    if (errors['positive']) {
-      return 'Must be greater than zero.';
-    }
-    if (errors['negative'] || errors['min']) {
-      return 'Cannot be negative.';
-    }
-    if (errors['maxDecimals']) {
-      const { max } = errors['maxDecimals'] as { max: number };
-      return `No more than ${max} decimal places.`;
-    }
-    if (errors['maxSignificantDigits']) {
-      const { max } = errors['maxSignificantDigits'] as { max: number };
-      return `Too precise to store reliably — ${max} significant digits maximum.`;
-    }
-    return name === 'tradeDate' ? 'Invalid date.' : 'Invalid value.';
+    return describeValidationError(errors, name === 'tradeDate' ? 'Invalid date.' : 'Invalid value.');
   }
 
   submit(): void {
@@ -224,33 +208,18 @@ export class TransactionFormDialog {
       if (error.status === 400) {
         const problem = error.error as ValidationProblemDetails | undefined;
         if (problem?.errors) {
-          this.applyServerErrors(problem.errors);
+          // Anything the server complained about that has no control of its
+          // own still has to reach the user — as this dialog's banner.
+          const unmapped = applyServerErrors(this.form, SERVER_ERROR_FIELDS, problem.errors);
+          if (unmapped.length > 0) {
+            this.serverError.set(unmapped.join(' '));
+          }
           return;
         }
       }
     }
 
     this.serverError.set('Could not save this transaction — check your connection and try again.');
-  }
-
-  private applyServerErrors(errors: Record<string, string[]>): void {
-    const unmapped: string[] = [];
-
-    for (const [field, messages] of Object.entries(errors)) {
-      const message = messages[0] ?? 'Invalid value.';
-      const controlName = SERVER_ERROR_FIELDS.find((name) => name === field);
-      if (controlName) {
-        const control = this.form.controls[controlName];
-        control.setErrors({ ...control.errors, server: message });
-        control.markAsTouched();
-      } else {
-        unmapped.push(message);
-      }
-    }
-
-    if (unmapped.length > 0) {
-      this.serverError.set(unmapped.join(' '));
-    }
   }
 
   close(): void {
