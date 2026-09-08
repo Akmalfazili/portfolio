@@ -37,10 +37,10 @@
       <app-stat-tile label="Total cost basis" [value]="s.totalCostBasisUsd | money"></app-stat-tile>
       <app-stat-tile label="Total market value" [value]="s.totalMarketValueUsd | money"></app-stat-tile>
       <app-stat-tile label="Unrealized gain/loss" [value]="s.totalUnrealizedPnlUsd | money">
-        <app-gain-loss [amountUsd]="s.totalUnrealizedPnlUsd" [percent]="s.totalUnrealizedPnlPercent" />
+        <app-gain-loss [amount]="s.totalUnrealizedPnlUsd" [percent]="s.totalUnrealizedPnlPercent" />
       </app-stat-tile>
       <app-stat-tile label="Realized gain/loss" [value]="s.totalRealizedPnlUsd | money">
-        <app-gain-loss [amountUsd]="s.totalRealizedPnlUsd" />
+        <app-gain-loss [amount]="s.totalRealizedPnlUsd" />
       </app-stat-tile>
       @if (isStock()) {
         <app-stat-tile label="Dividends (12m)" [value]="s.totalDividendsTrailing12MonthUsd | money">

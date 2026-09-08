@@ -4,6 +4,7 @@ import { NgxEchartsDirective } from 'ngx-echarts';
 import type { EChartsCoreOption } from 'echarts/core';
 
 import { MoneyPipe } from '../../../shared/pipes/money.pipe';
+import { formatMoney } from '../../../shared/util/format-money';
 import { foldToOther, itemTooltip, readChartTokens, seriesColor } from '../../../shared/charts/chart-theme';
 
 export interface AllocationSlice {
@@ -107,7 +108,7 @@ export class AllocationPieChart {
         ...itemTooltip(tokens),
         formatter: (params: unknown) => {
           const p = params as { name: string; value: number; percent: number };
-          const money = new MoneyPipe().transform(p.value);
+          const money = formatMoney(p.value);
           return `${p.name}: ${money} (${formatPercent(p.percent)})`;
         },
       },

@@ -4,7 +4,7 @@ import type { EChartsCoreOption } from 'echarts/core';
 
 import { PerformancePointDto } from '../../../core/api/models';
 import { MARK, axisTooltip, legend, readChartTokens, seriesColor, valueAxis } from '../../../shared/charts/chart-theme';
-import { MoneyPipe } from '../../../shared/pipes/money.pipe';
+import { formatMoney } from '../../../shared/util/format-money';
 
 export type PerformanceRange = '1M' | '3M' | '1Y' | 'All';
 
@@ -153,13 +153,12 @@ export class CostVsMarketChart {
         ...axisTooltip(tokens),
         formatter: (params: unknown) => {
           const rows = params as { seriesName: string; value: [string, number]; color: string }[];
-          const money = new MoneyPipe();
           const date = rows[0]?.value?.[0] ?? '';
           const lines = rows
             .map(
               (r) =>
                 `<span style="display:inline-block;width:8px;height:2px;background:${r.color};margin-right:4px;vertical-align:middle"></span>` +
-                `${r.seriesName}: <strong>${money.transform(r.value[1])}</strong>`,
+                `${r.seriesName}: <strong>${formatMoney(r.value[1])}</strong>`,
             )
             .join('<br/>');
           return `${date}<br/>${lines}`;
@@ -180,7 +179,7 @@ export class CostVsMarketChart {
         axisLabel: {
           color: tokens.onSurfaceMuted,
           fontSize: 11,
-          formatter: (value: number) => new MoneyPipe().transform(value).replace(/\.00$/, ''),
+          formatter: (value: number) => formatMoney(value).replace(/\.00$/, ''),
         },
       }),
       series: [
@@ -194,7 +193,7 @@ export class CostVsMarketChart {
           ...endMarker(marketColor),
           endLabel: {
             show: true,
-            formatter: (params: unknown) => new MoneyPipe().transform((params as { value: [string, number] }).value[1]),
+            formatter: (params: unknown) => formatMoney((params as { value: [string, number] }).value[1]),
             color: tokens.onSurface,
             fontFamily: 'var(--ui-font-family-sans)',
             fontSize: 11,
@@ -212,7 +211,7 @@ export class CostVsMarketChart {
           ...endMarker(costColor),
           endLabel: {
             show: true,
-            formatter: (params: unknown) => new MoneyPipe().transform((params as { value: [string, number] }).value[1]),
+            formatter: (params: unknown) => formatMoney((params as { value: [string, number] }).value[1]),
             color: tokens.onSurface,
             fontFamily: 'var(--ui-font-family-sans)',
             fontSize: 11,

@@ -45,13 +45,13 @@
           <td class="holdings-table__num">{{ holding.marketValueUsd | money }}</td>
           <td class="holdings-table__num">
             @if (hasPrice(holding)) {
-              <app-gain-loss [amountUsd]="holding.unrealizedPnlUsd" [percent]="holding.unrealizedPnlPercent" />
+              <app-gain-loss [amount]="holding.unrealizedPnlUsd" [percent]="holding.unrealizedPnlPercent" />
             } @else {
               <span class="holdings-table__pending">Awaiting first price</span>
             }
           </td>
           <td class="holdings-table__num">
-            <app-gain-loss [amountUsd]="holding.realizedPnlUsd" />
+            <app-gain-loss [amount]="holding.realizedPnlUsd" />
           </td>
           @if (showDividends()) {
             <td class="holdings-table__num">

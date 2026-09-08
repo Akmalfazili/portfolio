@@ -13,13 +13,13 @@
 
   <app-stat-tile label="Unrealized gain/loss" [value]="hasPrice() ? (holding().unrealizedPnlUsd | money) : '—'">
     @if (hasPrice()) {
-      <app-gain-loss [amountUsd]="holding().unrealizedPnlUsd" [percent]="holding().unrealizedPnlPercent" />
+      <app-gain-loss [amount]="holding().unrealizedPnlUsd" [percent]="holding().unrealizedPnlPercent" />
     } @else {
       <span class="gain-loss-card__pending">Awaiting first price</span>
     }
   </app-stat-tile>
 
   <app-stat-tile label="Realized gain/loss" [value]="holding().realizedPnlUsd | money">
-    <app-gain-loss [amountUsd]="holding().realizedPnlUsd" />
+    <app-gain-loss [amount]="holding().realizedPnlUsd" />
   </app-stat-tile>
 </div>

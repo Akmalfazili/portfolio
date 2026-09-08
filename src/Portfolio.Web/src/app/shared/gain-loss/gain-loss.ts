@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 
-import { MoneyPipe } from '../pipes/money.pipe';
+import { formatMoney } from '../util/format-money';
 
 /**
  * The three arrow glyphs, as Material Design's own 24dp paths.
@@ -39,16 +39,18 @@ const ICON_PATHS = {
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class GainLoss {
-  /** A monetary delta in USD. Pass `null` to show only a percent. */
-  readonly amountUsd = input<number | null>(null);
+  /** A monetary delta, denominated in `currency`. Pass `null` to show only a percent. */
+  readonly amount = input<number | null>(null);
   /** A percentage delta. Pass `null` to show only an amount. */
   readonly percent = input<number | null>(null);
-
-  private readonly moneyPipe = new MoneyPipe();
+  /** The currency `amount` is denominated in — USD everywhere today, but not
+   *  baked into the input's name, so a differently-denominated caller (e.g. an
+   *  SGD figure) can pass it through instead of forking this component. */
+  readonly currency = input<string>('USD');
 
   /** Sign decision prefers the amount when both are present — they always
    *  agree in sign in this app's data, but the amount is the primary figure. */
-  private readonly signValue = computed(() => this.amountUsd() ?? this.percent() ?? 0);
+  private readonly signValue = computed(() => this.amount() ?? this.percent() ?? 0);
 
   readonly isGain = computed(() => this.signValue() > 0);
   readonly isLoss = computed(() => this.signValue() < 0);
@@ -65,11 +67,11 @@ export class GainLoss {
   });
 
   readonly signedAmount = computed(() => {
-    const amount = this.amountUsd();
+    const amount = this.amount();
     if (amount === null) {
       return null;
     }
-    const formatted = this.moneyPipe.transform(amount);
+    const formatted = formatMoney(amount, this.currency());
     // Intl's currency format already prefixes a negative amount with "-";
     // a positive one gets no sign by default, so add "+" explicitly.
     return amount > 0 ? `+${formatted}` : formatted;
