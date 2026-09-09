@@ -1,19 +1,12 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
-import { httpResource } from '@angular/common/http';
 import { Router, RouterLink } from '@angular/router';
 import { MatSortModule, Sort } from '@angular/material/sort';
 import { ScrollingModule } from '@angular/cdk/scrolling';
 
-import {
-  AssetClass,
-  AssetDividendHistoryDto,
-  AssetDto,
-  AssetPerformanceDto,
-  DividendPaymentDto,
-  PortfolioSummaryDto,
-  TransactionDto,
-} from '../../core/api/models';
-import { API_ROUTES } from '../../core/api/api-routes';
+import { AssetClass, DividendPaymentDto, TransactionDto } from '../../core/api/models';
+import { AssetsApi } from '../../core/api/assets.api';
+import { PortfolioApi } from '../../core/api/portfolio.api';
+import { TransactionsApi } from '../../core/api/transactions.api';
 import { PriceStore } from '../../core/prices/price-store';
 import { reloadOnRefreshCycle } from '../../core/prices/reload-on-refresh-cycle';
 import { MoneyPipe } from '../../shared/pipes/money.pipe';
@@ -69,11 +62,12 @@ export class AssetDetailPage {
 
   private readonly router = inject(Router);
   private readonly priceStore = inject(PriceStore);
+  private readonly assetsApi = inject(AssetsApi);
+  private readonly portfolioApi = inject(PortfolioApi);
+  private readonly transactionsApi = inject(TransactionsApi);
 
-  private readonly assetsResource = httpResource<AssetDto[]>(() => API_ROUTES.assets);
-  private readonly summaryResource = httpResource<PortfolioSummaryDto>(() =>
-    API_ROUTES.portfolioSummary(this.assetClass()),
-  );
+  private readonly assetsResource = this.assetsApi.list();
+  private readonly summaryResource = this.portfolioApi.summary(this.assetClass);
 
   /**
    * `resourceState` (`shared/util/resource-state.ts`, built on
@@ -146,9 +140,9 @@ export class AssetDetailPage {
     () => !this.isLoading() && !this.hasError() && !!this.asset() && !this.holding(),
   );
 
-  private readonly performanceResource = httpResource<AssetPerformanceDto | undefined>(() => {
+  private readonly performanceResource = this.assetsApi.performance(() => {
     const asset = this.asset();
-    return asset && this.isStock() ? API_ROUTES.assetPerformance(asset.id) : undefined;
+    return asset && this.isStock() ? asset.id : undefined;
   });
 
   /**
@@ -179,9 +173,9 @@ export class AssetDetailPage {
    * 400s for a crypto asset id, so this is never even requested for one (an
    * `undefined` httpResource url), not called and discarded.
    */
-  private readonly dividendsResource = httpResource<AssetDividendHistoryDto | undefined>(() => {
+  private readonly dividendsResource = this.assetsApi.dividends(() => {
     const asset = this.asset();
-    return asset && this.isStock() ? API_ROUTES.assetDividends(asset.id) : undefined;
+    return asset && this.isStock() ? asset.id : undefined;
   });
 
   /** Same `resourceState` rule as the page-level `isLoading`/`hasError`
@@ -229,9 +223,9 @@ export class AssetDetailPage {
     this.dividendsResource.reload();
   }
 
-  private readonly transactionsResource = httpResource<TransactionDto[] | undefined>(() => {
+  private readonly transactionsResource = this.transactionsApi.byAsset(() => {
     const asset = this.asset();
-    return asset ? API_ROUTES.transactionsByAsset(asset.id) : undefined;
+    return asset ? asset.id : undefined;
   });
 
   /** Latent rather than live today — nothing reloads this resource on the

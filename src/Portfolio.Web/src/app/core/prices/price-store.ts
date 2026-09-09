@@ -1,8 +1,9 @@
-import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { HttpErrorResponse } from '@angular/common/http';
 import { DestroyRef, InjectionToken, Injectable, computed, inject, signal } from '@angular/core';
 import * as signalR from '@microsoft/signalr';
 
-import { API_ROUTES, PRICES_HUB_URL } from '../api/api-routes';
+import { PRICES_HUB_URL } from '../api/api-routes';
+import { PricesApi } from '../api/prices.api';
 import {
   PriceRefreshCycleResult,
   PriceRefreshStatus,
@@ -63,7 +64,7 @@ const HUB_RETRY_INTERVAL_MS = 60_000;
  */
 @Injectable({ providedIn: 'root' })
 export class PriceStore {
-  private readonly http = inject(HttpClient);
+  private readonly pricesApi = inject(PricesApi);
   private readonly destroyRef = inject(DestroyRef);
   private readonly createConnection = inject(PRICES_HUB_CONNECTION_FACTORY);
 
@@ -130,7 +131,7 @@ export class PriceStore {
     this._refreshing.set(true);
     this._lastError.set(null);
 
-    this.http.post<PriceRefreshCycleResult>(API_ROUTES.pricesRefresh, {}).subscribe({
+    this.pricesApi.refresh().subscribe({
       next: (result) => {
         this._refreshing.set(false);
         this._lastRefreshResult.set(result);
@@ -217,7 +218,7 @@ export class PriceStore {
   }
 
   private fetchStatus(): void {
-    this.http.get<PriceRefreshStatus>(API_ROUTES.pricesStatus).subscribe({
+    this.pricesApi.status().subscribe({
       next: (status) => this._status.set(status),
       error: () => {
         // Keep the last known status rather than blanking the indicator on a transient failure.

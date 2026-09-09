@@ -1,5 +1,4 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import { httpResource, HttpClient } from '@angular/common/http';
 import { MatButtonModule } from '@angular/material/button';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatDialog } from '@angular/material/dialog';
@@ -7,8 +6,9 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatSortModule, Sort } from '@angular/material/sort';
 import { ScrollingModule } from '@angular/cdk/scrolling';
 
-import { AssetClass, AssetDto, TransactionDto } from '../../core/api/models';
-import { API_ROUTES } from '../../core/api/api-routes';
+import { AssetClass, TransactionDto } from '../../core/api/models';
+import { AssetsApi } from '../../core/api/assets.api';
+import { TransactionsApi } from '../../core/api/transactions.api';
 import { NotificationService } from '../../core/notifications/notification.service';
 import { MoneyPipe } from '../../shared/pipes/money.pipe';
 import { QuantityPipe } from '../../shared/pipes/quantity.pipe';
@@ -76,11 +76,12 @@ function sortTransactions(transactions: TransactionDto[]): TransactionDto[] {
 })
 export class TransactionsPage {
   private readonly dialog = inject(MatDialog);
-  private readonly http = inject(HttpClient);
+  private readonly transactionsApi = inject(TransactionsApi);
+  private readonly assetsApi = inject(AssetsApi);
   private readonly notifications = inject(NotificationService);
 
-  private readonly transactionsResource = httpResource<TransactionDto[]>(() => API_ROUTES.transactions);
-  private readonly assetsResource = httpResource<AssetDto[]>(() => API_ROUTES.assets);
+  private readonly transactionsResource = this.transactionsApi.list();
+  private readonly assetsResource = this.assetsApi.list();
 
   readonly filter = signal<TransactionFilter>('All');
 
@@ -216,7 +217,7 @@ export class TransactionsPage {
       // Optimistic removal — rolled back by reload() below if the DELETE fails.
       this.transactionsResource.update((list) => (list ?? []).filter((t) => t.id !== transaction.id));
 
-      this.http.delete<void>(API_ROUTES.transaction(transaction.id)).subscribe({
+      this.transactionsApi.delete(transaction.id).subscribe({
         next: () => {
           this.notifications.success(`${transaction.assetSymbol} transaction deleted.`);
         },

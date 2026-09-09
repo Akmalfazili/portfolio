@@ -1,12 +1,12 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
-import { httpResource, HttpClient } from '@angular/common/http';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
 
-import { API_ROUTES } from '../../core/api/api-routes';
-import { AssetDto, ZakatAssetStatus, ZakatCryptoLineDto, ZakatPaymentDto, ZakatReportDto, ZakatStockLineDto } from '../../core/api/models';
+import { ZakatAssetStatus, ZakatCryptoLineDto, ZakatPaymentDto, ZakatStockLineDto } from '../../core/api/models';
+import { AssetsApi } from '../../core/api/assets.api';
+import { ZakatApi } from '../../core/api/zakat.api';
 import { NotificationService } from '../../core/notifications/notification.service';
 import { reloadOnRefreshCycle } from '../../core/prices/reload-on-refresh-cycle';
 import { MoneyPipe } from '../../shared/pipes/money.pipe';
@@ -85,16 +85,17 @@ function sortLinesBySymbol<T extends { symbol: string }>(lines: T[]): T[] {
 })
 export class ZakatPage {
   private readonly dialog = inject(MatDialog);
-  private readonly http = inject(HttpClient);
+  private readonly zakatApi = inject(ZakatApi);
+  private readonly assetsApi = inject(AssetsApi);
   private readonly notifications = inject(NotificationService);
 
-  private readonly reportResource = httpResource<ZakatReportDto>(() => API_ROUTES.zakatReport());
-  private readonly paymentsResource = httpResource<ZakatPaymentDto[]>(() => API_ROUTES.zakatPayments);
+  private readonly reportResource = this.zakatApi.report();
+  private readonly paymentsResource = this.zakatApi.payments();
   // Only needed so a stock row's "Set year end" button can open
   // AssetFormDialog pre-filled with the matching full AssetDto — the zakat
   // report itself deliberately carries just the fields the calculation
   // needs, not the whole asset record.
-  private readonly assetsResource = httpResource<AssetDto[]>(() => API_ROUTES.assets);
+  private readonly assetsResource = this.assetsApi.list();
 
   constructor() {
     // Reload only the computed report on a completed refresh cycle — never
@@ -294,7 +295,7 @@ export class ZakatPage {
       // Optimistic — rolled back via reload() below if the DELETE fails.
       this.paymentsResource.update((list) => (list ?? []).filter((p) => p.id !== payment.id));
 
-      this.http.delete<void>(API_ROUTES.zakatPayment(payment.id)).subscribe({
+      this.zakatApi.deletePayment(payment.id).subscribe({
         next: () => this.notifications.success('Payment record deleted.'),
         error: () => {
           this.notifications.error("Couldn't delete that payment record — it has been restored.");

@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { HttpErrorResponse } from '@angular/common/http';
 import { FormControl, FormGroup, ReactiveFormsModule, ValidationErrors, Validators } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
@@ -10,7 +10,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 
-import { API_ROUTES } from '../../core/api/api-routes';
+import { TransactionsApi } from '../../core/api/transactions.api';
 import { AssetDto, CreateTransactionRequest, TransactionDto, TransactionType, ValidationProblemDetails } from '../../core/api/models';
 import {
   decimalPrecisionValidator,
@@ -92,7 +92,7 @@ const SERVER_ERROR_FIELDS: (keyof TransactionFormControls)[] = [
 export class TransactionFormDialog {
   readonly data = inject<TransactionFormDialogData>(MAT_DIALOG_DATA);
   private readonly dialogRef = inject(MatDialogRef<TransactionFormDialog, TransactionFormDialogResult>);
-  private readonly http = inject(HttpClient);
+  private readonly transactionsApi = inject(TransactionsApi);
 
   readonly today = todayDateOnly();
   readonly submitting = signal(false);
@@ -184,8 +184,8 @@ export class TransactionFormDialog {
 
     const call =
       this.data.mode === 'create'
-        ? this.http.post<TransactionDto>(API_ROUTES.transactions, request)
-        : this.http.put<TransactionDto>(API_ROUTES.transaction(this.data.transaction!.id), request);
+        ? this.transactionsApi.create(request)
+        : this.transactionsApi.update(this.data.transaction!.id, request);
 
     call.subscribe({
       next: (transaction) => {

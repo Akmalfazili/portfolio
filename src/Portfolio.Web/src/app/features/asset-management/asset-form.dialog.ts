@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { HttpErrorResponse } from '@angular/common/http';
 import { AbstractControl, FormControl, FormGroup, ReactiveFormsModule, ValidationErrors, ValidatorFn, Validators } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
@@ -8,15 +8,8 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 
-import { API_ROUTES } from '../../core/api/api-routes';
-import {
-  AssetClass,
-  AssetDto,
-  CreateAssetRequest,
-  QuoteProviderKind,
-  UpdateAssetRequest,
-  ValidationProblemDetails,
-} from '../../core/api/models';
+import { AssetsApi } from '../../core/api/assets.api';
+import { AssetClass, AssetDto, CreateAssetRequest, QuoteProviderKind, ValidationProblemDetails } from '../../core/api/models';
 import { describeValidationError } from '../../shared/forms/describe-error';
 import { applyServerErrors } from '../../shared/forms/server-errors';
 
@@ -108,7 +101,7 @@ function fiscalYearEndPairValidator(counterpartName: keyof AssetFormControls): V
 export class AssetFormDialog {
   readonly data = inject<AssetFormDialogData>(MAT_DIALOG_DATA);
   private readonly dialogRef = inject(MatDialogRef<AssetFormDialog, AssetFormDialogResult>);
-  private readonly http = inject(HttpClient);
+  private readonly assetsApi = inject(AssetsApi);
 
   readonly isEdit = this.data.mode === 'edit';
 
@@ -297,12 +290,7 @@ export class AssetFormDialog {
     this.submitting.set(true);
     this.serverError.set(null);
 
-    const call = this.existing
-      ? this.http.put<AssetDto>(
-          API_ROUTES.asset(this.existing.id),
-          { ...request, isActive: this.existing.isActive } satisfies UpdateAssetRequest,
-        )
-      : this.http.post<AssetDto>(API_ROUTES.assets, request);
+    const call = this.existing ? this.assetsApi.replace(this.existing, request) : this.assetsApi.create(request);
 
     call.subscribe({
       next: (asset) => {

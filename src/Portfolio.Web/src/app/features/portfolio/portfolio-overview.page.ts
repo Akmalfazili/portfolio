@@ -1,11 +1,10 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
-import { httpResource } from '@angular/common/http';
 import { Router } from '@angular/router';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatIconModule } from '@angular/material/icon';
 
-import { AllocationItemDto, AnnualReturnsDto, AssetClass, PortfolioAllocationDto, PortfolioSummaryDto } from '../../core/api/models';
-import { API_ROUTES } from '../../core/api/api-routes';
+import { AllocationItemDto, AssetClass } from '../../core/api/models';
+import { PortfolioApi } from '../../core/api/portfolio.api';
 import { reloadOnRefreshCycle } from '../../core/prices/reload-on-refresh-cycle';
 import { MoneyPipe } from '../../shared/pipes/money.pipe';
 import { StateMessage } from '../../shared/state-message/state-message';
@@ -47,16 +46,11 @@ export class PortfolioOverviewPage {
   readonly assetClass = input.required<AssetClass>();
 
   private readonly router = inject(Router);
+  private readonly portfolioApi = inject(PortfolioApi);
 
-  private readonly summaryResource = httpResource<PortfolioSummaryDto>(() =>
-    API_ROUTES.portfolioSummary(this.assetClass()),
-  );
-  private readonly allocationResource = httpResource<PortfolioAllocationDto>(() =>
-    API_ROUTES.portfolioAllocation(this.assetClass()),
-  );
-  private readonly annualReturnsResource = httpResource<AnnualReturnsDto | undefined>(() =>
-    this.assetClass() === 'Stock' ? API_ROUTES.stockAnnualReturns : undefined,
-  );
+  private readonly summaryResource = this.portfolioApi.summary(this.assetClass);
+  private readonly allocationResource = this.portfolioApi.allocation(this.assetClass);
+  private readonly annualReturnsResource = this.portfolioApi.annualReturns(this.assetClass);
 
   /**
    * `resourceState`'s cached value (`shared/util/resource-state.ts`, built on

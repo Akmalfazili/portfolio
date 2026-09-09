@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
-import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { HttpErrorResponse } from '@angular/common/http';
 import { FormControl, FormGroup, ReactiveFormsModule, ValidationErrors, Validators } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
@@ -9,7 +9,7 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 
-import { API_ROUTES } from '../../core/api/api-routes';
+import { ZakatApi } from '../../core/api/zakat.api';
 import { CreateZakatPaymentRequest, ValidationProblemDetails, ZakatPaymentDto } from '../../core/api/models';
 import { decimalPrecisionValidator, positiveNumberValidator } from '../../shared/validators/decimal-precision.validator';
 import { describeValidationError } from '../../shared/forms/describe-error';
@@ -68,7 +68,7 @@ const SERVER_ERROR_FIELDS: (keyof ZakatPaymentFormControls)[] = ['paidOn', 'amou
 export class ZakatPaymentFormDialog {
   readonly data = inject<ZakatPaymentFormDialogData>(MAT_DIALOG_DATA);
   private readonly dialogRef = inject(MatDialogRef<ZakatPaymentFormDialog, ZakatPaymentFormDialogResult>);
-  private readonly http = inject(HttpClient);
+  private readonly zakatApi = inject(ZakatApi);
 
   readonly today = todayDateOnly();
   readonly submitting = signal(false);
@@ -124,8 +124,8 @@ export class ZakatPaymentFormDialog {
 
     const call =
       this.data.mode === 'create'
-        ? this.http.post<ZakatPaymentDto>(API_ROUTES.zakatPayments, request)
-        : this.http.put<ZakatPaymentDto>(API_ROUTES.zakatPayment(this.data.payment!.id), request);
+        ? this.zakatApi.createPayment(request)
+        : this.zakatApi.updatePayment(this.data.payment!.id, request);
 
     call.subscribe({
       next: (payment) => {

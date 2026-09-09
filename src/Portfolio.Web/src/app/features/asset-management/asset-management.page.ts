@@ -1,12 +1,12 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import { httpResource, HttpClient } from '@angular/common/http';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
 import { MatSortModule, Sort } from '@angular/material/sort';
 
-import { AssetDto, QuoteProviderKind, TransactionDto, UpdateAssetRequest } from '../../core/api/models';
-import { API_ROUTES } from '../../core/api/api-routes';
+import { AssetDto, QuoteProviderKind } from '../../core/api/models';
+import { AssetsApi } from '../../core/api/assets.api';
+import { TransactionsApi } from '../../core/api/transactions.api';
 import { NotificationService } from '../../core/notifications/notification.service';
 import { StateMessage } from '../../shared/state-message/state-message';
 import { ConfirmDialog, ConfirmDialogData } from '../../shared/confirm-dialog/confirm-dialog';
@@ -120,10 +120,11 @@ function unpricedState(asset: AssetDto, now: number): UnpricedState | null {
 })
 export class AssetManagementPage {
   private readonly dialog = inject(MatDialog);
-  private readonly http = inject(HttpClient);
+  private readonly assetsApi = inject(AssetsApi);
+  private readonly transactionsApi = inject(TransactionsApi);
   private readonly notifications = inject(NotificationService);
 
-  private readonly assetsResource = httpResource<AssetDto[]>(() => API_ROUTES.assets);
+  private readonly assetsResource = this.assetsApi.list();
 
   readonly isLoading = this.assetsResource.isLoading;
   readonly hasError = computed(() => this.assetsResource.error() != null);
@@ -226,21 +227,7 @@ export class AssetManagementPage {
       // Optimistic — rolled back below if the PUT fails.
       this.assetsResource.update((list) => (list ?? []).map((a) => (a.id === asset.id ? next : a)));
 
-      const request: UpdateAssetRequest = {
-        symbol: asset.symbol,
-        name: asset.name,
-        assetClass: asset.assetClass,
-        exchange: asset.exchange,
-        currency: asset.currency,
-        quoteProviderKind: asset.quoteProviderKind,
-        providerSymbol: asset.providerSymbol,
-        providerCoinId: asset.providerCoinId,
-        fiscalYearEndMonth: asset.fiscalYearEndMonth,
-        fiscalYearEndDay: asset.fiscalYearEndDay,
-        isActive: activating,
-      };
-
-      this.http.put<AssetDto>(API_ROUTES.asset(asset.id), request).subscribe({
+      this.assetsApi.replace(asset, { isActive: activating }).subscribe({
         next: () => {
           this.notifications.success(`${asset.symbol} ${activating ? 'reactivated' : 'deactivated'}.`);
         },
@@ -269,7 +256,7 @@ export class AssetManagementPage {
    * only the PUT/DELETE below are outcomes worth a notification.
    */
   deleteAsset(asset: AssetDto): void {
-    this.http.get<TransactionDto[]>(API_ROUTES.transactionsByAsset(asset.id)).subscribe({
+    this.transactionsApi.byAssetOnce(asset.id).subscribe({
       next: (transactions) => this.confirmDelete(asset, transactions.length),
       error: () => this.confirmDelete(asset, null),
     });
@@ -299,7 +286,7 @@ export class AssetManagementPage {
 
       this.deletingId.set(asset.id);
 
-      this.http.delete<void>(API_ROUTES.asset(asset.id)).subscribe({
+      this.assetsApi.delete(asset.id).subscribe({
         next: () => {
           this.deletingId.set(null);
           this.assetsResource.update((list) => (list ?? []).filter((a) => a.id !== asset.id));
