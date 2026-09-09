@@ -251,6 +251,49 @@ public sealed class QuoteStalenessTests : IDisposable
     }
 
     /// <summary>
+    /// D48 — the tie the suite missed. Twelve Data's <c>quote.timestamp</c> is the daily bar's
+    /// OPEN, not the sample instant, so a US quote polled anytime during the session — and left
+    /// stale once <see cref="PriceRefreshService"/> stops polling at the close — carries the
+    /// SAME date as that evening's backfilled <see cref="PriceHistory"/> row. The two are not
+    /// the same kind of number: PriceHistory is the official close, the quote is an arbitrary
+    /// mid-session snapshot. On a date collision PriceHistory must win, or the app reports a
+    /// mid-session price as tonight's close on every US symbol, every night.
+    /// </summary>
+    [Fact]
+    public async Task StaleQuoteSameDateAsTheStoredClose_CloseWins()
+    {
+        var amzn = AddAsset(1, "AMZN", AssetClass.Stock, "USD", QuoteProviderKind.TwelveData);
+        AddBuy(amzn.Id, new DateOnly(2026, 2, 2), 10m, 100m, "USD");
+
+        // Twelve Data stamps quote.timestamp as the daily bar's OPEN — 13:30 UTC = 09:30 ET,
+        // the opening bell — carrying a mid-session price sampled sometime that day.
+        var barOpenTimestamp = new DateTimeOffset(2026, 2, 17, 13, 30, 0, TimeSpan.Zero);
+        _db.PriceQuotes.Add(new PriceQuote
+        {
+            AssetId = amzn.Id, Price = 257.21m, Currency = "USD", AsOf = barOpenTimestamp,
+        });
+
+        // The evening backfill has already landed the official close for that same date.
+        _db.PriceHistories.Add(new PriceHistory
+        {
+            AssetId = amzn.Id, Date = new DateOnly(2026, 2, 17), Close = 256.97m, Currency = "USD",
+        });
+        await _db.SaveChangesAsync();
+
+        // Well after the close, the same evening.
+        var afterClose = new DateTimeOffset(2026, 2, 18, 2, 0, 0, TimeSpan.Zero);
+        var summary = await SutAt(afterClose).GetSummaryAsync(AssetClass.Stock, CancellationToken.None);
+
+        var holding = summary.Holdings.Should().ContainSingle().Subject;
+        holding.PriceSource.Should().Be(PriceSource.Close);
+        holding.CurrentPriceUsd.Should().Be(256.97m, "the official close must outrank a same-date mid-session quote");
+        holding.MarketValueUsd.Should().Be(2569.7m);
+        holding.PriceAsOf.Should().Be(
+            new DateTimeOffset(2026, 2, 17, 0, 0, 0, TimeSpan.Zero),
+            "PriceAsOf must carry the close's own date, never the quote's bar-open timestamp");
+    }
+
+    /// <summary>
     /// The mirror case: when <c>PriceHistory</c> genuinely is newer than the stale quote, it wins.
     /// Guards against "prefer the quote" being hardcoded rather than actually comparing dates.
     /// </summary>

@@ -164,11 +164,21 @@ public sealed class PortfolioSummaryService(
             // last backfilled close (backfill runs daily; quotes go stale within hours). Treat it
             // as another close candidate rather than discarding it, and let the newer of the two
             // win, so falling back never shows an older number than the one already on hand.
+            //
+            // D48: strictly newer, not "newer or equal". A PriceHistory row and a stale PriceQuote
+            // stamped the same date are NOT the same kind of number — PriceHistory is the official
+            // session close from /time_series, while a stale quote is an arbitrary mid-session
+            // snapshot that happened to be the last one polled before the market-hours gate in
+            // PriceRefreshService.RunCycleAsync stopped refreshing it. Twelve Data's quote.timestamp
+            // is the daily bar's OPEN, not the sample instant, so every US quote's date collides
+            // with that same day's close once the evening backfill lands. A same-date tie must go
+            // to PriceHistory, or the app reports the opening-bell snapshot as tonight's close on
+            // every US symbol, every single night.
             var staleQuoteDate = !quoteIsLive && quote is not null
                 ? DateOnly.FromDateTime(quote.AsOf.UtcDateTime)
                 : (DateOnly?)null;
             var useStaleQuoteAsClose = staleQuoteDate is { } sqd
-                && (lastClose is null || sqd >= lastClose.Date);
+                && (lastClose is null || sqd > lastClose.Date);
 
             if (quoteIsLive)
             {
