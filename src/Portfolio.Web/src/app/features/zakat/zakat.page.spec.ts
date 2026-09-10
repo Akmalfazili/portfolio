@@ -123,7 +123,11 @@ describe('ZakatPage', () => {
 
   afterEach(() => httpMock.verify());
 
-  function flush(r: ZakatReportDto, payments: ZakatPaymentDto[] = [], assets: AssetDto[] = [ASSET]) {
+  function flush(
+    r: ZakatReportDto,
+    payments: ZakatPaymentDto[] = [],
+    assets: AssetDto[] = [ASSET],
+  ) {
     httpMock.expectOne(API_ROUTES.zakatReport()).flush(r);
     httpMock.expectOne(API_ROUTES.zakatPayments).flush(payments);
     httpMock.expectOne(API_ROUTES.assets).flush(assets);
@@ -137,7 +141,9 @@ describe('ZakatPage', () => {
 
   it('shows the error state and can retry', async () => {
     fixture.detectChanges();
-    httpMock.expectOne(API_ROUTES.zakatReport()).flush('boom', { status: 500, statusText: 'Server Error' });
+    httpMock
+      .expectOne(API_ROUTES.zakatReport())
+      .flush('boom', { status: 500, statusText: 'Server Error' });
     httpMock.expectOne(API_ROUTES.zakatPayments).flush([]);
     httpMock.expectOne(API_ROUTES.assets).flush([ASSET]);
     await fixture.whenStable();
@@ -157,7 +163,14 @@ describe('ZakatPage', () => {
     flush(
       report({
         stocks: [
-          stockLine({ assetId: 1, symbol: 'AAPL', status: 'NotHeldAtFiscalYearEnd', fiscalYearEndDate: '2025-09-27', quantityHeld: 0, valueSgd: 0 }),
+          stockLine({
+            assetId: 1,
+            symbol: 'AAPL',
+            status: 'NotHeldAtFiscalYearEnd',
+            fiscalYearEndDate: '2025-09-27',
+            quantityHeld: 0,
+            valueSgd: 0,
+          }),
           stockLine({ assetId: 2, symbol: 'MSFT', status: 'FiscalYearEndNotConfigured' }),
         ],
         excludedAssetCount: 1,
@@ -177,7 +190,10 @@ describe('ZakatPage', () => {
     fixture.detectChanges();
     flush(
       report({
-        stocks: [stockLine({ assetId: 1, symbol: 'AAPL' }), stockLine({ assetId: 2, symbol: 'MSFT' })],
+        stocks: [
+          stockLine({ assetId: 1, symbol: 'AAPL' }),
+          stockLine({ assetId: 2, symbol: 'MSFT' }),
+        ],
         excludedAssetCount: 2,
       }),
     );
@@ -194,7 +210,20 @@ describe('ZakatPage', () => {
     flush(
       report({
         stocks: [
-          stockLine({ assetId: 1, symbol: 'AAPL', status: 'Included', fiscalYearEndDate: '2025-09-27', quantityHeld: 10, closeNative: 200, closeDateUsed: '2025-09-26', closeDateExact: false, fxDateUsed: '2025-09-26', fxCarriedBack: false, fxRateUsed: 1.35, valueSgd: 2600 }),
+          stockLine({
+            assetId: 1,
+            symbol: 'AAPL',
+            status: 'Included',
+            fiscalYearEndDate: '2025-09-27',
+            quantityHeld: 10,
+            closeNative: 200,
+            closeDateUsed: '2025-09-26',
+            closeDateExact: false,
+            fxDateUsed: '2025-09-26',
+            fxCarriedBack: false,
+            fxRateUsed: 1.35,
+            valueSgd: 2600,
+          }),
           stockLine({ assetId: 2, symbol: 'MSFT', status: 'FiscalYearEndNotConfigured' }),
         ],
         stockZakatableSgd: 2600,
@@ -319,14 +348,23 @@ describe('ZakatPage', () => {
     fixture.detectChanges();
     flush(
       report({
-        stocks: [stockLine({ assetId: 2, symbol: 'MSFT', currency: 'USD', status: 'FiscalYearEndNotConfigured' })],
+        stocks: [
+          stockLine({
+            assetId: 2,
+            symbol: 'MSFT',
+            currency: 'USD',
+            status: 'FiscalYearEndNotConfigured',
+          }),
+        ],
         excludedAssetCount: 1,
       }),
     );
     await fixture.whenStable();
     fixture.detectChanges();
 
-    const cells = Array.from(fixture.nativeElement.querySelectorAll('.zakat__panel table')[0].querySelectorAll('tbody td')) as HTMLElement[];
+    const cells = Array.from(
+      fixture.nativeElement.querySelectorAll('.zakat__panel table')[0].querySelectorAll('tbody td'),
+    ) as HTMLElement[];
     // FX is the 6th column (Symbol, Status, Year end, Qty held, Close, FX, Value, Actions).
     const fxCell = cells[5];
     expect(fxCell.textContent?.trim()).toBe('—');
@@ -342,14 +380,20 @@ describe('ZakatPage', () => {
     flush(
       report({
         crypto: [
-          cryptoLine({ fxSource: 'Spot', fxAsOf: '2026-09-05T11:31:00+00:00', fxDateUsed: '2026-09-05' }),
+          cryptoLine({
+            fxSource: 'Spot',
+            fxAsOf: '2026-09-05T11:31:00+00:00',
+            fxDateUsed: '2026-09-05',
+          }),
         ],
       }),
     );
     await fixture.whenStable();
     fixture.detectChanges();
 
-    const header = fixture.nativeElement.querySelector('.zakat__panel:nth-of-type(2) thead th:nth-child(5)');
+    const header = fixture.nativeElement.querySelector(
+      '.zakat__panel:nth-of-type(2) thead th:nth-child(5)',
+    );
     expect(header.textContent).toContain('FX (USD/SGD)');
     expect(header.textContent).toContain('as of 5 Sep 2026, 7:31 pm SGT');
     expect(header.querySelector('.zakat__footnote--warning')).toBeNull();
@@ -371,7 +415,9 @@ describe('ZakatPage', () => {
     await fixture.whenStable();
     fixture.detectChanges();
 
-    const header = fixture.nativeElement.querySelector('.zakat__panel:nth-of-type(2) thead th:nth-child(5)');
+    const header = fixture.nativeElement.querySelector(
+      '.zakat__panel:nth-of-type(2) thead th:nth-child(5)',
+    );
     expect(header.textContent).toContain('USD/SGD close');
     expect(header.textContent).toContain('4 Sep 2026');
     expect(header.querySelector('.zakat__footnote--warning')).toBeNull();
@@ -393,7 +439,9 @@ describe('ZakatPage', () => {
     await fixture.whenStable();
     fixture.detectChanges();
 
-    const header = fixture.nativeElement.querySelector('.zakat__panel:nth-of-type(2) thead th:nth-child(5)');
+    const header = fixture.nativeElement.querySelector(
+      '.zakat__panel:nth-of-type(2) thead th:nth-child(5)',
+    );
     expect(header.textContent).toContain('4 Sep 2026');
     expect(header.textContent?.toLowerCase()).toContain('unavailable');
     expect(header.querySelector('.zakat__footnote--warning')).not.toBeNull();
@@ -401,11 +449,29 @@ describe('ZakatPage', () => {
 
   it('renders the bare FX header with no sub-label when there are no included crypto lines', async () => {
     fixture.detectChanges();
-    flush(report({ crypto: [cryptoLine({ status: 'NoQuote', priceUsd: null, priceSource: 'Live', fxDateUsed: null, fxCarriedBack: null, fxRateUsed: null, fxAsOf: null, fxSource: null, valueSgd: null })] }));
+    flush(
+      report({
+        crypto: [
+          cryptoLine({
+            status: 'NoQuote',
+            priceUsd: null,
+            priceSource: 'Live',
+            fxDateUsed: null,
+            fxCarriedBack: null,
+            fxRateUsed: null,
+            fxAsOf: null,
+            fxSource: null,
+            valueSgd: null,
+          }),
+        ],
+      }),
+    );
     await fixture.whenStable();
     fixture.detectChanges();
 
-    const header = fixture.nativeElement.querySelector('.zakat__panel:nth-of-type(2) thead th:nth-child(5)');
+    const header = fixture.nativeElement.querySelector(
+      '.zakat__panel:nth-of-type(2) thead th:nth-child(5)',
+    );
     expect(header.textContent?.trim()).toBe('FX (USD/SGD)');
   });
 
@@ -414,15 +480,28 @@ describe('ZakatPage', () => {
     flush(
       report({
         crypto: [
-          cryptoLine({ assetId: 4, symbol: 'ETH', fxSource: 'Spot', fxAsOf: '2026-09-05T11:31:00+00:00' }),
-          cryptoLine({ assetId: 5, symbol: 'AMP', fxSource: 'DailyCloseSpotUnavailable', fxAsOf: null, fxDateUsed: '2026-09-04' }),
+          cryptoLine({
+            assetId: 4,
+            symbol: 'ETH',
+            fxSource: 'Spot',
+            fxAsOf: '2026-09-05T11:31:00+00:00',
+          }),
+          cryptoLine({
+            assetId: 5,
+            symbol: 'AMP',
+            fxSource: 'DailyCloseSpotUnavailable',
+            fxAsOf: null,
+            fxDateUsed: '2026-09-04',
+          }),
         ],
       }),
     );
     await fixture.whenStable();
     fixture.detectChanges();
 
-    const header = fixture.nativeElement.querySelector('.zakat__panel:nth-of-type(2) thead th:nth-child(5)');
+    const header = fixture.nativeElement.querySelector(
+      '.zakat__panel:nth-of-type(2) thead th:nth-child(5)',
+    );
     expect(header.textContent?.trim()).toBe('FX (USD/SGD)');
   });
 
@@ -450,7 +529,13 @@ describe('ZakatPage', () => {
 
   it('labels the crypto subtotal as a convention, not a MUIS ruling', async () => {
     fixture.detectChanges();
-    flush(report({ crypto: [cryptoLine()], cryptoZakatableSgd: 1548.2966, totalZakatableSgd: 1548.2966 }));
+    flush(
+      report({
+        crypto: [cryptoLine()],
+        cryptoZakatableSgd: 1548.2966,
+        totalZakatableSgd: 1548.2966,
+      }),
+    );
     await fixture.whenStable();
     fixture.detectChanges();
 
@@ -463,7 +548,11 @@ describe('ZakatPage', () => {
 
   it('opens AssetFormDialog in edit mode for the matching asset, and reloads the report on save', async () => {
     fixture.detectChanges();
-    flush(report({ stocks: [stockLine({ assetId: 1, symbol: 'AAPL' })], excludedAssetCount: 1 }), [], [ASSET]);
+    flush(
+      report({ stocks: [stockLine({ assetId: 1, symbol: 'AAPL' })], excludedAssetCount: 1 }),
+      [],
+      [ASSET],
+    );
     await fixture.whenStable();
     fixture.detectChanges();
 
@@ -471,7 +560,9 @@ describe('ZakatPage', () => {
     const updated: AssetDto = { ...ASSET, fiscalYearEndMonth: 9, fiscalYearEndDay: 27 };
     const open = vi
       .spyOn(dialog, 'open')
-      .mockReturnValue({ afterClosed: () => of({ kind: 'saved', asset: updated }) } as ReturnType<MatDialog['open']>);
+      .mockReturnValue({ afterClosed: () => of({ kind: 'saved', asset: updated }) } as ReturnType<
+        MatDialog['open']
+      >);
 
     fixture.componentInstance.openFiscalYearEndDialog(1);
     fixture.detectChanges();
@@ -480,14 +571,18 @@ describe('ZakatPage', () => {
     expect(notifySuccess).toHaveBeenCalledWith('AAPL updated.');
 
     // Reloaded because the field the dialog just changed drives the report.
-    httpMock.expectOne(API_ROUTES.zakatReport()).flush(report({ stocks: [stockLine({ assetId: 1, symbol: 'AAPL', status: 'Included' })] }));
+    httpMock
+      .expectOne(API_ROUTES.zakatReport())
+      .flush(report({ stocks: [stockLine({ assetId: 1, symbol: 'AAPL', status: 'Included' })] }));
   });
 
   // --- Part 2 — payment history is independent of the report's own state --
 
   it('renders the payment history even when the report failed to load', async () => {
     fixture.detectChanges();
-    httpMock.expectOne(API_ROUTES.zakatReport()).flush('boom', { status: 500, statusText: 'Server Error' });
+    httpMock
+      .expectOne(API_ROUTES.zakatReport())
+      .flush('boom', { status: 500, statusText: 'Server Error' });
     httpMock.expectOne(API_ROUTES.zakatPayments).flush([PAYMENT]);
     httpMock.expectOne(API_ROUTES.assets).flush([ASSET]);
     await fixture.whenStable();
@@ -522,7 +617,9 @@ describe('ZakatPage', () => {
     fixture.componentInstance.openCreatePaymentDialog();
     fixture.detectChanges();
 
-    const rows = Array.from(fixture.nativeElement.querySelectorAll('.zakat__recorded tbody tr')) as HTMLElement[];
+    const rows = Array.from(
+      fixture.nativeElement.querySelectorAll('.zakat__recorded tbody tr'),
+    ) as HTMLElement[];
     expect(rows[0].textContent).toContain('2026-08-01');
     expect(rows[1].textContent).toContain('2026-03-01');
     expect(notifySuccess).toHaveBeenCalledWith('Zakat payment recorded.');
@@ -535,12 +632,16 @@ describe('ZakatPage', () => {
     fixture.detectChanges();
 
     const dialog = TestBed.inject(MatDialog);
-    vi.spyOn(dialog, 'open').mockReturnValue({ afterClosed: () => of(true) } as ReturnType<MatDialog['open']>);
+    vi.spyOn(dialog, 'open').mockReturnValue({ afterClosed: () => of(true) } as ReturnType<
+      MatDialog['open']
+    >);
 
     fixture.componentInstance.deletePayment(PAYMENT);
     fixture.detectChanges();
 
-    httpMock.expectOne(API_ROUTES.zakatPayment(PAYMENT.id)).flush(null, { status: 204, statusText: 'No Content' });
+    httpMock
+      .expectOne(API_ROUTES.zakatPayment(PAYMENT.id))
+      .flush(null, { status: 204, statusText: 'No Content' });
     fixture.detectChanges();
 
     expect(fixture.nativeElement.textContent).toContain('No payments recorded yet');
@@ -635,7 +736,9 @@ describe('ZakatPage', () => {
     expect(midReloadText).not.toContain('Calculating zakat');
     expect(midReloadText).toContain('AAPL');
 
-    httpMock.expectOne(API_ROUTES.zakatReport()).flush('boom', { status: 500, statusText: 'Server Error' });
+    httpMock
+      .expectOne(API_ROUTES.zakatReport())
+      .flush('boom', { status: 500, statusText: 'Server Error' });
     await fixture.whenStable();
     fixture.detectChanges();
 

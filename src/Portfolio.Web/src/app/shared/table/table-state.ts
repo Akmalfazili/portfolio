@@ -108,7 +108,9 @@ export function compareSortValues(a: SortValue, b: SortValue, direction: SortDir
   return direction === 'desc' ? -cmp : cmp;
 }
 
-export function createTableState<T, K extends string>(config: TableStateConfig<T, K>): TableState<T, K> {
+export function createTableState<T, K extends string>(
+  config: TableStateConfig<T, K>,
+): TableState<T, K> {
   const pageSizeOptions = config.pageSizeOptions ?? DEFAULT_PAGE_SIZE_OPTIONS;
 
   const sort = signal<TableSort<K>>(config.defaultSort);

@@ -16,7 +16,11 @@ describe('ConfirmDialog', () => {
         provideNoopAnimations(),
         {
           provide: MAT_DIALOG_DATA,
-          useValue: { title: 'Delete transaction?', message: 'This cannot be undone.', destructive },
+          useValue: {
+            title: 'Delete transaction?',
+            message: 'This cannot be undone.',
+            destructive,
+          },
         },
         { provide: MatDialogRef, useValue: dialogRef },
       ],

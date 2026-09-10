@@ -30,7 +30,9 @@ describe('AssetFormDialog', () => {
   let httpMock: HttpTestingController;
   let dialogRef: { close: ReturnType<typeof vi.fn> };
 
-  function setup(data: AssetFormDialogData = { mode: 'create' }): ComponentFixture<AssetFormDialog> {
+  function setup(
+    data: AssetFormDialogData = { mode: 'create' },
+  ): ComponentFixture<AssetFormDialog> {
     dialogRef = { close: vi.fn() };
     TestBed.configureTestingModule({
       imports: [AssetFormDialog],
@@ -185,7 +187,11 @@ describe('AssetFormDialog', () => {
 
     const req = httpMock.expectOne(API_ROUTES.assets);
     req.flush(
-      { errors: { providerSymbol: ['ProviderSymbol is required when QuoteProviderKind is TwelveData.'] } },
+      {
+        errors: {
+          providerSymbol: ['ProviderSymbol is required when QuoteProviderKind is TwelveData.'],
+        },
+      },
       { status: 400, statusText: 'Bad Request' },
     );
     fixture.detectChanges();
@@ -303,7 +309,14 @@ describe('AssetFormDialog', () => {
     });
 
     it('locks the fiscal year end fields for an existing Crypto asset', () => {
-      const cryptoAsset: AssetDto = { ...EXISTING, assetClass: 'Crypto', quoteProviderKind: 'CoinGecko', currency: 'USD', providerSymbol: null, providerCoinId: 'ethereum' };
+      const cryptoAsset: AssetDto = {
+        ...EXISTING,
+        assetClass: 'Crypto',
+        quoteProviderKind: 'CoinGecko',
+        currency: 'USD',
+        providerSymbol: null,
+        providerCoinId: 'ethereum',
+      };
       const fixture = setup({ mode: 'edit', asset: cryptoAsset });
       const { componentInstance } = fixture;
 

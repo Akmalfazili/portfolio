@@ -113,7 +113,13 @@ describe('TransactionFormDialog', () => {
     // PUT with isActive: false, and GET /api/assets keeps returning the
     // deactivated row (confirmed live). Nothing about this dialog's own data
     // shape changes when that happens, so the exclusion has to happen here.
-    const deactivatedMsft = { ...AAPL, id: 2, symbol: 'MSFT', name: 'Microsoft Corporation', isActive: false };
+    const deactivatedMsft = {
+      ...AAPL,
+      id: 2,
+      symbol: 'MSFT',
+      name: 'Microsoft Corporation',
+      isActive: false,
+    };
     const fixture = setup({ mode: 'create', assets: [ANVL, AAPL, deactivatedMsft] });
 
     const options = fixture.componentInstance.assetOptions();

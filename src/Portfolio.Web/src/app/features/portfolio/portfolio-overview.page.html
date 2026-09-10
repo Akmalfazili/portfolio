@@ -35,7 +35,10 @@
 
     <div class="overview__tiles" [class.overview__tiles--five]="isStock()">
       <app-stat-tile label="Total cost basis" [value]="s.totalCostBasisUsd | money"></app-stat-tile>
-      <app-stat-tile label="Total market value" [value]="s.totalMarketValueUsd | money"></app-stat-tile>
+      <app-stat-tile
+        label="Total market value"
+        [value]="s.totalMarketValueUsd | money"
+      ></app-stat-tile>
       <app-stat-tile label="Unrealized gain/loss" [value]="s.totalUnrealizedPnlUsd | money">
         <app-gain-loss [amount]="s.totalUnrealizedPnlUsd" [percent]="s.totalUnrealizedPnlPercent" />
       </app-stat-tile>
@@ -44,7 +47,9 @@
       </app-stat-tile>
       @if (isStock()) {
         <app-stat-tile label="Dividends (12m)" [value]="s.totalDividendsTrailing12MonthUsd | money">
-          <span class="overview__dividends-alltime">All-time {{ s.totalDividendsAllTimeUsd | money }}</span>
+          <span class="overview__dividends-alltime"
+            >All-time {{ s.totalDividendsAllTimeUsd | money }}</span
+          >
         </app-stat-tile>
       }
     </div>
@@ -72,7 +77,10 @@
           (action)="retryAllocation()"
         />
       } @else {
-        <app-allocation-pie-chart [slices]="allocationSlices()" [valueLabel]="allocationValueLabel()" />
+        <app-allocation-pie-chart
+          [slices]="allocationSlices()"
+          [valueLabel]="allocationValueLabel()"
+        />
       }
     </section>
 
@@ -97,7 +105,11 @@
 
     <section class="overview__panel">
       <h2 class="overview__panel-title">Holdings</h2>
-      <app-holdings-table [holdings]="holdings()" [basePath]="basePath()" [showDividends]="isStock()" />
+      <app-holdings-table
+        [holdings]="holdings()"
+        [basePath]="basePath()"
+        [showDividends]="isStock()"
+      />
     </section>
   }
 </section>

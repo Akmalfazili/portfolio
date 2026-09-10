@@ -3,7 +3,12 @@ import { HttpClient, HttpResourceRef, httpResource } from '@angular/common/http'
 import { Observable } from 'rxjs';
 
 import { API_ROUTES } from './api-routes';
-import { CreateZakatPaymentRequest, UpdateZakatPaymentRequest, ZakatPaymentDto, ZakatReportDto } from './models';
+import {
+  CreateZakatPaymentRequest,
+  UpdateZakatPaymentRequest,
+  ZakatPaymentDto,
+  ZakatReportDto,
+} from './models';
 
 /**
  * Thin data-access layer for `/api/zakat*` — same shape as `AssetsApi`, see

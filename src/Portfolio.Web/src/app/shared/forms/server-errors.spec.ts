@@ -35,7 +35,10 @@ describe('applyServerErrors', () => {
 
     applyServerErrors(form, ALLOWED, { quantity: ['Must be greater than zero.'] });
 
-    expect(form.controls.quantity.errors).toEqual({ positive: true, server: 'Must be greater than zero.' });
+    expect(form.controls.quantity.errors).toEqual({
+      positive: true,
+      server: 'Must be greater than zero.',
+    });
   });
 
   it('takes only the FIRST message for a field, as the field can show one line', () => {

@@ -1,7 +1,10 @@
 import { RouterStateSnapshot, ActivatedRouteSnapshot } from '@angular/router';
 import { resolveAssetClass } from './asset-class';
 
-function routeWithData(data: Record<string, unknown>, firstChild: ActivatedRouteSnapshot | null = null) {
+function routeWithData(
+  data: Record<string, unknown>,
+  firstChild: ActivatedRouteSnapshot | null = null,
+) {
   return { data, firstChild } as unknown as ActivatedRouteSnapshot;
 }
 

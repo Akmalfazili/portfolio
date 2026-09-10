@@ -2,7 +2,11 @@ import { TestBed } from '@angular/core/testing';
 import { MatSnackBar, MatSnackBarConfig } from '@angular/material/snack-bar';
 import { provideNoopAnimations } from '@angular/platform-browser/animations';
 
-import { NotificationService, SUCCESS_INFO_DURATION_MS, ERROR_DURATION_MS } from './notification.service';
+import {
+  NotificationService,
+  SUCCESS_INFO_DURATION_MS,
+  ERROR_DURATION_MS,
+} from './notification.service';
 import { AppSnackbar, AppSnackbarData } from '../../shared/snackbar/app-snackbar';
 
 describe('NotificationService', () => {
@@ -39,7 +43,11 @@ describe('NotificationService', () => {
     service.success('AAPL is now tracked.');
 
     const [, config] = lastCall();
-    expect(config.data).toEqual({ tone: 'success', message: 'AAPL is now tracked.', dismissLabel: undefined });
+    expect(config.data).toEqual({
+      tone: 'success',
+      message: 'AAPL is now tracked.',
+      dismissLabel: undefined,
+    });
     expect(config.duration).toBe(SUCCESS_INFO_DURATION_MS);
     expect(config.politeness).toBe('polite');
     expect(config.panelClass).toEqual(['app-snackbar-panel', 'app-snackbar-panel--success']);

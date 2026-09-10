@@ -5,7 +5,12 @@ import type { EChartsCoreOption } from 'echarts/core';
 
 import { MoneyPipe } from '../../../shared/pipes/money.pipe';
 import { formatMoney } from '../../../shared/util/format-money';
-import { foldToOther, itemTooltip, readChartTokens, seriesColor } from '../../../shared/charts/chart-theme';
+import {
+  foldToOther,
+  itemTooltip,
+  readChartTokens,
+  seriesColor,
+} from '../../../shared/charts/chart-theme';
 
 export interface AllocationSlice {
   assetId: number;
@@ -87,7 +92,10 @@ export class AllocationPieChart {
 
     return folded.map((slice) => ({
       ...slice,
-      color: slice.assetId === -1 ? tokens.onSurfaceMuted : (colorByAssetId.get(slice.assetId) ?? tokens.onSurfaceMuted),
+      color:
+        slice.assetId === -1
+          ? tokens.onSurfaceMuted
+          : (colorByAssetId.get(slice.assetId) ?? tokens.onSurfaceMuted),
     }));
   });
 
@@ -101,7 +109,8 @@ export class AllocationPieChart {
 
     // Values as handed to the pie series (rounded to money precision).
     const roundedValues = slots.map((s) => Math.round(s.value * 100) / 100);
-    const formatPercent = (percent: number) => (percent > 0 && percent < 0.1 ? '<0.1%' : `${percent.toFixed(1)}%`);
+    const formatPercent = (percent: number) =>
+      percent > 0 && percent < 0.1 ? '<0.1%' : `${percent.toFixed(1)}%`;
 
     return {
       tooltip: {

@@ -69,7 +69,9 @@ describe('describeRefreshOutcome (D5 — why nothing moved)', () => {
       outcome: 'Completed',
       cooldownSecondsRemaining: null,
       totalSymbolsRefreshed: 3,
-      sources: [{ source: 'CoinGecko', attempted: true, success: true, symbolsRefreshed: 3, error: null }],
+      sources: [
+        { source: 'CoinGecko', attempted: true, success: true, symbolsRefreshed: 3, error: null },
+      ],
     };
 
     const message = describeRefreshOutcome(result, status({ nyseOpen: true, sgxOpen: true }));
@@ -83,7 +85,13 @@ describe('describeRefreshOutcome (D5 — why nothing moved)', () => {
       cooldownSecondsRemaining: null,
       totalSymbolsRefreshed: 0,
       sources: [
-        { source: 'TwelveData', attempted: true, success: false, symbolsRefreshed: 0, error: 'timeout' },
+        {
+          source: 'TwelveData',
+          attempted: true,
+          success: false,
+          symbolsRefreshed: 0,
+          error: 'timeout',
+        },
       ],
     };
 
@@ -97,7 +105,9 @@ describe('describeRefreshOutcome (D5 — why nothing moved)', () => {
       outcome: 'NothingDue',
       cooldownSecondsRemaining: null,
       totalSymbolsRefreshed: 0,
-      sources: [{ source: 'CoinGecko', attempted: true, success: true, symbolsRefreshed: 0, error: null }],
+      sources: [
+        { source: 'CoinGecko', attempted: true, success: true, symbolsRefreshed: 0, error: null },
+      ],
     };
 
     const message = describeRefreshOutcome(result, status({ nyseOpen: true, sgxOpen: true }));
@@ -141,7 +151,9 @@ describe('describeRefreshOutcome (D5 — why nothing moved)', () => {
       outcome: 'Completed',
       cooldownSecondsRemaining: null,
       totalSymbolsRefreshed: 1,
-      sources: [{ source: 'TwelveData', attempted: true, success: true, symbolsRefreshed: 1, error: null }],
+      sources: [
+        { source: 'TwelveData', attempted: true, success: true, symbolsRefreshed: 1, error: null },
+      ],
     };
 
     const message = describeRefreshOutcome(result, status({ nyseOpen: true, sgxOpen: true }));

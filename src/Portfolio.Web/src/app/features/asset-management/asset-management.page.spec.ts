@@ -89,7 +89,9 @@ describe('AssetManagementPage', () => {
 
   it('shows the error state and can retry', async () => {
     fixture.detectChanges();
-    httpMock.expectOne(API_ROUTES.assets).flush('boom', { status: 500, statusText: 'Server Error' });
+    httpMock
+      .expectOne(API_ROUTES.assets)
+      .flush('boom', { status: 500, statusText: 'Server Error' });
     await fixture.whenStable();
     fixture.detectChanges();
 
@@ -298,7 +300,9 @@ describe('AssetManagementPage', () => {
     fixture.detectChanges();
 
     const dialog = TestBed.inject(MatDialog);
-    vi.spyOn(dialog, 'open').mockReturnValue({ afterClosed: () => of(true) } as ReturnType<MatDialog['open']>);
+    vi.spyOn(dialog, 'open').mockReturnValue({ afterClosed: () => of(true) } as ReturnType<
+      MatDialog['open']
+    >);
 
     fixture.componentInstance.toggleActive(AAPL);
     fixture.detectChanges();
@@ -317,7 +321,9 @@ describe('AssetManagementPage', () => {
     fixture.detectChanges();
 
     const dialog = TestBed.inject(MatDialog);
-    vi.spyOn(dialog, 'open').mockReturnValue({ afterClosed: () => of(true) } as ReturnType<MatDialog['open']>);
+    vi.spyOn(dialog, 'open').mockReturnValue({ afterClosed: () => of(true) } as ReturnType<
+      MatDialog['open']
+    >);
 
     fixture.componentInstance.toggleActive(AAPL);
     fixture.detectChanges();
@@ -357,7 +363,9 @@ describe('AssetManagementPage', () => {
     fixture.detectChanges();
 
     const dialog = TestBed.inject(MatDialog);
-    vi.spyOn(dialog, 'open').mockReturnValue({ afterClosed: () => of(true) } as ReturnType<MatDialog['open']>);
+    vi.spyOn(dialog, 'open').mockReturnValue({ afterClosed: () => of(true) } as ReturnType<
+      MatDialog['open']
+    >);
 
     fixture.componentInstance.toggleActive(MSFT_INACTIVE);
     fixture.detectChanges();
@@ -433,7 +441,9 @@ describe('AssetManagementPage', () => {
     fixture.detectChanges();
 
     const dialog = TestBed.inject(MatDialog);
-    vi.spyOn(dialog, 'open').mockReturnValue({ afterClosed: () => of(true) } as ReturnType<MatDialog['open']>);
+    vi.spyOn(dialog, 'open').mockReturnValue({ afterClosed: () => of(true) } as ReturnType<
+      MatDialog['open']
+    >);
 
     fixture.componentInstance.deleteAsset(AAPL);
     httpMock.expectOne(API_ROUTES.transactionsByAsset(AAPL.id)).flush([]);
@@ -460,7 +470,9 @@ describe('AssetManagementPage', () => {
     fixture.detectChanges();
 
     const dialog = TestBed.inject(MatDialog);
-    vi.spyOn(dialog, 'open').mockReturnValue({ afterClosed: () => of(true) } as ReturnType<MatDialog['open']>);
+    vi.spyOn(dialog, 'open').mockReturnValue({ afterClosed: () => of(true) } as ReturnType<
+      MatDialog['open']
+    >);
 
     fixture.componentInstance.deleteAsset(AAPL);
     httpMock.expectOne(API_ROUTES.transactionsByAsset(AAPL.id)).flush([]);
@@ -487,7 +499,9 @@ describe('AssetManagementPage', () => {
     fixture.detectChanges();
 
     const dialog = TestBed.inject(MatDialog);
-    vi.spyOn(dialog, 'open').mockReturnValue({ afterClosed: () => of(true) } as ReturnType<MatDialog['open']>);
+    vi.spyOn(dialog, 'open').mockReturnValue({ afterClosed: () => of(true) } as ReturnType<
+      MatDialog['open']
+    >);
 
     fixture.componentInstance.deleteAsset(AAPL);
     httpMock.expectOne(API_ROUTES.transactionsByAsset(AAPL.id)).flush([]);
@@ -508,7 +522,9 @@ describe('AssetManagementPage', () => {
 
   function symbolsInOrder(fixture: ComponentFixture<AssetManagementPage>): string[] {
     return Array.from(
-      fixture.nativeElement.querySelectorAll('td.asset-management__symbol') as NodeListOf<HTMLElement>,
+      fixture.nativeElement.querySelectorAll(
+        'td.asset-management__symbol',
+      ) as NodeListOf<HTMLElement>,
     ).map((el) => el.textContent?.trim() ?? '');
   }
 
@@ -544,7 +560,9 @@ describe('AssetManagementPage', () => {
     await fixture.whenStable();
     fixture.detectChanges();
 
-    const symbolHeader = fixture.nativeElement.querySelector('th[mat-sort-header="symbol"]') as HTMLElement;
+    const symbolHeader = fixture.nativeElement.querySelector(
+      'th[mat-sort-header="symbol"]',
+    ) as HTMLElement;
     expect(symbolHeader.getAttribute('aria-sort')).toBe('ascending');
     expect(symbolHeader.getAttribute('scope')).toBe('col');
   });
@@ -565,7 +583,9 @@ describe('AssetManagementPage', () => {
     fixture.detectChanges();
 
     const dialog = TestBed.inject(MatDialog);
-    vi.spyOn(dialog, 'open').mockReturnValue({ afterClosed: () => of(false) } as ReturnType<MatDialog['open']>);
+    vi.spyOn(dialog, 'open').mockReturnValue({ afterClosed: () => of(false) } as ReturnType<
+      MatDialog['open']
+    >);
 
     fixture.componentInstance.deleteAsset(AAPL);
     httpMock.expectOne(API_ROUTES.transactionsByAsset(AAPL.id)).flush([]);
@@ -587,7 +607,9 @@ describe('AssetManagementPage', () => {
     const updated: AssetDto = { ...AAPL, fiscalYearEndMonth: 9, fiscalYearEndDay: 30 };
     const open = vi
       .spyOn(dialog, 'open')
-      .mockReturnValue({ afterClosed: () => of({ kind: 'saved', asset: updated }) } as ReturnType<MatDialog['open']>);
+      .mockReturnValue({ afterClosed: () => of({ kind: 'saved', asset: updated }) } as ReturnType<
+        MatDialog['open']
+      >);
 
     fixture.componentInstance.openEditDialog(AAPL);
     fixture.detectChanges();

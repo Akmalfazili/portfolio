@@ -1,4 +1,11 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  computed,
+  inject,
+  signal,
+} from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
@@ -35,7 +42,9 @@ export class RefreshIndicator {
   readonly refreshing = this.priceStore.refreshing;
   readonly cooldownSecondsRemaining = this.priceStore.cooldownSecondsRemaining;
 
-  readonly relativeLabel = computed(() => `Updated ${formatRelativeTime(this.priceStore.lastRefreshedAt(), this.now())}`);
+  readonly relativeLabel = computed(
+    () => `Updated ${formatRelativeTime(this.priceStore.lastRefreshedAt(), this.now())}`,
+  );
 
   readonly isStale = computed(() => isRefreshStale(this.priceStore.status(), this.now()));
 

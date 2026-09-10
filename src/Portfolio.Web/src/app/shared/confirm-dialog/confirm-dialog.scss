@@ -12,5 +12,9 @@ p {
   --mat-button-filled-container-color: var(--ui-color-loss);
   --mat-button-filled-label-text-color: var(--ui-color-on-accent-stock);
   --mat-button-filled-state-layer-color: var(--ui-color-on-accent-stock);
-  --mat-button-filled-ripple-color: color-mix(in srgb, var(--ui-color-on-accent-stock) 24%, transparent);
+  --mat-button-filled-ripple-color: color-mix(
+    in srgb,
+    var(--ui-color-on-accent-stock) 24%,
+    transparent
+  );
 }

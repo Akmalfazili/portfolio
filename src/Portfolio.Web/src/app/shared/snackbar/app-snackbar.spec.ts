@@ -37,7 +37,10 @@ describe('AppSnackbar', () => {
   });
 
   it('renders info for an info toast, with no dismiss button', () => {
-    setup({ tone: 'info', message: 'That transaction no longer exists — the list has been refreshed.' });
+    setup({
+      tone: 'info',
+      message: 'That transaction no longer exists — the list has been refreshed.',
+    });
 
     expect(iconName()).toBe('info');
     expect(dismissButton()).toBeNull();

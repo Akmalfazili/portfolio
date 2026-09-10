@@ -2,7 +2,12 @@ import { Injectable } from '@angular/core';
 import { HttpResourceRef, httpResource } from '@angular/common/http';
 
 import { API_ROUTES } from './api-routes';
-import { AnnualReturnsDto, AssetClass, PortfolioAllocationDto, PortfolioSummaryDto } from './models';
+import {
+  AnnualReturnsDto,
+  AssetClass,
+  PortfolioAllocationDto,
+  PortfolioSummaryDto,
+} from './models';
 
 /**
  * Thin data-access layer for `/api/portfolio/*` — read-only. There is no

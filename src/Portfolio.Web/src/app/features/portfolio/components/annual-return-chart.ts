@@ -3,7 +3,14 @@ import { NgxEchartsDirective } from 'ngx-echarts';
 import type { EChartsCoreOption } from 'echarts/core';
 
 import { AnnualReturnDto } from '../../../core/api/models';
-import { MARK, axisTooltip, categoryAxis, gainLossColor, readChartTokens, valueAxis } from '../../../shared/charts/chart-theme';
+import {
+  MARK,
+  axisTooltip,
+  categoryAxis,
+  gainLossColor,
+  readChartTokens,
+  valueAxis,
+} from '../../../shared/charts/chart-theme';
 
 /**
  * Year-on-year time-weighted return, stocks only (crypto keeps no history —
@@ -62,7 +69,10 @@ export class AnnualReturnChart {
           // year's label sits under its bar, not overlapping the axis.
           data: values.map((v) => ({
             value: Math.round(v * 100) / 100,
-            itemStyle: { color: gainLossColor(tokens, v), borderRadius: v >= 0 ? MARK.barBorderRadius : [0, 0, 4, 4] },
+            itemStyle: {
+              color: gainLossColor(tokens, v),
+              borderRadius: v >= 0 ? MARK.barBorderRadius : [0, 0, 4, 4],
+            },
             label: {
               show: true,
               position: (v >= 0 ? 'top' : 'bottom') as 'top' | 'bottom',

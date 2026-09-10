@@ -6,7 +6,11 @@ import { provideEchartsCore } from 'ngx-echarts';
 
 import { PortfolioOverviewPage } from './portfolio-overview.page';
 import { API_ROUTES } from '../../core/api/api-routes';
-import { AnnualReturnsDto, PortfolioAllocationDto, PortfolioSummaryDto } from '../../core/api/models';
+import {
+  AnnualReturnsDto,
+  PortfolioAllocationDto,
+  PortfolioSummaryDto,
+} from '../../core/api/models';
 import { PRICES_HUB_CONNECTION_FACTORY, PriceStore } from '../../core/prices/price-store';
 import { FakeHubConnection } from '../../core/prices/testing/fake-hub-connection';
 
@@ -55,12 +59,21 @@ const STOCK_ALLOCATION: PortfolioAllocationDto = {
   assetClass: 'Stock',
   totalMarketValueUsd: 0,
   items: [
-    { assetId: 1, symbol: 'AAPL', name: 'Apple Inc.', marketValueUsd: 0, percentageOfTotal: 0, hasPrice: false },
+    {
+      assetId: 1,
+      symbol: 'AAPL',
+      name: 'Apple Inc.',
+      marketValueUsd: 0,
+      percentageOfTotal: 0,
+      hasPrice: false,
+    },
   ],
   unpricedHoldingsCount: 1,
 };
 
-const ANNUAL_RETURNS: AnnualReturnsDto = { years: [{ year: 2026, timeWeightedReturnPercent: 1.7775 }] };
+const ANNUAL_RETURNS: AnnualReturnsDto = {
+  years: [{ year: 2026, timeWeightedReturnPercent: 1.7775 }],
+};
 
 describe('PortfolioOverviewPage', () => {
   let fixture: ComponentFixture<PortfolioOverviewPage>;
@@ -88,7 +101,11 @@ describe('PortfolioOverviewPage', () => {
 
   afterEach(() => httpMock.verify());
 
-  function flushInitial(summary = STOCK_SUMMARY, allocation = STOCK_ALLOCATION, annualReturns = ANNUAL_RETURNS) {
+  function flushInitial(
+    summary = STOCK_SUMMARY,
+    allocation = STOCK_ALLOCATION,
+    annualReturns = ANNUAL_RETURNS,
+  ) {
     fixture.detectChanges();
     httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(summary);
     httpMock.expectOne(API_ROUTES.portfolioAllocation('Stock')).flush(allocation);
@@ -109,13 +126,21 @@ describe('PortfolioOverviewPage', () => {
   it('does NOT request annual-returns for the crypto section', () => {
     fixture.componentRef.setInput('assetClass', 'Crypto');
     fixture.detectChanges();
-    httpMock.expectOne(API_ROUTES.portfolioSummary('Crypto')).flush({ ...STOCK_SUMMARY, assetClass: 'Crypto' });
-    httpMock.expectOne(API_ROUTES.portfolioAllocation('Crypto')).flush({ ...STOCK_ALLOCATION, assetClass: 'Crypto' });
+    httpMock
+      .expectOne(API_ROUTES.portfolioSummary('Crypto'))
+      .flush({ ...STOCK_SUMMARY, assetClass: 'Crypto' });
+    httpMock
+      .expectOne(API_ROUTES.portfolioAllocation('Crypto'))
+      .flush({ ...STOCK_ALLOCATION, assetClass: 'Crypto' });
     httpMock.expectNone(API_ROUTES.stockAnnualReturns);
   });
 
   it('shows the empty state with a call to action when there are no holdings', async () => {
-    flushInitial({ ...STOCK_SUMMARY, holdings: [] }, { ...STOCK_ALLOCATION, items: [] }, { years: [] });
+    flushInitial(
+      { ...STOCK_SUMMARY, holdings: [] },
+      { ...STOCK_ALLOCATION, items: [] },
+      { years: [] },
+    );
     await fixture.whenStable();
     fixture.detectChanges();
 
@@ -126,7 +151,9 @@ describe('PortfolioOverviewPage', () => {
 
   it('shows the error state and can retry', async () => {
     fixture.detectChanges();
-    httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush('boom', { status: 500, statusText: 'Server Error' });
+    httpMock
+      .expectOne(API_ROUTES.portfolioSummary('Stock'))
+      .flush('boom', { status: 500, statusText: 'Server Error' });
     httpMock.expectOne(API_ROUTES.portfolioAllocation('Stock')).flush(STOCK_ALLOCATION);
     httpMock.expectOne(API_ROUTES.stockAnnualReturns).flush(ANNUAL_RETURNS);
     await fixture.whenStable();
@@ -188,8 +215,12 @@ describe('PortfolioOverviewPage', () => {
   it('does not render a dividend tile for crypto', async () => {
     fixture.componentRef.setInput('assetClass', 'Crypto');
     fixture.detectChanges();
-    httpMock.expectOne(API_ROUTES.portfolioSummary('Crypto')).flush({ ...STOCK_SUMMARY, assetClass: 'Crypto' });
-    httpMock.expectOne(API_ROUTES.portfolioAllocation('Crypto')).flush({ ...STOCK_ALLOCATION, assetClass: 'Crypto' });
+    httpMock
+      .expectOne(API_ROUTES.portfolioSummary('Crypto'))
+      .flush({ ...STOCK_SUMMARY, assetClass: 'Crypto' });
+    httpMock
+      .expectOne(API_ROUTES.portfolioAllocation('Crypto'))
+      .flush({ ...STOCK_ALLOCATION, assetClass: 'Crypto' });
     await fixture.whenStable();
     fixture.detectChanges();
 
@@ -209,8 +240,12 @@ describe('PortfolioOverviewPage', () => {
   it('does not apply the five-tile row modifier class for crypto', async () => {
     fixture.componentRef.setInput('assetClass', 'Crypto');
     fixture.detectChanges();
-    httpMock.expectOne(API_ROUTES.portfolioSummary('Crypto')).flush({ ...STOCK_SUMMARY, assetClass: 'Crypto' });
-    httpMock.expectOne(API_ROUTES.portfolioAllocation('Crypto')).flush({ ...STOCK_ALLOCATION, assetClass: 'Crypto' });
+    httpMock
+      .expectOne(API_ROUTES.portfolioSummary('Crypto'))
+      .flush({ ...STOCK_SUMMARY, assetClass: 'Crypto' });
+    httpMock
+      .expectOne(API_ROUTES.portfolioAllocation('Crypto'))
+      .flush({ ...STOCK_ALLOCATION, assetClass: 'Crypto' });
     await fixture.whenStable();
     fixture.detectChanges();
 
@@ -369,7 +404,9 @@ describe('PortfolioOverviewPage', () => {
     });
     fixture.detectChanges();
 
-    httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush('boom', { status: 500, statusText: 'Server Error' });
+    httpMock
+      .expectOne(API_ROUTES.portfolioSummary('Stock'))
+      .flush('boom', { status: 500, statusText: 'Server Error' });
     httpMock.expectOne(API_ROUTES.portfolioAllocation('Stock')).flush(STOCK_ALLOCATION);
     httpMock.expectOne(API_ROUTES.stockAnnualReturns).flush(ANNUAL_RETURNS);
     await fixture.whenStable();

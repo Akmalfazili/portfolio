@@ -4,13 +4,15 @@
   <mat-dialog-content class="asset-form">
     @if (isEdit) {
       <p class="asset-form__note">
-        Symbol, asset class, currency and provider routing can't be changed here — they affect
-        which provider gets billed and what a historical price series means. Deactivate and
-        re-add the asset if one of those is genuinely wrong.
+        Symbol, asset class, currency and provider routing can't be changed here — they affect which
+        provider gets billed and what a historical price series means. Deactivate and re-add the
+        asset if one of those is genuinely wrong.
       </p>
     } @else {
       <table class="asset-form__routing" aria-label="Provider routing rules">
-        <caption>Which provider to pick, and what identifier it needs</caption>
+        <caption>
+          Which provider to pick, and what identifier it needs
+        </caption>
         <thead>
           <tr>
             <th scope="col">Asset</th>
@@ -98,10 +100,9 @@
     @if (showsCreditWarning()) {
       <p class="asset-form__warning">
         <mat-icon aria-hidden="true">warning</mat-icon>
-        Every Twelve Data symbol costs a credit per refresh cycle, against an 800/day budget.
-        At the 5-minute open-market cadence, one US symbol is roughly 78 credits over a single
-        6.5-hour session — keep US equities well under ten symbols total. Yahoo and CoinGecko
-        are unmetered.
+        Every Twelve Data symbol costs a credit per refresh cycle, against an 800/day budget. At the
+        5-minute open-market cadence, one US symbol is roughly 78 credits over a single 6.5-hour
+        session — keep US equities well under ten symbols total. Yahoo and CoinGecko are unmetered.
       </p>
     }
 

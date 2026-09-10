@@ -97,7 +97,9 @@ export class AssetDetailPage {
   /** The page shell needs BOTH the asset list (to resolve the symbol) and the
    *  summary (for the holding), so the two states compose with `||` — each
    *  resource still judges itself by its own cached value. */
-  readonly isLoading = computed(() => this.assetsState.isLoading() || this.summaryState.isLoading());
+  readonly isLoading = computed(
+    () => this.assetsState.isLoading() || this.summaryState.isLoading(),
+  );
   /**
    * A *reload* that fails while good data is already on screen must not
    * blow the page away — `PriceStore`'s toolbar refresh indicator already
@@ -109,7 +111,8 @@ export class AssetDetailPage {
 
   readonly asset = computed(() =>
     (this.assetsState.value() ?? []).find(
-      (candidate) => candidate.symbol === this.symbol() && candidate.assetClass === this.assetClass(),
+      (candidate) =>
+        candidate.symbol === this.symbol() && candidate.assetClass === this.assetClass(),
     ),
   );
 

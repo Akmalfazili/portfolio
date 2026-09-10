@@ -63,7 +63,12 @@
   <mat-sidenav-content>
     <mat-toolbar class="shell__toolbar">
       @if (isHandset()) {
-        <button mat-icon-button type="button" aria-label="Toggle navigation" (click)="sidenav.toggle()">
+        <button
+          mat-icon-button
+          type="button"
+          aria-label="Toggle navigation"
+          (click)="sidenav.toggle()"
+        >
           <mat-icon aria-hidden="true">menu</mat-icon>
         </button>
       }

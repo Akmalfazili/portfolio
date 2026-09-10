@@ -43,7 +43,9 @@ describe('RefreshIndicator', () => {
     setup({ cooldownSecondsRemaining: signal(17) });
     const button: HTMLButtonElement = fixture.nativeElement.querySelector('button');
     expect(button.disabled).toBe(true);
-    expect(fixture.nativeElement.querySelector('.refresh-indicator__cooldown').textContent).toContain('17s');
+    expect(
+      fixture.nativeElement.querySelector('.refresh-indicator__cooldown').textContent,
+    ).toContain('17s');
   });
 
   it('calls refreshNow() on click when not disabled', () => {
@@ -66,7 +68,9 @@ describe('RefreshIndicator', () => {
       totalSymbolsRefreshed: 0,
       // A gated provider is omitted from `sources` by the backend, not listed with
       // attempted:false — so only CoinGecko appears here, as it does live.
-      sources: [{ source: 'CoinGecko', attempted: true, success: true, symbolsRefreshed: 0, error: null }],
+      sources: [
+        { source: 'CoinGecko', attempted: true, success: true, symbolsRefreshed: 0, error: null },
+      ],
     };
     setup({
       lastRefreshResult: signal(result),

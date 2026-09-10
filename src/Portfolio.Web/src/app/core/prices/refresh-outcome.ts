@@ -44,7 +44,9 @@ export function describeRefreshOutcome(
 ): string {
   const closed = closedMarkets(status);
   const closedNote =
-    closed.length > 0 ? ` ${joinWithAnd(closed)} ${closed.length === 1 ? 'is' : 'are'} closed, so those holdings were not updated.` : '';
+    closed.length > 0
+      ? ` ${joinWithAnd(closed)} ${closed.length === 1 ? 'is' : 'are'} closed, so those holdings were not updated.`
+      : '';
 
   // Exhaustiveness guard: `case`s that fall through to the shared logic below
   // are listed explicitly, and `default` routes anything else through
@@ -106,7 +108,9 @@ function closedMarkets(status: PriceRefreshStatus | null): string[] {
 }
 
 function joinWithAnd(parts: string[]): string {
-  return parts.length <= 1 ? (parts[0] ?? '') : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`;
+  return parts.length <= 1
+    ? (parts[0] ?? '')
+    : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`;
 }
 
 /** Never actually reached at runtime — its role is purely to make the switch above exhaustive at compile time. */

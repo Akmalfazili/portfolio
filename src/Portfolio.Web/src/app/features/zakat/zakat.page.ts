@@ -5,7 +5,12 @@ import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
 
-import { ZakatAssetStatus, ZakatCryptoLineDto, ZakatPaymentDto, ZakatStockLineDto } from '../../core/api/models';
+import {
+  ZakatAssetStatus,
+  ZakatCryptoLineDto,
+  ZakatPaymentDto,
+  ZakatStockLineDto,
+} from '../../core/api/models';
 import { AssetsApi } from '../../core/api/assets.api';
 import { ZakatApi } from '../../core/api/zakat.api';
 import { NotificationService } from '../../core/notifications/notification.service';
@@ -17,7 +22,11 @@ import { StatTile } from '../../shared/stat-tile/stat-tile';
 import { ConfirmDialog, ConfirmDialogData } from '../../shared/confirm-dialog/confirm-dialog';
 import { resourceState } from '../../shared/util/resource-state';
 import { formatDateOnlyLong, formatFxAsOf } from '../../shared/util/local-date';
-import { AssetFormDialog, AssetFormDialogData, AssetFormDialogResult } from '../asset-management/asset-form.dialog';
+import {
+  AssetFormDialog,
+  AssetFormDialogData,
+  AssetFormDialogResult,
+} from '../asset-management/asset-form.dialog';
 import {
   ZakatPaymentFormDialog,
   ZakatPaymentFormDialogData,
@@ -79,7 +88,15 @@ function sortLinesBySymbol<T extends { symbol: string }>(lines: T[]): T[] {
 @Component({
   selector: 'app-zakat-page',
   standalone: true,
-  imports: [MoneyPipe, QuantityPipe, StateMessage, StatTile, MatButtonModule, MatIconModule, MatTooltipModule],
+  imports: [
+    MoneyPipe,
+    QuantityPipe,
+    StateMessage,
+    StatTile,
+    MatButtonModule,
+    MatIconModule,
+    MatTooltipModule,
+  ],
   templateUrl: './zakat.page.html',
   styleUrl: './zakat.page.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -116,8 +133,12 @@ export class ZakatPage {
   readonly isLoading = this.reportState.isLoading;
   readonly hasError = this.reportState.hasError;
 
-  readonly stockLines = computed<ZakatStockLineDto[]>(() => sortLinesBySymbol(this.report()?.stocks ?? []));
-  readonly cryptoLines = computed<ZakatCryptoLineDto[]>(() => sortLinesBySymbol(this.report()?.crypto ?? []));
+  readonly stockLines = computed<ZakatStockLineDto[]>(() =>
+    sortLinesBySymbol(this.report()?.stocks ?? []),
+  );
+  readonly cryptoLines = computed<ZakatCryptoLineDto[]>(() =>
+    sortLinesBySymbol(this.report()?.crypto ?? []),
+  );
 
   readonly excludedAssetCount = computed(() => this.report()?.excludedAssetCount ?? 0);
   readonly hasExcluded = computed(() => this.excludedAssetCount() > 0);
@@ -194,7 +215,9 @@ export class ZakatPage {
 
   // --- Asset lookup, for the "Set/edit fiscal year end" action per row -----
 
-  private readonly assetsById = computed(() => new Map((this.assetsResource.value() ?? []).map((a) => [a.id, a])));
+  private readonly assetsById = computed(
+    () => new Map((this.assetsResource.value() ?? []).map((a) => [a.id, a])),
+  );
   readonly assetsErrored = computed(() => this.assetsResource.error() != null);
   readonly assetsReady = computed(() => this.assetsResource.hasValue());
 
@@ -216,13 +239,18 @@ export class ZakatPage {
       return;
     }
 
-    const ref = this.dialog.open<AssetFormDialog, AssetFormDialogData, AssetFormDialogResult>(AssetFormDialog, {
-      data: { mode: 'edit', asset },
-    });
+    const ref = this.dialog.open<AssetFormDialog, AssetFormDialogData, AssetFormDialogResult>(
+      AssetFormDialog,
+      {
+        data: { mode: 'edit', asset },
+      },
+    );
 
     ref.afterClosed().subscribe((result) => {
       if (result?.kind === 'saved') {
-        this.assetsResource.update((list) => (list ?? []).map((a) => (a.id === asset.id ? result.asset : a)));
+        this.assetsResource.update((list) =>
+          (list ?? []).map((a) => (a.id === asset.id ? result.asset : a)),
+        );
         this.notifications.success(`${result.asset.symbol} updated.`);
         // The report is computed fresh on every read and depends on exactly
         // the field this dialog just changed — reload it so the row moves
@@ -249,10 +277,11 @@ export class ZakatPage {
   }
 
   openCreatePaymentDialog(): void {
-    const ref = this.dialog.open<ZakatPaymentFormDialog, ZakatPaymentFormDialogData, ZakatPaymentFormDialogResult>(
+    const ref = this.dialog.open<
       ZakatPaymentFormDialog,
-      { data: { mode: 'create' } },
-    );
+      ZakatPaymentFormDialogData,
+      ZakatPaymentFormDialogResult
+    >(ZakatPaymentFormDialog, { data: { mode: 'create' } });
 
     ref.afterClosed().subscribe((result) => {
       if (result?.kind === 'saved') {
@@ -263,10 +292,11 @@ export class ZakatPage {
   }
 
   openEditPaymentDialog(payment: ZakatPaymentDto): void {
-    const ref = this.dialog.open<ZakatPaymentFormDialog, ZakatPaymentFormDialogData, ZakatPaymentFormDialogResult>(
+    const ref = this.dialog.open<
       ZakatPaymentFormDialog,
-      { data: { mode: 'edit', payment } },
-    );
+      ZakatPaymentFormDialogData,
+      ZakatPaymentFormDialogResult
+    >(ZakatPaymentFormDialog, { data: { mode: 'edit', payment } });
 
     ref.afterClosed().subscribe((result) => {
       if (result?.kind === 'saved') {
@@ -311,6 +341,9 @@ export class ZakatPage {
   }
 
   private upsertPayment(payment: ZakatPaymentDto): void {
-    this.paymentsResource.update((list) => [...(list ?? []).filter((p) => p.id !== payment.id), payment]);
+    this.paymentsResource.update((list) => [
+      ...(list ?? []).filter((p) => p.id !== payment.id),
+      payment,
+    ]);
   }
 }

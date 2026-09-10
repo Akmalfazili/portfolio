@@ -16,7 +16,10 @@ export const errorInterceptor: HttpInterceptorFn = (req, next) =>
   next(req).pipe(
     catchError((error: unknown) => {
       if (error instanceof HttpErrorResponse && error.status !== 429) {
-        console.error(`[HTTP ${error.status}] ${req.method} ${req.url}`, error.error ?? error.message);
+        console.error(
+          `[HTTP ${error.status}] ${req.method} ${req.url}`,
+          error.error ?? error.message,
+        );
       }
       return throwError(() => error);
     }),

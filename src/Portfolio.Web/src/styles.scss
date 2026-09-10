@@ -119,15 +119,21 @@ html {
 // shadow in the same property. Physical (not logical) left edge — this app
 // has no RTL surface to account for elsewhere either.
 .app-snackbar-panel--success .mat-mdc-snackbar-surface {
-  box-shadow: var(--ui-elevation-3), inset var(--ui-size-snackbar-accent-bar) 0 0 var(--ui-color-status-good);
+  box-shadow:
+    var(--ui-elevation-3),
+    inset var(--ui-size-snackbar-accent-bar) 0 0 var(--ui-color-status-good);
 }
 
 .app-snackbar-panel--error .mat-mdc-snackbar-surface {
-  box-shadow: var(--ui-elevation-3), inset var(--ui-size-snackbar-accent-bar) 0 0 var(--ui-color-status-critical);
+  box-shadow:
+    var(--ui-elevation-3),
+    inset var(--ui-size-snackbar-accent-bar) 0 0 var(--ui-color-status-critical);
 }
 
 .app-snackbar-panel--info .mat-mdc-snackbar-surface {
-  box-shadow: var(--ui-elevation-3), inset var(--ui-size-snackbar-accent-bar) 0 0 var(--ui-color-accent);
+  box-shadow:
+    var(--ui-elevation-3),
+    inset var(--ui-size-snackbar-accent-bar) 0 0 var(--ui-color-accent);
 }
 
 // NotificationService sets `verticalPosition: 'top'`, so the CDK overlay

@@ -1,7 +1,13 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { HttpErrorResponse } from '@angular/common/http';
-import { FormControl, FormGroup, ReactiveFormsModule, ValidationErrors, Validators } from '@angular/forms';
+import {
+  FormControl,
+  FormGroup,
+  ReactiveFormsModule,
+  ValidationErrors,
+  Validators,
+} from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
 import { provideNativeDateAdapter } from '@angular/material/core';
@@ -11,8 +17,15 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 
 import { ZakatApi } from '../../core/api/zakat.api';
-import { CreateZakatPaymentRequest, ValidationProblemDetails, ZakatPaymentDto } from '../../core/api/models';
-import { decimalPrecisionValidator, positiveNumberValidator } from '../../shared/validators/decimal-precision.validator';
+import {
+  CreateZakatPaymentRequest,
+  ValidationProblemDetails,
+  ZakatPaymentDto,
+} from '../../core/api/models';
+import {
+  decimalPrecisionValidator,
+  positiveNumberValidator,
+} from '../../shared/validators/decimal-precision.validator';
 import { describeValidationError } from '../../shared/forms/describe-error';
 import { applyServerErrors } from '../../shared/forms/server-errors';
 import { fromDateOnlyString, toDateOnlyString, todayDateOnly } from '../../shared/util/local-date';
@@ -23,8 +36,7 @@ export interface ZakatPaymentFormDialogData {
 }
 
 export type ZakatPaymentFormDialogResult =
-  | { kind: 'saved'; payment: ZakatPaymentDto }
-  | { kind: 'deleted-elsewhere' };
+  { kind: 'saved'; payment: ZakatPaymentDto } | { kind: 'deleted-elsewhere' };
 
 interface ZakatPaymentFormControls {
   paidOn: FormControl<Date | null>;
@@ -68,7 +80,9 @@ const SERVER_ERROR_FIELDS: (keyof ZakatPaymentFormControls)[] = ['paidOn', 'amou
 })
 export class ZakatPaymentFormDialog {
   readonly data = inject<ZakatPaymentFormDialogData>(MAT_DIALOG_DATA);
-  private readonly dialogRef = inject(MatDialogRef<ZakatPaymentFormDialog, ZakatPaymentFormDialogResult>);
+  private readonly dialogRef = inject(
+    MatDialogRef<ZakatPaymentFormDialog, ZakatPaymentFormDialogResult>,
+  );
   private readonly zakatApi = inject(ZakatApi);
   private readonly destroyRef = inject(DestroyRef);
 

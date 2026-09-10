@@ -1,4 +1,11 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  computed,
+  inject,
+  signal,
+} from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog } from '@angular/material/dialog';
@@ -78,7 +85,8 @@ function unpricedState(asset: AssetDto, now: number): UnpricedState | null {
   // old on day one, regardless of whether its identifier is correct. Stay in
   // the calm "no price yet" state until a sibling on the same provider
   // proves the pipe genuinely works.
-  const suspicious = asset.providerHasEverSucceeded && days >= STALE_AFTER_DAYS[asset.quoteProviderKind];
+  const suspicious =
+    asset.providerHasEverSucceeded && days >= STALE_AFTER_DAYS[asset.quoteProviderKind];
   return { days, suspicious };
 }
 
@@ -131,7 +139,9 @@ export class AssetManagementPage {
   readonly isLoading = this.assetsResource.isLoading;
   readonly hasError = computed(() => this.assetsResource.error() != null);
   readonly assets = computed(() => sortAssets(this.assetsResource.value() ?? []));
-  readonly isEmpty = computed(() => !this.isLoading() && !this.hasError() && this.assets().length === 0);
+  readonly isEmpty = computed(
+    () => !this.isLoading() && !this.hasError() && this.assets().length === 0,
+  );
 
   /**
    * D27 — rows decorated with their unpriced state. `Date.now()` is read once
@@ -175,9 +185,12 @@ export class AssetManagementPage {
   }
 
   openCreateDialog(): void {
-    const ref = this.dialog.open<AssetFormDialog, AssetFormDialogData, AssetFormDialogResult>(AssetFormDialog, {
-      data: { mode: 'create' },
-    });
+    const ref = this.dialog.open<AssetFormDialog, AssetFormDialogData, AssetFormDialogResult>(
+      AssetFormDialog,
+      {
+        data: { mode: 'create' },
+      },
+    );
 
     ref.afterClosed().subscribe((result) => {
       if (result?.kind === 'saved') {
@@ -194,13 +207,18 @@ export class AssetManagementPage {
    * only — see AssetFormDialog's class doc comment for why.
    */
   openEditDialog(asset: AssetDto): void {
-    const ref = this.dialog.open<AssetFormDialog, AssetFormDialogData, AssetFormDialogResult>(AssetFormDialog, {
-      data: { mode: 'edit', asset },
-    });
+    const ref = this.dialog.open<AssetFormDialog, AssetFormDialogData, AssetFormDialogResult>(
+      AssetFormDialog,
+      {
+        data: { mode: 'edit', asset },
+      },
+    );
 
     ref.afterClosed().subscribe((result) => {
       if (result?.kind === 'saved') {
-        this.assetsResource.update((list) => sortAssets((list ?? []).map((a) => (a.id === asset.id ? result.asset : a))));
+        this.assetsResource.update((list) =>
+          sortAssets((list ?? []).map((a) => (a.id === asset.id ? result.asset : a))),
+        );
         this.notifications.success(`${result.asset.symbol} updated.`);
       }
     });
@@ -234,13 +252,17 @@ export class AssetManagementPage {
         .pipe(takeUntilDestroyed(this.destroyRef))
         .subscribe({
           next: () => {
-            this.notifications.success(`${asset.symbol} ${activating ? 'reactivated' : 'deactivated'}.`);
+            this.notifications.success(
+              `${asset.symbol} ${activating ? 'reactivated' : 'deactivated'}.`,
+            );
           },
           error: () => {
             this.notifications.error(
               `Couldn't ${activating ? 'reactivate' : 'deactivate'} ${asset.symbol} — it has been restored.`,
             );
-            this.assetsResource.update((list) => (list ?? []).map((a) => (a.id === asset.id ? previous : a)));
+            this.assetsResource.update((list) =>
+              (list ?? []).map((a) => (a.id === asset.id ? previous : a)),
+            );
           },
         });
     });

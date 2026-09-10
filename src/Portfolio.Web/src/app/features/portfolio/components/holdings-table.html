@@ -7,7 +7,9 @@
     [matSortDirection]="tableState.sort().direction"
     (matSortChange)="onSortChange($event)"
   >
-    <caption class="holdings-table__caption">Holdings</caption>
+    <caption class="holdings-table__caption">
+      Holdings
+    </caption>
     <thead>
       <tr>
         <th scope="col" mat-sort-header="symbol">Symbol</th>
@@ -19,7 +21,9 @@
         <th scope="col" mat-sort-header="unrealized" class="holdings-table__num">Unrealized</th>
         <th scope="col" mat-sort-header="realized" class="holdings-table__num">Realized</th>
         @if (showDividends()) {
-          <th scope="col" mat-sort-header="dividends" class="holdings-table__num">Dividends (12m)</th>
+          <th scope="col" mat-sort-header="dividends" class="holdings-table__num">
+            Dividends (12m)
+          </th>
         }
       </tr>
     </thead>
@@ -27,7 +31,9 @@
       @for (holding of tableState.paged(); track holding.assetId) {
         <tr>
           <td>
-            <a class="holdings-table__symbol" [routerLink]="[basePath(), holding.symbol]">{{ holding.symbol }}</a>
+            <a class="holdings-table__symbol" [routerLink]="[basePath(), holding.symbol]">{{
+              holding.symbol
+            }}</a>
           </td>
           <td class="holdings-table__num">{{ holding.quantityHeld | quantity }}</td>
           <td class="holdings-table__num">{{ holding.costBasisUsd | money }}</td>
@@ -36,7 +42,9 @@
             @if (hasPrice(holding)) {
               {{ holding.currentPriceUsd | money }}
               @if (isCloseSourced(holding)) {
-                <span class="holdings-table__price-source">Close &middot; {{ closeDateLabel(holding) }}</span>
+                <span class="holdings-table__price-source"
+                  >Close &middot; {{ closeDateLabel(holding) }}</span
+                >
               }
             } @else {
               <span class="holdings-table__pending">Awaiting price</span>
@@ -45,7 +53,10 @@
           <td class="holdings-table__num">{{ holding.marketValueUsd | money }}</td>
           <td class="holdings-table__num">
             @if (hasPrice(holding)) {
-              <app-gain-loss [amount]="holding.unrealizedPnlUsd" [percent]="holding.unrealizedPnlPercent" />
+              <app-gain-loss
+                [amount]="holding.unrealizedPnlUsd"
+                [percent]="holding.unrealizedPnlPercent"
+              />
             } @else {
               <span class="holdings-table__pending">Awaiting first price</span>
             }

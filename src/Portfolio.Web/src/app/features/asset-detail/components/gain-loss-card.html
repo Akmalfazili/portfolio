@@ -8,12 +8,21 @@
   -->
   <app-stat-tile label="Avg cost" [value]="holding().averageCostUsd | money"></app-stat-tile>
 
-  <app-stat-tile label="Market value" [value]="hasPrice() ? (holding().marketValueUsd | money) : 'Awaiting price'">
+  <app-stat-tile
+    label="Market value"
+    [value]="hasPrice() ? (holding().marketValueUsd | money) : 'Awaiting price'"
+  >
   </app-stat-tile>
 
-  <app-stat-tile label="Unrealized gain/loss" [value]="hasPrice() ? (holding().unrealizedPnlUsd | money) : '—'">
+  <app-stat-tile
+    label="Unrealized gain/loss"
+    [value]="hasPrice() ? (holding().unrealizedPnlUsd | money) : '—'"
+  >
     @if (hasPrice()) {
-      <app-gain-loss [amount]="holding().unrealizedPnlUsd" [percent]="holding().unrealizedPnlPercent" />
+      <app-gain-loss
+        [amount]="holding().unrealizedPnlUsd"
+        [percent]="holding().unrealizedPnlPercent"
+      />
     } @else {
       <span class="gain-loss-card__pending">Awaiting first price</span>
     }

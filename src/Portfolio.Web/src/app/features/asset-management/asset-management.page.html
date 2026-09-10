@@ -35,7 +35,9 @@
       [matSortDirection]="tableState.sort().direction"
       (matSortChange)="onSortChange($event)"
     >
-      <caption class="asset-management__caption">Tracked assets</caption>
+      <caption class="asset-management__caption">
+        Tracked assets
+      </caption>
       <thead>
         <tr>
           <th scope="col" mat-sort-header="symbol">Symbol</th>
@@ -67,7 +69,9 @@
               -->
               @if (row.unpriced; as unpriced) {
                 @if (unpriced.suspicious) {
-                  <span class="asset-management__price-hint asset-management__price-hint--suspicious">
+                  <span
+                    class="asset-management__price-hint asset-management__price-hint--suspicious"
+                  >
                     <mat-icon aria-hidden="true">warning_amber</mat-icon>
                     <span
                       >No price in {{ unpriced.days }} days — check this identifier is right for
@@ -85,7 +89,9 @@
               @if (asset.isActive) {
                 <span class="asset-management__badge asset-management__badge--active">Active</span>
               } @else {
-                <span class="asset-management__badge asset-management__badge--inactive">Inactive</span>
+                <span class="asset-management__badge asset-management__badge--inactive"
+                  >Inactive</span
+                >
               }
             </td>
             <td class="asset-management__actions">

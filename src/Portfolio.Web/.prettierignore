@@ -1,0 +1,34 @@
+# Build output — never hand- or Prettier-formatted, and it's already excluded from git.
+# Listed here explicitly rather than relied on via .gitignore fallback: Prettier's CLI defaults
+# its --ignore-path to [.gitignore, .prettierignore], so dist/ is *currently* also skipped
+# implicitly, but that's an accident of the default flag value, not a guarantee — an explicit
+# entry here means the build output stays excluded even if --ignore-path is ever overridden.
+/dist
+
+# npm-managed lockfile. Its formatting is owned by npm's own writer, not by us — it is never
+# hand-edited, and running `npm install` can rewrite it in ways that don't match Prettier's
+# JSON style, which would make `format:check` fail on a file no one touched. Excluded on
+# principle even though it currently happens to already match Prettier's output.
+package-lock.json
+
+# node_modules is ignored by Prettier's own built-in default (see --with-node-modules in
+# `prettier --help`) — not listed here, no need to duplicate it.
+
+# public/ is deliberately NOT listed: today it holds only a binary favicon Prettier has no
+# parser for and therefore already leaves alone, but anything textual added there later
+# (a manifest, an SVG) is ordinary source and should be formatted like the rest of the tree.
+
+# --- Genuine Prettier bug, not a style choice — do not remove without re-testing first ---
+# All three contain a Vitest `it(name, fn, timeoutMs)` call whose fn and the trailing numeric
+# timeout are separated by a multi-line `//` comment. Prettier 3.9.6 is provably non-idempotent
+# on that shape: a single `--write` does not reach a fixed point, and each further `--write`
+# merges one more comment line onto the same line in *reversed* order, only stabilizing after
+# 4 passes with the three original comment lines mashed into one, reordered, line — a real
+# content change, not layout. Reproduced directly (diff between successive --write passes was
+# non-empty three times running) before excluding rather than papering over it. Left in their
+# original hand-formatted state; fixing it for real means moving the comment out of that
+# position (e.g. above the `it(` call), which is a hand-edit out of scope for a formatting-only
+# sweep. See frontend-solid.md F10.
+src/app/features/asset-detail/asset-detail.page.spec.ts
+src/app/features/portfolio/components/holdings-table.spec.ts
+src/app/features/transactions/transactions.page.spec.ts

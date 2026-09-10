@@ -9,7 +9,11 @@ interface Row {
   date: string;
 }
 
-function makeState(rows: Row[], defaultSort: TableSort<'name' | 'amount' | 'date'>, opts?: Partial<Parameters<typeof createTableState<Row, 'name' | 'amount' | 'date'>>[0]>) {
+function makeState(
+  rows: Row[],
+  defaultSort: TableSort<'name' | 'amount' | 'date'>,
+  opts?: Partial<Parameters<typeof createTableState<Row, 'name' | 'amount' | 'date'>>[0]>,
+) {
   const rowsSignal = signal<Row[]>(rows);
   const state = createTableState<Row, 'name' | 'amount' | 'date'>({
     rows: rowsSignal,
@@ -76,13 +80,21 @@ describe('createTableState', () => {
   });
 
   it('applies a stable tiebreak when the primary column compares equal', () => {
-    const { state } = makeState(ROWS, { active: 'date', direction: 'desc' }, { tiebreak: (a, b) => b.id - a.id });
+    const { state } = makeState(
+      ROWS,
+      { active: 'date', direction: 'desc' },
+      { tiebreak: (a, b) => b.id - a.id },
+    );
     // ANVL and GOOGL share 2026-08-01 — tiebreak (higher id first) decides between them.
     expect(state.sorted().map((r) => r.name)).toEqual(['GOOGL', 'ANVL', 'MSFT', 'AAPL']);
   });
 
   it('paginates and resets to page 0 on a new sort', () => {
-    const { state } = makeState(ROWS, { active: 'name', direction: 'asc' }, { pageSizeOptions: [2, 4], initialPageSize: 2 });
+    const { state } = makeState(
+      ROWS,
+      { active: 'name', direction: 'asc' },
+      { pageSizeOptions: [2, 4], initialPageSize: 2 },
+    );
     expect(state.paged().map((r) => r.name)).toEqual(['AAPL', 'ANVL']);
 
     state.setPageIndex(1);
@@ -93,21 +105,33 @@ describe('createTableState', () => {
   });
 
   it('resets to page 0 on a page-size change', () => {
-    const { state } = makeState(ROWS, { active: 'name', direction: 'asc' }, { pageSizeOptions: [2, 4], initialPageSize: 2 });
+    const { state } = makeState(
+      ROWS,
+      { active: 'name', direction: 'asc' },
+      { pageSizeOptions: [2, 4], initialPageSize: 2 },
+    );
     state.setPageIndex(1);
     state.setPageSize(4);
     expect(state.pageIndex()).toBe(0);
   });
 
   it('ALL_ROWS puts every row on one page', () => {
-    const { state } = makeState(ROWS, { active: 'name', direction: 'asc' }, { pageSizeOptions: [2, 4] });
+    const { state } = makeState(
+      ROWS,
+      { active: 'name', direction: 'asc' },
+      { pageSizeOptions: [2, 4] },
+    );
     state.setPageSize(ALL_ROWS);
     expect(state.paged().length).toBe(4);
     expect(state.pageCount()).toBe(1);
   });
 
   it('clamps the page index — deleting the last row on the last page does not strand the user on an empty page', () => {
-    const { state, rowsSignal } = makeState(ROWS, { active: 'name', direction: 'asc' }, { pageSizeOptions: [2, 4], initialPageSize: 2 });
+    const { state, rowsSignal } = makeState(
+      ROWS,
+      { active: 'name', direction: 'asc' },
+      { pageSizeOptions: [2, 4], initialPageSize: 2 },
+    );
     state.setPageIndex(1); // page 1: GOOGL, MSFT (last page, 2 rows)
     expect(state.paged().length).toBe(2);
 
@@ -130,7 +154,8 @@ describe('createTableState', () => {
   it('composes with an upstream filter — filtering, sorting and paging all apply together', () => {
     const rowsSignal = signal<Row[]>(ROWS);
     const filter = signal<'all' | 'priced'>('all');
-    const filtered = () => (filter() === 'all' ? rowsSignal() : rowsSignal().filter((r) => r.amount !== null));
+    const filtered = () =>
+      filter() === 'all' ? rowsSignal() : rowsSignal().filter((r) => r.amount !== null);
 
     // The table-state helper deliberately does not own filtering — it takes
     // whatever rows signal the caller hands it, so this simulates a page

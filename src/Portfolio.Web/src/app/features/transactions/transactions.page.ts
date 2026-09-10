@@ -1,4 +1,11 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  computed,
+  inject,
+  signal,
+} from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
@@ -19,7 +26,11 @@ import { TablePager } from '../../shared/table/table-pager/table-pager';
 import { ALL_ROWS, TableSort, createTableState } from '../../shared/table/table-state';
 import { TRANSACTION_ROW_HEIGHT_PX } from '../../shared/table/table-row-height';
 import { VirtualRowgroup } from '../../shared/table/virtual-rowgroup';
-import { TransactionFormDialog, TransactionFormDialogData, TransactionFormDialogResult } from './transaction-form.dialog';
+import {
+  TransactionFormDialog,
+  TransactionFormDialogData,
+  TransactionFormDialogResult,
+} from './transaction-form.dialog';
 
 type TransactionFilter = 'All' | AssetClass;
 type TransactionColumn = 'date' | 'symbol' | 'type' | 'quantity' | 'price' | 'fees';
@@ -28,9 +39,7 @@ type TransactionColumn = 'date' | 'symbol' | 'type' | 'quantity' | 'price' | 'fe
  *  so a locally spliced create/edit lands in the same slot a reload would put it in, and
  *  is reused as the table-state's default-sort tiebreak below. */
 function sortTransactions(transactions: TransactionDto[]): TransactionDto[] {
-  return [...transactions].sort(
-    (a, b) => b.tradeDate.localeCompare(a.tradeDate) || b.id - a.id,
-  );
+  return [...transactions].sort((a, b) => b.tradeDate.localeCompare(a.tradeDate) || b.id - a.id);
 }
 
 /**
@@ -101,7 +110,11 @@ export class TransactionsPage {
     () => !this.isLoading() && !this.hasError() && this.allTransactions().length === 0,
   );
   readonly isFilteredEmpty = computed(
-    () => !this.isLoading() && !this.hasError() && !this.isTotalEmpty() && this.filteredTransactions().length === 0,
+    () =>
+      !this.isLoading() &&
+      !this.hasError() &&
+      !this.isTotalEmpty() &&
+      this.filteredTransactions().length === 0,
   );
 
   readonly tableState = createTableState<TransactionDto, TransactionColumn>({
@@ -163,10 +176,13 @@ export class TransactionsPage {
     // Sizing is set by the dialog's own template (transaction-form.dialog.scss,
     // via --ui-layout-dialog-width-sm) rather than an inline `width` here, so
     // the measure lives in exactly one token-driven place.
-    const ref = this.dialog.open<TransactionFormDialog, TransactionFormDialogData, TransactionFormDialogResult>(
+    const ref = this.dialog.open<
       TransactionFormDialog,
-      { data: { mode: 'create', assets: this.assetsResource.value() ?? [] } },
-    );
+      TransactionFormDialogData,
+      TransactionFormDialogResult
+    >(TransactionFormDialog, {
+      data: { mode: 'create', assets: this.assetsResource.value() ?? [] },
+    });
 
     ref.afterClosed().subscribe((result) => {
       if (result?.kind === 'saved') {
@@ -181,10 +197,13 @@ export class TransactionsPage {
       return;
     }
 
-    const ref = this.dialog.open<TransactionFormDialog, TransactionFormDialogData, TransactionFormDialogResult>(
+    const ref = this.dialog.open<
       TransactionFormDialog,
-      { data: { mode: 'edit', transaction, assets: this.assetsResource.value() ?? [] } },
-    );
+      TransactionFormDialogData,
+      TransactionFormDialogResult
+    >(TransactionFormDialog, {
+      data: { mode: 'edit', transaction, assets: this.assetsResource.value() ?? [] },
+    });
 
     ref.afterClosed().subscribe((result) => {
       if (result?.kind === 'saved') {
@@ -217,7 +236,9 @@ export class TransactionsPage {
       }
 
       // Optimistic removal — rolled back by reload() below if the DELETE fails.
-      this.transactionsResource.update((list) => (list ?? []).filter((t) => t.id !== transaction.id));
+      this.transactionsResource.update((list) =>
+        (list ?? []).filter((t) => t.id !== transaction.id),
+      );
 
       this.transactionsApi
         .delete(transaction.id)

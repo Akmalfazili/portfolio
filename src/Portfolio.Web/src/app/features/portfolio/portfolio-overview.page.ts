@@ -96,7 +96,9 @@ export class PortfolioOverviewPage {
 
   readonly holdings = computed(() => this.summary()?.holdings ?? []);
 
-  readonly isEmpty = computed(() => !this.isLoading() && !this.hasError() && this.holdings().length === 0);
+  readonly isEmpty = computed(
+    () => !this.isLoading() && !this.hasError() && this.holdings().length === 0,
+  );
 
   private readonly allocationState = resourceState(this.allocationResource);
 
@@ -134,7 +136,9 @@ export class PortfolioOverviewPage {
    * Always 0 for Crypto (the summary's field is `0`, not `null`, per contract).
    */
   readonly dividendsUncoveredCount = computed(() => this.summary()?.dividendsUncoveredCount ?? 0);
-  readonly hasUncoveredDividends = computed(() => this.isStock() && this.dividendsUncoveredCount() > 0);
+  readonly hasUncoveredDividends = computed(
+    () => this.isStock() && this.dividendsUncoveredCount() > 0,
+  );
   readonly dividendsCaveat = computed(() => {
     const count = this.dividendsUncoveredCount();
     const noun = count === 1 ? 'stock has' : 'stocks have';
@@ -185,7 +189,9 @@ export class PortfolioOverviewPage {
   readonly allocationSlices = computed(() =>
     this.allocationMode() === 'market' ? this.marketSlices() : this.costSlices(),
   );
-  readonly allocationValueLabel = computed(() => (this.allocationMode() === 'market' ? 'Market value' : 'Cost basis'));
+  readonly allocationValueLabel = computed(() =>
+    this.allocationMode() === 'market' ? 'Market value' : 'Cost basis',
+  );
 
   constructor() {
     // Reload the calculation endpoints once a scheduled/manual refresh cycle

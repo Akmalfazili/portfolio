@@ -28,9 +28,15 @@ import { AbstractControl, ValidationErrors, ValidatorFn } from '@angular/forms';
  * `maximumFractionDigits` gives the same shortest round-trip digits without
  * ever switching to exponential form, at any magnitude this form cares about.
  */
-const PRECISION_FORMAT_OPTIONS: Intl.NumberFormatOptions = { useGrouping: false, maximumFractionDigits: 20 };
+const PRECISION_FORMAT_OPTIONS: Intl.NumberFormatOptions = {
+  useGrouping: false,
+  maximumFractionDigits: 20,
+};
 
-export function decimalPrecisionValidator(maxDecimals: number, maxSignificantDigits = 15): ValidatorFn {
+export function decimalPrecisionValidator(
+  maxDecimals: number,
+  maxSignificantDigits = 15,
+): ValidatorFn {
   return (control: AbstractControl<number | null>): ValidationErrors | null => {
     const value = control.value;
     if (value === null || value === undefined || (value as unknown) === '') {

@@ -15,7 +15,8 @@ export const routes: Routes = [
   {
     path: 'stocks/:symbol',
     data: { assetClass: 'Stock' },
-    loadComponent: () => import('./features/asset-detail/asset-detail.page').then((m) => m.AssetDetailPage),
+    loadComponent: () =>
+      import('./features/asset-detail/asset-detail.page').then((m) => m.AssetDetailPage),
   },
   {
     path: 'crypto',
@@ -26,16 +27,20 @@ export const routes: Routes = [
   {
     path: 'crypto/:symbol',
     data: { assetClass: 'Crypto' },
-    loadComponent: () => import('./features/asset-detail/asset-detail.page').then((m) => m.AssetDetailPage),
+    loadComponent: () =>
+      import('./features/asset-detail/asset-detail.page').then((m) => m.AssetDetailPage),
   },
   {
     path: 'transactions',
-    loadComponent: () => import('./features/transactions/transactions.page').then((m) => m.TransactionsPage),
+    loadComponent: () =>
+      import('./features/transactions/transactions.page').then((m) => m.TransactionsPage),
   },
   {
     path: 'assets',
     loadComponent: () =>
-      import('./features/asset-management/asset-management.page').then((m) => m.AssetManagementPage),
+      import('./features/asset-management/asset-management.page').then(
+        (m) => m.AssetManagementPage,
+      ),
   },
   {
     // The one sanctioned exception to asset-class segregation (zakat.md) —

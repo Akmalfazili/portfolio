@@ -155,7 +155,9 @@ export class PriceStore {
     this.hubConnection.on('QuoteUpdated', (...args: unknown[]) =>
       this.applyQuote(args[0] as QuoteUpdateNotification),
     );
-    this.hubConnection.on('RefreshStatus', (...args: unknown[]) => this._status.set(args[0] as PriceRefreshStatus));
+    this.hubConnection.on('RefreshStatus', (...args: unknown[]) =>
+      this._status.set(args[0] as PriceRefreshStatus),
+    );
 
     this.hubConnection.onreconnecting(() => this._connectionState.set('reconnecting'));
     this.hubConnection.onreconnected(() => {

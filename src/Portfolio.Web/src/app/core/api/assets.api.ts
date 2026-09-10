@@ -3,7 +3,13 @@ import { HttpClient, HttpResourceRef, httpResource } from '@angular/common/http'
 import { Observable } from 'rxjs';
 
 import { API_ROUTES } from './api-routes';
-import { AssetDividendHistoryDto, AssetDto, AssetPerformanceDto, CreateAssetRequest, UpdateAssetRequest } from './models';
+import {
+  AssetDividendHistoryDto,
+  AssetDto,
+  AssetPerformanceDto,
+  CreateAssetRequest,
+  UpdateAssetRequest,
+} from './models';
 
 /**
  * Thin data-access layer for `/api/assets*` (F1, frontend-solid.md). Owns
@@ -44,7 +50,9 @@ export class AssetsApi {
   }
 
   /** GET /api/assets/{id}/dividends — stocks only; same conditional-URL shape as `performance`. */
-  dividends(assetId: () => number | undefined): HttpResourceRef<AssetDividendHistoryDto | undefined> {
+  dividends(
+    assetId: () => number | undefined,
+  ): HttpResourceRef<AssetDividendHistoryDto | undefined> {
     return httpResource<AssetDividendHistoryDto | undefined>(() => {
       const id = assetId();
       return id !== undefined ? API_ROUTES.assetDividends(id) : undefined;
@@ -67,7 +75,10 @@ export class AssetsApi {
    * its own form never shows (`isActive`) without duplicating this shape.
    */
   replace(asset: AssetDto, changes: Partial<UpdateAssetRequest>): Observable<AssetDto> {
-    return this.http.put<AssetDto>(API_ROUTES.asset(asset.id), { ...this.toUpdateRequest(asset), ...changes });
+    return this.http.put<AssetDto>(API_ROUTES.asset(asset.id), {
+      ...this.toUpdateRequest(asset),
+      ...changes,
+    });
   }
 
   /** DELETE /api/assets/{id} — cascades server-side to transactions, price history and quote. */

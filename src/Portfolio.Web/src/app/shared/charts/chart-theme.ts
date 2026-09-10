@@ -134,7 +134,11 @@ export function readChartTokens(root: HTMLElement = document.documentElement): C
     surface: readVar(style, '--ui-color-surface', FALLBACK_LIGHT.surface),
     surfaceAlt: readVar(style, '--ui-color-surface-alt', FALLBACK_LIGHT.surfaceAlt),
     onSurface: readVar(style, '--ui-color-on-surface', FALLBACK_LIGHT.onSurface),
-    onSurfaceSecondary: readVar(style, '--ui-color-on-surface-secondary', FALLBACK_LIGHT.onSurfaceSecondary),
+    onSurfaceSecondary: readVar(
+      style,
+      '--ui-color-on-surface-secondary',
+      FALLBACK_LIGHT.onSurfaceSecondary,
+    ),
     onSurfaceMuted: readVar(style, '--ui-color-on-surface-muted', FALLBACK_LIGHT.onSurfaceMuted),
     border: readVar(style, '--ui-color-border', FALLBACK_LIGHT.border),
     gridline: readVar(style, '--ui-color-gridline', FALLBACK_LIGHT.gridline),
@@ -191,9 +195,16 @@ export function foldToOther<T extends { value: number }>(
 
 /** Text tokens only — labels, axis text and legend never wear a series
  *  colour (marks-and-anatomy.md: "text never wears the data color"). */
-export function textStyle(tokens: ChartTokens, role: 'primary' | 'secondary' | 'muted' = 'secondary') {
+export function textStyle(
+  tokens: ChartTokens,
+  role: 'primary' | 'secondary' | 'muted' = 'secondary',
+) {
   const color =
-    role === 'primary' ? tokens.onSurface : role === 'muted' ? tokens.onSurfaceMuted : tokens.onSurfaceSecondary;
+    role === 'primary'
+      ? tokens.onSurface
+      : role === 'muted'
+        ? tokens.onSurfaceMuted
+        : tokens.onSurfaceSecondary;
   return { color, fontFamily: 'var(--ui-font-family-sans)' };
 }
 
@@ -212,7 +223,11 @@ export function valueAxis(tokens: ChartTokens, extra: Record<string, unknown> = 
 
 /** Shared category-axis spec: recessive hairline axis line, no gridlines
  *  (categories don't need a horizontal grid), muted tick labels. */
-export function categoryAxis(tokens: ChartTokens, data: string[], extra: Record<string, unknown> = {}) {
+export function categoryAxis(
+  tokens: ChartTokens,
+  data: string[],
+  extra: Record<string, unknown> = {},
+) {
   return {
     type: 'category',
     data,
@@ -229,7 +244,10 @@ export function categoryAxis(tokens: ChartTokens, data: string[], extra: Record<
 export function axisTooltip(tokens: ChartTokens) {
   return {
     trigger: 'axis' as const,
-    axisPointer: { type: 'line' as const, lineStyle: { color: tokens.baseline, type: 'solid' as const } },
+    axisPointer: {
+      type: 'line' as const,
+      lineStyle: { color: tokens.baseline, type: 'solid' as const },
+    },
     backgroundColor: tokens.surface,
     borderColor: tokens.border,
     borderWidth: 1,

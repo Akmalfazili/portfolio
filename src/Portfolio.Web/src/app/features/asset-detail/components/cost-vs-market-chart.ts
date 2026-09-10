@@ -3,12 +3,23 @@ import { NgxEchartsDirective } from 'ngx-echarts';
 import type { EChartsCoreOption } from 'echarts/core';
 
 import { PerformancePointDto } from '../../../core/api/models';
-import { MARK, axisTooltip, legend, readChartTokens, seriesColor, valueAxis } from '../../../shared/charts/chart-theme';
+import {
+  MARK,
+  axisTooltip,
+  legend,
+  readChartTokens,
+  seriesColor,
+  valueAxis,
+} from '../../../shared/charts/chart-theme';
 import { formatMoney } from '../../../shared/util/format-money';
 
 export type PerformanceRange = '1M' | '3M' | '1Y' | 'All';
 
-const RANGE_DAYS: Record<Exclude<PerformanceRange, 'All'>, number> = { '1M': 30, '3M': 90, '1Y': 365 };
+const RANGE_DAYS: Record<Exclude<PerformanceRange, 'All'>, number> = {
+  '1M': 30,
+  '3M': 90,
+  '1Y': 365,
+};
 const RANGES: PerformanceRange[] = ['1M', '3M', '1Y', 'All'];
 const MS_PER_DAY = 86_400_000;
 
@@ -116,7 +127,9 @@ export class CostVsMarketChart {
 
     const spanDays =
       points.length > 1
-        ? (new Date(points[points.length - 1].date).getTime() - new Date(points[0].date).getTime()) / MS_PER_DAY
+        ? (new Date(points[points.length - 1].date).getTime() -
+            new Date(points[0].date).getTime()) /
+          MS_PER_DAY
         : 0;
 
     // D15 — the two end labels collide into an illegible blob whenever cost
@@ -132,11 +145,17 @@ export class CostVsMarketChart {
     const allValues = [...marketData, ...costData].map((d) => d[1] as number);
     const valueSpan = allValues.length > 0 ? Math.max(...allValues) - Math.min(...allValues) : 0;
     const labelsCollide =
-      lastMarket !== undefined && lastCost !== undefined && Math.abs(lastMarket - lastCost) <= valueSpan * 0.08;
+      lastMarket !== undefined &&
+      lastCost !== undefined &&
+      Math.abs(lastMarket - lastCost) <= valueSpan * 0.08;
     const marketOnTop = (lastMarket ?? 0) >= (lastCost ?? 0);
     const LABEL_NUDGE = 14;
-    const marketLabelOffset: [number, number] = labelsCollide ? [0, marketOnTop ? -LABEL_NUDGE : LABEL_NUDGE] : [0, 0];
-    const costLabelOffset: [number, number] = labelsCollide ? [0, marketOnTop ? LABEL_NUDGE : -LABEL_NUDGE] : [0, 0];
+    const marketLabelOffset: [number, number] = labelsCollide
+      ? [0, marketOnTop ? -LABEL_NUDGE : LABEL_NUDGE]
+      : [0, 0];
+    const costLabelOffset: [number, number] = labelsCollide
+      ? [0, marketOnTop ? LABEL_NUDGE : -LABEL_NUDGE]
+      : [0, 0];
 
     const endMarker = (color: string) => ({
       symbol: 'circle',
@@ -193,7 +212,8 @@ export class CostVsMarketChart {
           ...endMarker(marketColor),
           endLabel: {
             show: true,
-            formatter: (params: unknown) => formatMoney((params as { value: [string, number] }).value[1]),
+            formatter: (params: unknown) =>
+              formatMoney((params as { value: [string, number] }).value[1]),
             color: tokens.onSurface,
             fontFamily: 'var(--ui-font-family-sans)',
             fontSize: 11,
@@ -211,7 +231,8 @@ export class CostVsMarketChart {
           ...endMarker(costColor),
           endLabel: {
             show: true,
-            formatter: (params: unknown) => formatMoney((params as { value: [string, number] }).value[1]),
+            formatter: (params: unknown) =>
+              formatMoney((params as { value: [string, number] }).value[1]),
             color: tokens.onSurface,
             fontFamily: 'var(--ui-font-family-sans)',
             fontSize: 11,

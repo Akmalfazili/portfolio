@@ -65,7 +65,9 @@ describe('AllocationPieChart', () => {
     const rows = Array.from(
       fixture.nativeElement.querySelectorAll('.allocation-pie__row'),
     ) as HTMLElement[];
-    const row = rows.find((r) => r.querySelector('.allocation-pie__symbol')?.textContent?.trim() === symbol);
+    const row = rows.find(
+      (r) => r.querySelector('.allocation-pie__symbol')?.textContent?.trim() === symbol,
+    );
     if (!row) {
       throw new Error(`No legend row for ${symbol}`);
     }
@@ -240,7 +242,9 @@ describe('AllocationPieChart', () => {
   it('assigns colour by asset identity, not by current value rank', () => {
     fixture.componentRef.setInput('slices', SLICES);
     fixture.detectChanges();
-    const firstPass = new Map(fixture.componentInstance.legendRows().map((r) => [r.assetId, r.color]));
+    const firstPass = new Map(
+      fixture.componentInstance.legendRows().map((r) => [r.assetId, r.color]),
+    );
 
     // Same assets, reversed relative size — colour must not repaint.
     const reordered: AllocationSlice[] = [
@@ -249,7 +253,9 @@ describe('AllocationPieChart', () => {
     ];
     fixture.componentRef.setInput('slices', reordered);
     fixture.detectChanges();
-    const secondPass = new Map(fixture.componentInstance.legendRows().map((r) => [r.assetId, r.color]));
+    const secondPass = new Map(
+      fixture.componentInstance.legendRows().map((r) => [r.assetId, r.color]),
+    );
 
     expect(secondPass.get(4)).toBe(firstPass.get(4));
     expect(secondPass.get(6)).toBe(firstPass.get(6));

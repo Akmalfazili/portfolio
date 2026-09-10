@@ -1,7 +1,22 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  computed,
+  inject,
+  signal,
+} from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { HttpErrorResponse } from '@angular/common/http';
-import { AbstractControl, FormControl, FormGroup, ReactiveFormsModule, ValidationErrors, ValidatorFn, Validators } from '@angular/forms';
+import {
+  AbstractControl,
+  FormControl,
+  FormGroup,
+  ReactiveFormsModule,
+  ValidationErrors,
+  ValidatorFn,
+  Validators,
+} from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
 import { MatFormFieldModule } from '@angular/material/form-field';
@@ -10,7 +25,13 @@ import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 
 import { AssetsApi } from '../../core/api/assets.api';
-import { AssetClass, AssetDto, CreateAssetRequest, QuoteProviderKind, ValidationProblemDetails } from '../../core/api/models';
+import {
+  AssetClass,
+  AssetDto,
+  CreateAssetRequest,
+  QuoteProviderKind,
+  ValidationProblemDetails,
+} from '../../core/api/models';
 import { describeValidationError } from '../../shared/forms/describe-error';
 import { applyServerErrors } from '../../shared/forms/server-errors';
 
@@ -64,7 +85,8 @@ const SERVER_ERROR_FIELDS: (keyof AssetFormControls)[] = [
  */
 function fiscalYearEndPairValidator(counterpartName: keyof AssetFormControls): ValidatorFn {
   return (control: AbstractControl<number | null>): ValidationErrors | null => {
-    const hasValue = (value: unknown): boolean => value !== null && value !== undefined && value !== '';
+    const hasValue = (value: unknown): boolean =>
+      value !== null && value !== undefined && value !== '';
     if (hasValue(control.value)) {
       return null;
     }
@@ -94,7 +116,15 @@ function fiscalYearEndPairValidator(counterpartName: keyof AssetFormControls): V
 @Component({
   selector: 'app-asset-form-dialog',
   standalone: true,
-  imports: [ReactiveFormsModule, MatButtonModule, MatDialogModule, MatFormFieldModule, MatIconModule, MatInputModule, MatSelectModule],
+  imports: [
+    ReactiveFormsModule,
+    MatButtonModule,
+    MatDialogModule,
+    MatFormFieldModule,
+    MatIconModule,
+    MatInputModule,
+    MatSelectModule,
+  ],
   templateUrl: './asset-form.dialog.html',
   styleUrl: './asset-form.dialog.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -115,8 +145,14 @@ export class AssetFormDialog {
   readonly serverError = signal<string | null>(null);
 
   readonly form: FormGroup<AssetFormControls> = new FormGroup<AssetFormControls>({
-    symbol: new FormControl<string>(this.existing?.symbol ?? '', { nonNullable: true, validators: [Validators.required] }),
-    name: new FormControl<string>(this.existing?.name ?? '', { nonNullable: true, validators: [Validators.required] }),
+    symbol: new FormControl<string>(this.existing?.symbol ?? '', {
+      nonNullable: true,
+      validators: [Validators.required],
+    }),
+    name: new FormControl<string>(this.existing?.name ?? '', {
+      nonNullable: true,
+      validators: [Validators.required],
+    }),
     assetClass: new FormControl<AssetClass>(this.existing?.assetClass ?? 'Stock', {
       nonNullable: true,
       validators: [Validators.required],
@@ -126,10 +162,13 @@ export class AssetFormDialog {
       nonNullable: true,
       validators: [Validators.required, Validators.pattern(/^[A-Za-z]{3}$/)],
     }),
-    quoteProviderKind: new FormControl<QuoteProviderKind>(this.existing?.quoteProviderKind ?? 'TwelveData', {
-      nonNullable: true,
-      validators: [Validators.required],
-    }),
+    quoteProviderKind: new FormControl<QuoteProviderKind>(
+      this.existing?.quoteProviderKind ?? 'TwelveData',
+      {
+        nonNullable: true,
+        validators: [Validators.required],
+      },
+    ),
     providerSymbol: new FormControl<string | null>(this.existing?.providerSymbol ?? null),
     providerCoinId: new FormControl<string | null>(this.existing?.providerCoinId ?? null),
     // zakat.md §3.1 — recurring month/day, not a stored date. Range-validated
@@ -137,19 +176,31 @@ export class AssetFormDialog {
     // fiscal year end" rule (29 Feb allowed, 2/30 and 4/31 rejected) is left
     // to the server, same division of labour as D23's provider-routing rule.
     fiscalYearEndMonth: new FormControl<number | null>(this.existing?.fiscalYearEndMonth ?? null, {
-      validators: [Validators.min(1), Validators.max(12), fiscalYearEndPairValidator('fiscalYearEndDay')],
+      validators: [
+        Validators.min(1),
+        Validators.max(12),
+        fiscalYearEndPairValidator('fiscalYearEndDay'),
+      ],
     }),
     fiscalYearEndDay: new FormControl<number | null>(this.existing?.fiscalYearEndDay ?? null, {
-      validators: [Validators.min(1), Validators.max(31), fiscalYearEndPairValidator('fiscalYearEndMonth')],
+      validators: [
+        Validators.min(1),
+        Validators.max(31),
+        fiscalYearEndPairValidator('fiscalYearEndMonth'),
+      ],
     }),
   });
 
   readonly assetClassValue = signal<AssetClass>(this.existing?.assetClass ?? 'Stock');
-  readonly providerValue = signal<QuoteProviderKind>(this.existing?.quoteProviderKind ?? 'TwelveData');
+  readonly providerValue = signal<QuoteProviderKind>(
+    this.existing?.quoteProviderKind ?? 'TwelveData',
+  );
 
   readonly isCrypto = computed(() => this.assetClassValue() === 'Crypto');
   readonly usesCoinId = computed(() => this.providerValue() === 'CoinGecko');
-  readonly showsCreditWarning = computed(() => !this.isEdit && this.providerValue() === 'TwelveData');
+  readonly showsCreditWarning = computed(
+    () => !this.isEdit && this.providerValue() === 'TwelveData',
+  );
 
   readonly identifierHint = computed(() => {
     switch (this.providerValue()) {
@@ -214,10 +265,16 @@ export class AssetFormDialog {
     // value, which Angular does not automatically re-check when only the
     // sibling changes — nudge each one to revalidate when the other moves.
     this.form.controls.fiscalYearEndMonth.valueChanges.subscribe(() =>
-      this.form.controls.fiscalYearEndDay.updateValueAndValidity({ onlySelf: true, emitEvent: false }),
+      this.form.controls.fiscalYearEndDay.updateValueAndValidity({
+        onlySelf: true,
+        emitEvent: false,
+      }),
     );
     this.form.controls.fiscalYearEndDay.valueChanges.subscribe(() =>
-      this.form.controls.fiscalYearEndMonth.updateValueAndValidity({ onlySelf: true, emitEvent: false }),
+      this.form.controls.fiscalYearEndMonth.updateValueAndValidity({
+        onlySelf: true,
+        emitEvent: false,
+      }),
     );
 
     if (this.isEdit) {
@@ -261,9 +318,12 @@ export class AssetFormDialog {
   private describeError(name: keyof AssetFormControls, errors: ValidationErrors): string {
     return describeValidationError(
       errors,
-      errors['fiscalYearEndPair'] ? 'Set both month and day, or leave both blank.' : 'Invalid value.',
+      errors['fiscalYearEndPair']
+        ? 'Set both month and day, or leave both blank.'
+        : 'Invalid value.',
       {
-        pattern: () => (name === 'currency' ? 'A 3-letter ISO currency code, e.g. USD.' : 'Invalid format.'),
+        pattern: () =>
+          name === 'currency' ? 'A 3-letter ISO currency code, e.g. USD.' : 'Invalid format.',
         min: (detail: { min: number }) => `Must be ${detail.min} or greater.`,
       },
     );
@@ -292,7 +352,9 @@ export class AssetFormDialog {
     this.submitting.set(true);
     this.serverError.set(null);
 
-    const call = this.existing ? this.assetsApi.replace(this.existing, request) : this.assetsApi.create(request);
+    const call = this.existing
+      ? this.assetsApi.replace(this.existing, request)
+      : this.assetsApi.create(request);
 
     call.pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (asset) => {

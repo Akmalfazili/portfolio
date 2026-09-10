@@ -30,8 +30,11 @@ describe('AnnualReturnChart', () => {
     fixture.componentRef.setInput('years', years);
     fixture.detectChanges();
 
-    const series = (fixture.componentInstance.options() as { series: { data: { value: number; itemStyle: { color: string } }[] }[] })
-      .series[0].data;
+    const series = (
+      fixture.componentInstance.options() as {
+        series: { data: { value: number; itemStyle: { color: string } }[] }[];
+      }
+    ).series[0].data;
     expect(series).toHaveLength(2);
     expect(series[0].value).toBeCloseTo(12.34);
     expect(series[1].value).toBeCloseTo(-5.67);

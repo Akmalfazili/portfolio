@@ -30,8 +30,7 @@
   @if (assetsErrored()) {
     <p class="transactions__warning">
       <mat-icon aria-hidden="true">warning</mat-icon>
-      Couldn't load the asset list — new and edited transactions may not work until this
-      recovers.
+      Couldn't load the asset list — new and edited transactions may not work until this recovers.
       <button mat-button type="button" (click)="retryAssets()">Retry</button>
     </p>
   }
@@ -121,7 +120,11 @@
               class="transactions__grid-row"
               role="row"
               [attr.aria-rowindex]="i + 2"
-              *cdkVirtualFor="let transaction of tableState.paged(); let i = index; trackBy: trackById"
+              *cdkVirtualFor="
+                let transaction of tableState.paged();
+                let i = index;
+                trackBy: trackById
+              "
             >
               <span role="cell">{{ transaction.tradeDate }}</span>
               <span role="cell">{{ transaction.assetSymbol }}</span>
@@ -153,7 +156,9 @@
         </div>
       } @else {
         <table class="transactions__table">
-          <caption class="transactions__caption">Transactions</caption>
+          <caption class="transactions__caption">
+            Transactions
+          </caption>
           <thead>
             <tr>
               <th scope="col" mat-sort-header="date">Date</th>

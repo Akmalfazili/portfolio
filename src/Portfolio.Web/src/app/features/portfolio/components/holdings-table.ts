@@ -62,7 +62,15 @@ type HoldingColumn =
 @Component({
   selector: 'app-holdings-table',
   standalone: true,
-  imports: [RouterLink, MoneyPipe, QuantityPipe, GainLoss, MatSortModule, MatIconModule, TablePager],
+  imports: [
+    RouterLink,
+    MoneyPipe,
+    QuantityPipe,
+    GainLoss,
+    MatSortModule,
+    MatIconModule,
+    TablePager,
+  ],
   templateUrl: './holdings-table.html',
   styleUrl: './holdings-table.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -94,7 +102,8 @@ export class HoldingsTable {
       // Same "sort on null (not a fabricated number)" rule as `unrealized` —
       // a NotYetFetched/FetchFailed row shows no figure at all, so it must
       // sort last rather than by a value that is never actually displayed.
-      dividends: (h): SortValue => (h.dividendCoverageStatus === 'Covered' ? h.dividendsTrailing12MonthUsd : null),
+      dividends: (h): SortValue =>
+        h.dividendCoverageStatus === 'Covered' ? h.dividendsTrailing12MonthUsd : null,
     },
     defaultSort: { active: 'marketValue', direction: 'desc' },
   });

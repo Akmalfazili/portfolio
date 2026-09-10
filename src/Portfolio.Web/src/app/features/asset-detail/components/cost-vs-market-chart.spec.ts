@@ -33,9 +33,11 @@ describe('CostVsMarketChart', () => {
     fixture.componentRef.setInput('points', POINTS);
     fixture.detectChanges();
 
-    const series = (fixture.componentInstance.options() as {
-      series: { name: string; step?: string; smooth?: boolean }[];
-    }).series;
+    const series = (
+      fixture.componentInstance.options() as {
+        series: { name: string; step?: string; smooth?: boolean }[];
+      }
+    ).series;
 
     const cost = series.find((s) => s.name === 'Cost basis');
     const market = series.find((s) => s.name === 'Market value');
@@ -84,10 +86,12 @@ describe('CostVsMarketChart', () => {
     expect(filtered.map((p) => p.date)).toEqual(['2025-12-01', '2025-12-15', '2025-12-31']);
   });
 
-  it('always keeps at least the series\' own last point, however narrow the range', () => {
+  it("always keeps at least the series' own last point, however narrow the range", () => {
     // A single point far in the past would filter to nothing under a
     // wall-clock-anchored range; anchored to its own date it always survives.
-    const sparse: PerformancePointDto[] = [{ date: '2020-01-01', costBasisUsd: 10, marketValueUsd: 10 }];
+    const sparse: PerformancePointDto[] = [
+      { date: '2020-01-01', costBasisUsd: 10, marketValueUsd: 10 },
+    ];
     fixture.componentRef.setInput('points', sparse);
     fixture.componentInstance.setRange('1M');
     fixture.detectChanges();
@@ -136,7 +140,9 @@ describe('CostVsMarketChart', () => {
   });
 
   describe('D19 — x-axis tick format tracks the visible range span', () => {
-    function axisFormatter(fixture: ComponentFixture<CostVsMarketChart>): (value: number) => string {
+    function axisFormatter(
+      fixture: ComponentFixture<CostVsMarketChart>,
+    ): (value: number) => string {
       const options = fixture.componentInstance.options() as {
         xAxis: { axisLabel: { formatter: (value: number) => string } };
       };
@@ -159,7 +165,8 @@ describe('CostVsMarketChart', () => {
      * tests honest in any timezone, and makes them fail if the formatter
      * goes back to UTC.
      */
-    const localMidnight = (y: number, monthIndex: number, d: number): number => new Date(y, monthIndex, d).getTime();
+    const localMidnight = (y: number, monthIndex: number, d: number): number =>
+      new Date(y, monthIndex, d).getTime();
 
     it('shows month + day over a short (1M-scale) span, never a bare day number', () => {
       const days: PerformancePointDto[] = [

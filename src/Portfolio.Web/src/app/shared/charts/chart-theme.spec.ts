@@ -1,5 +1,11 @@
 import { computed } from '@angular/core';
-import { foldToOther, gainLossColor, readChartTokens, seriesColor, themeVersion } from './chart-theme';
+import {
+  foldToOther,
+  gainLossColor,
+  readChartTokens,
+  seriesColor,
+  themeVersion,
+} from './chart-theme';
 
 describe('chart-theme', () => {
   describe('readChartTokens', () => {
@@ -179,13 +185,17 @@ describe('chart-theme', () => {
   describe('foldToOther', () => {
     it('leaves 8 or fewer items untouched', () => {
       const items = Array.from({ length: 8 }, (_, i) => ({ value: i }));
-      const result = foldToOther(items, (rest) => ({ value: rest.reduce((s, r) => s + r.value, 0) }));
+      const result = foldToOther(items, (rest) => ({
+        value: rest.reduce((s, r) => s + r.value, 0),
+      }));
       expect(result).toEqual(items);
     });
 
     it('folds the 9th+ item into a single "Other" bucket capped at 8 total slots', () => {
       const items = Array.from({ length: 10 }, (_, i) => ({ value: i }));
-      const result = foldToOther(items, (rest) => ({ value: rest.reduce((s, r) => s + r.value, 0) }));
+      const result = foldToOther(items, (rest) => ({
+        value: rest.reduce((s, r) => s + r.value, 0),
+      }));
       expect(result).toHaveLength(8);
       // First 7 kept as-is, the 8th slot is "Other" summing indices 7..9 (7+8+9=24).
       expect(result.slice(0, 7)).toEqual(items.slice(0, 7));

@@ -13,7 +13,11 @@ export type { MoneyDisplayMode };
  */
 @Pipe({ name: 'money', standalone: true })
 export class MoneyPipe implements PipeTransform {
-  transform(value: number | string | null | undefined, currency = 'USD', mode: MoneyDisplayMode = 'total'): string {
+  transform(
+    value: number | string | null | undefined,
+    currency = 'USD',
+    mode: MoneyDisplayMode = 'total',
+  ): string {
     return formatMoney(value, currency, mode);
   }
 }

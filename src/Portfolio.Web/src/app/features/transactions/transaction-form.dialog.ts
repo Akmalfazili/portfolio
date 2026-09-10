@@ -1,7 +1,20 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  computed,
+  inject,
+  signal,
+} from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { HttpErrorResponse } from '@angular/common/http';
-import { FormControl, FormGroup, ReactiveFormsModule, ValidationErrors, Validators } from '@angular/forms';
+import {
+  FormControl,
+  FormGroup,
+  ReactiveFormsModule,
+  ValidationErrors,
+  Validators,
+} from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
 import { provideNativeDateAdapter } from '@angular/material/core';
@@ -12,7 +25,13 @@ import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 
 import { TransactionsApi } from '../../core/api/transactions.api';
-import { AssetDto, CreateTransactionRequest, TransactionDto, TransactionType, ValidationProblemDetails } from '../../core/api/models';
+import {
+  AssetDto,
+  CreateTransactionRequest,
+  TransactionDto,
+  TransactionType,
+  ValidationProblemDetails,
+} from '../../core/api/models';
 import {
   decimalPrecisionValidator,
   nonNegativeNumberValidator,
@@ -29,8 +48,7 @@ export interface TransactionFormDialogData {
 }
 
 export type TransactionFormDialogResult =
-  | { kind: 'saved'; transaction: TransactionDto }
-  | { kind: 'deleted-elsewhere' };
+  { kind: 'saved'; transaction: TransactionDto } | { kind: 'deleted-elsewhere' };
 
 interface TransactionFormControls {
   assetId: FormControl<number | null>;
@@ -92,7 +110,9 @@ const SERVER_ERROR_FIELDS: (keyof TransactionFormControls)[] = [
 })
 export class TransactionFormDialog {
   readonly data = inject<TransactionFormDialogData>(MAT_DIALOG_DATA);
-  private readonly dialogRef = inject(MatDialogRef<TransactionFormDialog, TransactionFormDialogResult>);
+  private readonly dialogRef = inject(
+    MatDialogRef<TransactionFormDialog, TransactionFormDialogResult>,
+  );
   private readonly transactionsApi = inject(TransactionsApi);
   private readonly destroyRef = inject(DestroyRef);
 
@@ -102,7 +122,9 @@ export class TransactionFormDialog {
   readonly deletedElsewhere = signal(false);
 
   readonly assetOptions = computed(() =>
-    [...this.data.assets].filter((asset) => asset.isActive).sort((a, b) => a.symbol.localeCompare(b.symbol)),
+    [...this.data.assets]
+      .filter((asset) => asset.isActive)
+      .sort((a, b) => a.symbol.localeCompare(b.symbol)),
   );
 
   readonly isEdit = this.data.mode === 'edit';
@@ -112,7 +134,9 @@ export class TransactionFormDialog {
     assetId: new FormControl<number | null>(this.data.transaction?.assetId ?? null, {
       validators: [Validators.required],
     }),
-    type: new FormControl<TransactionType>(this.data.transaction?.type ?? 'Buy', { nonNullable: true }),
+    type: new FormControl<TransactionType>(this.data.transaction?.type ?? 'Buy', {
+      nonNullable: true,
+    }),
     tradeDate: new FormControl<Date | null>(
       this.data.transaction ? fromDateOnlyString(this.data.transaction.tradeDate) : this.today,
       { validators: [Validators.required] },
@@ -125,7 +149,11 @@ export class TransactionFormDialog {
       // dividend), so this is the one quantity-ish field that does NOT use
       // positiveNumberValidator(). Still required: Validators.required treats
       // 0 as present, so a genuinely blank field is still caught.
-      validators: [Validators.required, nonNegativeNumberValidator(), decimalPrecisionValidator(10)],
+      validators: [
+        Validators.required,
+        nonNegativeNumberValidator(),
+        decimalPrecisionValidator(10),
+      ],
     }),
     fees: new FormControl<number>(this.data.transaction?.fees ?? 0, {
       nonNullable: true,
@@ -160,7 +188,10 @@ export class TransactionFormDialog {
   /** Only the last-resort string is this dialog's own — the codes and their
    *  precedence are shared (`shared/forms/describe-error.ts`). */
   private describeError(name: keyof TransactionFormControls, errors: ValidationErrors): string {
-    return describeValidationError(errors, name === 'tradeDate' ? 'Invalid date.' : 'Invalid value.');
+    return describeValidationError(
+      errors,
+      name === 'tradeDate' ? 'Invalid date.' : 'Invalid value.',
+    );
   }
 
   submit(): void {

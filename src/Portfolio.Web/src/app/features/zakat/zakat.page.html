@@ -10,8 +10,8 @@
     <div class="zakat__legend-item">
       <dt class="zakat__legend-term">Stocks</dt>
       <dd class="zakat__legend-rule">
-        Each company valued at <strong>its own</strong> last fiscal year end, then summed —
-        MUIS's multi-company method.
+        Each company valued at <strong>its own</strong> last fiscal year end, then summed — MUIS's
+        multi-company method.
       </dd>
     </div>
     <div class="zakat__legend-item">
@@ -23,8 +23,8 @@
     <div class="zakat__legend-item">
       <dt class="zakat__legend-term">No verdict</dt>
       <dd class="zakat__legend-rule">
-        Nisab is not shown on purpose — compare the total against the current figure on
-        zakat.sg yourself. This page never shows a "you owe" verdict.
+        Nisab is not shown on purpose — compare the total against the current figure on zakat.sg
+        yourself. This page never shows a "you owe" verdict.
       </dd>
     </div>
   </dl>
@@ -57,10 +57,10 @@
         <p class="zakat__setup-notice">
           <mat-icon aria-hidden="true">info</mat-icon>
           <span>
-            No stock has a fiscal year end configured yet, so every stock below is excluded and
-            the stock total reads SGD 0.00 — a missing input, not a real zero. This is expected
-            before each company's year end has been confirmed against its own filings. Use
-            "Set year end" on a row once you've confirmed one.
+            No stock has a fiscal year end configured yet, so every stock below is excluded and the
+            stock total reads SGD 0.00 — a missing input, not a real zero. This is expected before
+            each company's year end has been confirmed against its own filings. Use "Set year end"
+            on a row once you've confirmed one.
           </span>
         </p>
       } @else if (hasExcluded()) {
@@ -71,9 +71,9 @@
       }
 
       <p class="zakat__asof">
-        Report reference date {{ r.asOf }} — used for crypto and as the point each stock's
-        fiscal year end resolves backward from. The total below sums DIFFERENT valuation dates,
-        one per company; see each row's own date.
+        Report reference date {{ r.asOf }} — used for crypto and as the point each stock's fiscal
+        year end resolves backward from. The total below sums DIFFERENT valuation dates, one per
+        company; see each row's own date.
       </p>
 
       <div class="zakat__tiles">
@@ -90,7 +90,9 @@
       <section class="zakat__panel">
         <h2 class="zakat__panel-title">Stocks — each valued at its own fiscal year end</h2>
         <table class="zakat__table">
-          <caption class="zakat__caption">Zakat on shares — stocks</caption>
+          <caption class="zakat__caption">
+            Zakat on shares — stocks
+          </caption>
           <thead>
             <tr>
               <th scope="col">Symbol</th>
@@ -120,7 +122,8 @@
                     <span class="zakat__date-token">{{ line.fiscalYearEndDate }}</span>
                     @if (line.closeDateExact === false) {
                       <span class="zakat__footnote">
-                        valued <span class="zakat__date-token">{{ line.closeDateUsed }}</span> — carried forward
+                        valued <span class="zakat__date-token">{{ line.closeDateUsed }}</span> —
+                        carried forward
                       </span>
                     }
                   } @else {
@@ -161,7 +164,9 @@
                     mat-icon-button
                     type="button"
                     [disabled]="!assetsReady()"
-                    [attr.aria-label]="fiscalYearEndActionLabel(line.status) + ' for ' + line.symbol"
+                    [attr.aria-label]="
+                      fiscalYearEndActionLabel(line.status) + ' for ' + line.symbol
+                    "
                     [matTooltip]="fiscalYearEndActionLabel(line.status)"
                     (click)="openFiscalYearEndDialog(line.assetId)"
                   >
@@ -183,7 +188,9 @@
           <p class="zakat__empty-note">No crypto assets tracked.</p>
         } @else {
           <table class="zakat__table">
-            <caption class="zakat__caption">Zakat on shares — crypto</caption>
+            <caption class="zakat__caption">
+              Zakat on shares — crypto
+            </caption>
             <thead>
               <tr>
                 <th scope="col">Symbol</th>
@@ -232,73 +239,75 @@
        the same table as Part 1, and loaded/rendered independently of
        whether the computed report above succeeded. -->
   <section class="zakat__recorded" aria-label="Zakat payment history">
-      <header class="zakat__panel-header">
-        <h2 class="zakat__panel-title">Zakat payments recorded</h2>
-        <button mat-flat-button color="primary" type="button" (click)="openCreatePaymentDialog()">
-          <mat-icon aria-hidden="true">add</mat-icon>
-          Record a payment
-        </button>
-      </header>
-      <p class="zakat__recorded-note">
-        A fact you record by hand — not derived from the calculation above, and recording a
-        payment here never changes those figures.
-      </p>
+    <header class="zakat__panel-header">
+      <h2 class="zakat__panel-title">Zakat payments recorded</h2>
+      <button mat-flat-button color="primary" type="button" (click)="openCreatePaymentDialog()">
+        <mat-icon aria-hidden="true">add</mat-icon>
+        Record a payment
+      </button>
+    </header>
+    <p class="zakat__recorded-note">
+      A fact you record by hand — not derived from the calculation above, and recording a payment
+      here never changes those figures.
+    </p>
 
-      @if (paymentsLoading()) {
-        <app-state-message variant="loading" title="Loading payment history…" />
-      } @else if (paymentsHasError()) {
-        <app-state-message
-          variant="error"
-          title="Couldn't load payment history"
-          description="Check that the API is running, then try again."
-          actionLabel="Retry"
-          (action)="retryPayments()"
-        />
-      } @else if (paymentsEmpty()) {
-        <app-state-message
-          variant="empty"
-          title="No payments recorded yet"
-          description="Record a payment once you've actually paid zakat, to keep a history separate from this page's estimate."
-          actionLabel="Record a payment"
-          (action)="openCreatePaymentDialog()"
-        />
-      } @else {
-        <table class="zakat__table">
-          <caption class="zakat__caption">Zakat payments recorded, newest first</caption>
-          <thead>
+    @if (paymentsLoading()) {
+      <app-state-message variant="loading" title="Loading payment history…" />
+    } @else if (paymentsHasError()) {
+      <app-state-message
+        variant="error"
+        title="Couldn't load payment history"
+        description="Check that the API is running, then try again."
+        actionLabel="Retry"
+        (action)="retryPayments()"
+      />
+    } @else if (paymentsEmpty()) {
+      <app-state-message
+        variant="empty"
+        title="No payments recorded yet"
+        description="Record a payment once you've actually paid zakat, to keep a history separate from this page's estimate."
+        actionLabel="Record a payment"
+        (action)="openCreatePaymentDialog()"
+      />
+    } @else {
+      <table class="zakat__table">
+        <caption class="zakat__caption">
+          Zakat payments recorded, newest first
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">Paid on</th>
+            <th scope="col">Amount (SGD)</th>
+            <th scope="col" class="zakat__actions-header">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (payment of sortedPayments(); track payment.id) {
             <tr>
-              <th scope="col">Paid on</th>
-              <th scope="col">Amount (SGD)</th>
-              <th scope="col" class="zakat__actions-header">Actions</th>
+              <td>{{ payment.paidOn }}</td>
+              <td>{{ payment.amountSgd | money: 'SGD' }}</td>
+              <td class="zakat__actions">
+                <button
+                  mat-icon-button
+                  type="button"
+                  [attr.aria-label]="'Edit payment recorded on ' + payment.paidOn"
+                  (click)="openEditPaymentDialog(payment)"
+                >
+                  <mat-icon aria-hidden="true">edit</mat-icon>
+                </button>
+                <button
+                  mat-icon-button
+                  type="button"
+                  [attr.aria-label]="'Delete payment recorded on ' + payment.paidOn"
+                  (click)="deletePayment(payment)"
+                >
+                  <mat-icon aria-hidden="true">delete_outline</mat-icon>
+                </button>
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            @for (payment of sortedPayments(); track payment.id) {
-              <tr>
-                <td>{{ payment.paidOn }}</td>
-                <td>{{ payment.amountSgd | money: 'SGD' }}</td>
-                <td class="zakat__actions">
-                  <button
-                    mat-icon-button
-                    type="button"
-                    [attr.aria-label]="'Edit payment recorded on ' + payment.paidOn"
-                    (click)="openEditPaymentDialog(payment)"
-                  >
-                    <mat-icon aria-hidden="true">edit</mat-icon>
-                  </button>
-                  <button
-                    mat-icon-button
-                    type="button"
-                    [attr.aria-label]="'Delete payment recorded on ' + payment.paidOn"
-                    (click)="deletePayment(payment)"
-                  >
-                    <mat-icon aria-hidden="true">delete_outline</mat-icon>
-                  </button>
-                </td>
-              </tr>
-            }
-          </tbody>
-        </table>
-      }
+          }
+        </tbody>
+      </table>
+    }
   </section>
 </section>

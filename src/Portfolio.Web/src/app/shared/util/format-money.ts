@@ -29,7 +29,10 @@ const formatterCache = new Map<string, Intl.NumberFormat>();
  * a different one across currencies — can be asserted directly in a spec,
  * rather than inferred indirectly through `formatMoney`'s string output.
  */
-export function getMoneyFormatter(currency: string, maximumFractionDigits: number): Intl.NumberFormat {
+export function getMoneyFormatter(
+  currency: string,
+  maximumFractionDigits: number,
+): Intl.NumberFormat {
   const key = `${currency}:${maximumFractionDigits}`;
   let formatter = formatterCache.get(key);
   if (!formatter) {

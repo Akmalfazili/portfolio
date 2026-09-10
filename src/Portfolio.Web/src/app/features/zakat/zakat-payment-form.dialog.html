@@ -18,7 +18,12 @@
     <mat-dialog-content class="zakat-payment-form">
       <mat-form-field appearance="outline">
         <mat-label>Paid on</mat-label>
-        <input matInput [matDatepicker]="picker" [max]="today" [formControl]="form.controls.paidOn" />
+        <input
+          matInput
+          [matDatepicker]="picker"
+          [max]="today"
+          [formControl]="form.controls.paidOn"
+        />
         <mat-datepicker-toggle matIconSuffix [for]="picker" />
         <mat-datepicker #picker />
         @if (fieldError('paidOn'); as error) {

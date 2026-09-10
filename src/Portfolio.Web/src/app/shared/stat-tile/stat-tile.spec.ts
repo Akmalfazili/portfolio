@@ -30,6 +30,8 @@ describe('StatTile', () => {
   });
 
   it('projects delta content', () => {
-    expect(fixture.nativeElement.querySelector('.projected')?.textContent).toContain('delta content');
+    expect(fixture.nativeElement.querySelector('.projected')?.textContent).toContain(
+      'delta content',
+    );
   });
 });

@@ -18,7 +18,9 @@ describe('ZakatPaymentFormDialog', () => {
   let httpMock: HttpTestingController;
   let dialogRef: { close: ReturnType<typeof vi.fn> };
 
-  function setup(data: ZakatPaymentFormDialogData = { mode: 'create' }): ComponentFixture<ZakatPaymentFormDialog> {
+  function setup(
+    data: ZakatPaymentFormDialogData = { mode: 'create' },
+  ): ComponentFixture<ZakatPaymentFormDialog> {
     dialogRef = { close: vi.fn() };
     TestBed.configureTestingModule({
       imports: [ZakatPaymentFormDialog],
@@ -67,7 +69,9 @@ describe('ZakatPaymentFormDialog', () => {
 
   it('defaults paidOn to today for a new payment', () => {
     const fixture = setup();
-    expect(fixture.componentInstance.form.controls.paidOn.value).toEqual(fixture.componentInstance.today);
+    expect(fixture.componentInstance.form.controls.paidOn.value).toEqual(
+      fixture.componentInstance.today,
+    );
   });
 
   it('submits a well-formed CreateZakatPaymentRequest with paidOn as a plain YYYY-MM-DD string', () => {
@@ -100,7 +104,10 @@ describe('ZakatPaymentFormDialog', () => {
     expect(req.request.body).toEqual({ paidOn: '2026-03-01', amountSgd: 300 });
     req.flush({ ...EXISTING, amountSgd: 300 });
 
-    expect(dialogRef.close).toHaveBeenCalledWith({ kind: 'saved', payment: { ...EXISTING, amountSgd: 300 } });
+    expect(dialogRef.close).toHaveBeenCalledWith({
+      kind: 'saved',
+      payment: { ...EXISTING, amountSgd: 300 },
+    });
   });
 
   it('shows a distinct "no longer exists" state on a 404 while editing, rather than a generic error', () => {
@@ -121,7 +128,9 @@ describe('ZakatPaymentFormDialog', () => {
     const { componentInstance } = fixture;
 
     componentInstance.submit();
-    httpMock.expectOne(API_ROUTES.zakatPayment(EXISTING.id)).flush(null, { status: 404, statusText: 'Not Found' });
+    httpMock
+      .expectOne(API_ROUTES.zakatPayment(EXISTING.id))
+      .flush(null, { status: 404, statusText: 'Not Found' });
     fixture.detectChanges();
 
     componentInstance.closeAfterDeletedElsewhere();
@@ -130,7 +139,10 @@ describe('ZakatPaymentFormDialog', () => {
 
   it('maps a 400 amountSgd validation error onto its own field', () => {
     const fixture = setup();
-    const { componentInstance, componentInstance: { form } } = fixture;
+    const {
+      componentInstance,
+      componentInstance: { form },
+    } = fixture;
 
     form.controls.amountSgd.setValue(5);
     componentInstance.submit();

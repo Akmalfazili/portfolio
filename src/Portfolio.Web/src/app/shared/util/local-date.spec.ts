@@ -45,7 +45,7 @@ describe('local-date', () => {
       expect(formatCloseDate('2026-07-24T00:00:00+00:00')).toBe('Fri 24 Jul');
     });
 
-    it('does not shift the date at this environment\'s own positive UTC offset', () => {
+    it("does not shift the date at this environment's own positive UTC offset", () => {
       // This suite runs in Asia/Singapore (UTC+8) — a POSITIVE offset, the
       // same zone D19a's axis-shift bug was caught in. A regression back to
       // `new Date(priceAsOf)` plus that Date's own LOCAL getters would
