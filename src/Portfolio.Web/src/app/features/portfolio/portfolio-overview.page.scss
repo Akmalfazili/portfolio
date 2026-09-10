@@ -112,3 +112,17 @@
 .overview__panel-header .overview__panel-title {
   margin-bottom: 0;
 }
+
+// The cost-vs-market panel's "Daily closes · as of {date}" note — quiet and
+// secondary, never competing with the panel title. Price honesty: the chart
+// ends on the last stored CLOSE while the tiles above read the LIVE price,
+// so this explains the two numbers differing rather than leaving it to look
+// like a bug. Sits on the header's right edge at normal widths; the header's
+// existing `flex-wrap: wrap` (see `.overview__panel-header` above) drops it
+// below the title once the row can no longer fit both, which is what keeps
+// it legible at ~400px rather than overflowing or truncating.
+.overview__panel-caption {
+  margin: 0;
+  font-size: var(--ui-font-size-sm);
+  color: var(--ui-color-on-surface-muted);
+}

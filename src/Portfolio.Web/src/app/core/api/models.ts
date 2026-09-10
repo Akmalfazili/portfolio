@@ -382,6 +382,24 @@ export interface AssetPerformanceDto {
   points: PerformancePointDto[];
 }
 
+/**
+ * Portfolio-wide cost-basis-vs-market-value series, stocks only — summed
+ * across every stock that has both a transaction and a stored close on or
+ * before a given date. An asset contributes to both lines or neither, so the
+ * gap between them is always like-for-like; there is no crypto variant, by
+ * the same locked crypto-scope decision as `AnnualReturnsDto`.
+ */
+export interface PortfolioPerformanceDto {
+  points: PerformancePointDto[];
+  /**
+   * Stocks currently held with NO price history at all — absent from both
+   * lines above, not a loss. Never `null` (an empty array when nothing is
+   * uncharted) — same "never a silent skip bucket" shape as the D10/D26/D33/
+   * D35/D38/D45 defect family elsewhere in this app.
+   */
+  unchartedSymbols: string[];
+}
+
 /** Time-weighted return for one calendar year, as a percentage. */
 export interface AnnualReturnDto {
   year: number;

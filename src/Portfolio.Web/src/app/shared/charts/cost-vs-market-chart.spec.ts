@@ -2,7 +2,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideEchartsCore } from 'ngx-echarts';
 
 import { CostVsMarketChart } from './cost-vs-market-chart';
-import { PerformancePointDto } from '../../../core/api/models';
+import { PerformancePointDto } from '../../core/api/models';
 
 const POINTS: PerformancePointDto[] = [
   { date: '2026-07-20', costBasisUsd: 3201, marketValueUsd: 3265.9 },
@@ -27,6 +27,19 @@ describe('CostVsMarketChart', () => {
     fixture.componentRef.setInput('points', []);
     fixture.detectChanges();
     expect(fixture.nativeElement.textContent).toContain('No priced history yet');
+    expect(fixture.nativeElement.textContent).toContain('once the position has transactions');
+  });
+
+  it('overrides the empty-state copy via the emptyMessage input, for a caller plotting a different scope', () => {
+    fixture.componentRef.setInput('points', []);
+    fixture.componentRef.setInput(
+      'emptyMessage',
+      'No priced history yet — this chart fills in once your stocks have transactions and daily closes.',
+    );
+    fixture.detectChanges();
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('once your stocks have transactions and daily closes');
+    expect(text).not.toContain('once the position has transactions');
   });
 
   it('renders cost basis as a STEP series and market value as a smooth line — never the reverse', () => {
@@ -136,6 +149,42 @@ describe('CostVsMarketChart', () => {
       for (const s of series) {
         expect(s.endLabel.offset).toEqual([0, 0]);
       }
+    });
+  });
+
+  describe('layout defect fixes (live-browser-measured)', () => {
+    type GridOptions = { grid: { right: number } };
+    type XAxisOptions = { xAxis: { axisLabel: { hideOverlap?: boolean } } };
+
+    it('grows grid.right with a wider end label, rather than clipping it at a fixed reservation', () => {
+      const narrow: PerformancePointDto[] = [
+        { date: '2026-07-20', costBasisUsd: 400, marketValueUsd: 400 },
+        { date: '2026-07-24', costBasisUsd: 400, marketValueUsd: 461.98 },
+      ];
+      fixture.componentRef.setInput('points', narrow);
+      fixture.detectChanges();
+      const narrowRight = (fixture.componentInstance.options() as GridOptions).grid.right;
+
+      const wide: PerformancePointDto[] = [
+        { date: '2026-07-20', costBasisUsd: 400, marketValueUsd: 400 },
+        { date: '2026-07-24', costBasisUsd: 123456.78, marketValueUsd: 400 },
+      ];
+      fixture.componentRef.setInput('points', wide);
+      fixture.detectChanges();
+      const wideRight = (fixture.componentInstance.options() as GridOptions).grid.right;
+
+      // "$123,456.78" is substantially wider than "$461.98" — the reserved
+      // space must actually track that, not stay pinned at a constant that
+      // clips whichever value happens to be too wide for it (the measured
+      // live defect: "$53,940.96" rendering as "$53,940.9").
+      expect(wideRight).toBeGreaterThan(narrowRight);
+    });
+
+    it('sets hideOverlap on the x-axis label so ticks thin out instead of colliding at narrow widths', () => {
+      fixture.componentRef.setInput('points', POINTS);
+      fixture.detectChanges();
+      const options = fixture.componentInstance.options() as XAxisOptions;
+      expect(options.xAxis.axisLabel.hideOverlap).toBe(true);
     });
   });
 

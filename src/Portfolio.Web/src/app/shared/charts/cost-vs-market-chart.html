@@ -23,8 +23,5 @@
     ></div>
   </div>
 } @else {
-  <p class="cost-vs-market__empty">
-    No priced history yet — this chart fills in once the position has transactions and price history
-    to compare.
-  </p>
+  <p class="cost-vs-market__empty">{{ emptyMessage() }}</p>
 }

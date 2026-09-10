@@ -2,6 +2,7 @@ import { computed } from '@angular/core';
 import {
   foldToOther,
   gainLossColor,
+  measureTextWidth,
   readChartTokens,
   seriesColor,
   themeVersion,
@@ -179,6 +180,21 @@ describe('chart-theme', () => {
       expect(tokens().gain).toBe('#222222');
 
       document.documentElement.style.removeProperty('--ui-color-gain');
+    });
+  });
+
+  describe('measureTextWidth', () => {
+    it('reports a wider measurement for a longer string, never a fixed constant', () => {
+      // test-setup.ts stubs `HTMLCanvasElement.getContext('2d')` with a real
+      // (if crude) `measureText` — see that file's D22 header comment — so
+      // this exercises the actual measuring path, not a mock of this function.
+      const short = measureTextWidth('$461.98', 11);
+      const long = measureTextWidth('$123,456.78', 11);
+      expect(long).toBeGreaterThan(short);
+    });
+
+    it('returns 0 for an empty string', () => {
+      expect(measureTextWidth('', 11)).toBe(0);
     });
   });
 

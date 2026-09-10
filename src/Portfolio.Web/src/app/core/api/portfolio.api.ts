@@ -6,6 +6,7 @@ import {
   AnnualReturnsDto,
   AssetClass,
   PortfolioAllocationDto,
+  PortfolioPerformanceDto,
   PortfolioSummaryDto,
 } from './models';
 
@@ -43,6 +44,19 @@ export class PortfolioApi {
   annualReturns(assetClass: () => AssetClass): HttpResourceRef<AnnualReturnsDto | undefined> {
     return httpResource<AnnualReturnsDto | undefined>(() =>
       assetClass() === 'Stock' ? API_ROUTES.stockAnnualReturns : undefined,
+    );
+  }
+
+  /**
+   * GET /api/portfolio/stock/performance — portfolio-wide cost-basis-vs-
+   * market-value series, stocks only. Same `undefined`-url-for-Crypto
+   * pattern as `annualReturns()` above, for the same reason: crypto keeps no
+   * price history at all, so this must never be requested for it, let alone
+   * rendered empty.
+   */
+  performance(assetClass: () => AssetClass): HttpResourceRef<PortfolioPerformanceDto | undefined> {
+    return httpResource<PortfolioPerformanceDto | undefined>(() =>
+      assetClass() === 'Stock' ? API_ROUTES.stockPerformance : undefined,
     );
   }
 }

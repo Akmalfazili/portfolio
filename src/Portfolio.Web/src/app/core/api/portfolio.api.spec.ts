@@ -42,4 +42,16 @@ describe('PortfolioApi', () => {
     TestBed.tick();
     httpMock.expectNone(API_ROUTES.stockAnnualReturns);
   });
+
+  it('performance() requests the stock-only portfolio-wide endpoint for Stock', () => {
+    TestBed.runInInjectionContext(() => api.performance(() => 'Stock'));
+    TestBed.tick();
+    httpMock.expectOne(API_ROUTES.stockPerformance);
+  });
+
+  it('performance() is never requested for Crypto — crypto keeps no price history', () => {
+    TestBed.runInInjectionContext(() => api.performance(() => 'Crypto'));
+    TestBed.tick();
+    httpMock.expectNone(API_ROUTES.stockPerformance);
+  });
 });

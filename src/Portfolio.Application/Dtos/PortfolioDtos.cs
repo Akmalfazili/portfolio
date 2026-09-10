@@ -177,3 +177,23 @@ public sealed record AnnualReturnDto(int Year, decimal TimeWeightedReturnPercent
 
 /// <summary>Stocks only, across the whole stock portfolio — not per asset.</summary>
 public sealed record AnnualReturnsDto(IReadOnlyList<AnnualReturnDto> Years);
+
+/// <summary>
+/// Portfolio-wide cost-basis-vs-market-value series, stocks only — the portfolio-level counterpart
+/// to <see cref="AssetPerformanceDto"/>. On each date, an asset contributes to both
+/// <see cref="PerformancePointDto.CostBasisUsd"/> and <see cref="PerformancePointDto.MarketValueUsd"/>
+/// only if it has both a cost-basis step and a price-history close on or before that date — never
+/// one without the other, which would draw a false loss equal to a held position's cost with no
+/// offsetting market value (the D17 "naive -100%" failure). See
+/// <c>IPortfolioPerformanceService.GetPortfolioPerformanceAsync</c>.
+/// </summary>
+public sealed record PortfolioPerformanceDto(
+    IReadOnlyList<PerformancePointDto> Points,
+
+    /// <summary>
+    /// Currently-held (latest <c>QuantityHeld &gt; 0</c>) stock symbols with no
+    /// <see cref="Domain.Entities.PriceHistory"/> rows at all, sorted by symbol. They are absent
+    /// from every <see cref="Points"/> entry — never silently priced at zero — so the UI can caption
+    /// the gap instead of a chart that quietly under-reports.
+    /// </summary>
+    IReadOnlyList<string> UnchartedSymbols);

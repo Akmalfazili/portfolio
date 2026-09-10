@@ -54,6 +54,39 @@
       }
     </div>
 
+    @if (isStock()) {
+      <section class="overview__panel">
+        <header class="overview__panel-header">
+          <h2 class="overview__panel-title">Cost vs market value</h2>
+          @if (performanceLastDateLabel(); as lastDate) {
+            <p class="overview__panel-caption">Daily closes &middot; as of {{ lastDate }}</p>
+          }
+        </header>
+        @if (performanceIsLoading()) {
+          <app-state-message variant="loading" title="Loading cost vs market value…" />
+        } @else if (performanceHasError()) {
+          <app-state-message
+            variant="error"
+            title="Couldn't load cost vs market value"
+            description="Check that the API is running, then try again."
+            actionLabel="Retry"
+            (action)="retryPerformance()"
+          />
+        } @else {
+          <app-cost-vs-market-chart
+            [points]="performancePoints()"
+            [emptyMessage]="performanceEmptyMessage"
+          />
+          @if (hasUnchartedSymbols()) {
+            <p class="overview__caveat">
+              <mat-icon aria-hidden="true">warning</mat-icon>
+              {{ unchartedCaveat() }}
+            </p>
+          }
+        }
+      </section>
+    }
+
     <section class="overview__panel">
       <header class="overview__panel-header">
         <h2 class="overview__panel-title">Allocation</h2>

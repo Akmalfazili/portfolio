@@ -2,16 +2,17 @@ import { ChangeDetectionStrategy, Component, computed, input, signal } from '@an
 import { NgxEchartsDirective } from 'ngx-echarts';
 import type { EChartsCoreOption } from 'echarts/core';
 
-import { PerformancePointDto } from '../../../core/api/models';
+import { PerformancePointDto } from '../../core/api/models';
 import {
   MARK,
   axisTooltip,
   legend,
+  measureTextWidth,
   readChartTokens,
   seriesColor,
   valueAxis,
-} from '../../../shared/charts/chart-theme';
-import { formatMoney } from '../../../shared/util/format-money';
+} from './chart-theme';
+import { formatMoney } from '../util/format-money';
 
 export type PerformanceRange = '1M' | '3M' | '1Y' | 'All';
 
@@ -22,6 +23,20 @@ const RANGE_DAYS: Record<Exclude<PerformanceRange, 'All'>, number> = {
 };
 const RANGES: PerformanceRange[] = ['1M', '3M', '1Y', 'All'];
 const MS_PER_DAY = 86_400_000;
+
+// End-label sizing (layout defect fix, live-browser-measured) — see
+// `gridRight`'s computation below for the full story.
+const END_LABEL_FONT_SIZE = 11;
+/** Fixed horizontal gap between a series' last point and its end label —
+ *  set explicitly (echarts' own endLabel default is otherwise implicit) so
+ *  `gridRight` below can account for exactly this, not a guess at it. */
+const END_LABEL_DISTANCE = 8;
+/** Small safety margin beyond the measured label width + distance, so
+ *  sub-pixel measurement drift or an unusually wide glyph never re-clips. */
+const END_LABEL_MARGIN = 8;
+/** Fallback `grid.right` when there is no data to measure a label from
+ *  (matches the sibling `annual-return-chart.ts`'s `right: 24`). */
+const MIN_GRID_RIGHT = 24;
 
 /**
  * D19 — the x-axis tick format must track how much time the visible range
@@ -64,18 +79,29 @@ function formatAxisTick(value: number, spanDays: number): string {
 }
 
 /**
- * Cost basis vs market value, stocks only. Cost basis is rendered as a
- * genuine ECharts STEP series (`step: 'end'`) because it only moves on a
- * transaction's own trade date and holds flat in between — drawing it as a
- * smoothed interpolation would invent gradual cost changes on days nothing
- * was bought or sold, which is exactly the misrepresentation the tracker
- * calls out. Market value is a real daily line (`smooth: true`).
+ * Cost basis vs market value, stocks only — shared between the asset-detail
+ * page (one asset's own series) and the stocks overview page (summed across
+ * the whole stock portfolio); both hand it the same `PerformancePointDto[]`
+ * shape, so the chart itself has no notion of which scope it's plotting.
+ * Cost basis is rendered as a genuine ECharts STEP series (`step: 'end'`)
+ * because it only moves on a transaction's own trade date and holds flat in
+ * between — drawing it as a smoothed interpolation would invent gradual cost
+ * changes on days nothing was bought or sold, which is exactly the
+ * misrepresentation the tracker calls out. Market value is a real daily line
+ * (`smooth: true`).
  *
  * The range selector (1M/3M/1Y/All) is anchored to the LAST point in the
  * series, not to today's wall-clock date — the series can lag behind "now"
  * (a stock priced a few days ago in a dev/backfill gap should still show a
  * populated "1M" rather than an empty chart because "today" has no data).
  */
+/** The asset-detail page's original copy — position-specific ("the
+ *  position"), so callers that plot a different scope (e.g. a whole
+ *  portfolio) must override it via the `emptyMessage` input rather than
+ *  inheriting language that doesn't apply to them. */
+const DEFAULT_EMPTY_MESSAGE =
+  'No priced history yet — this chart fills in once the position has transactions and price history to compare.';
+
 @Component({
   selector: 'app-cost-vs-market-chart',
   standalone: true,
@@ -86,6 +112,8 @@ function formatAxisTick(value: number, spanDays: number): string {
 })
 export class CostVsMarketChart {
   readonly points = input.required<PerformancePointDto[]>();
+  /** Empty-state copy, overridable per caller — see `DEFAULT_EMPTY_MESSAGE`. */
+  readonly emptyMessage = input<string>(DEFAULT_EMPTY_MESSAGE);
 
   readonly ranges = RANGES;
   readonly range = signal<PerformanceRange>('All');
@@ -157,6 +185,31 @@ export class CostVsMarketChart {
       ? [0, marketOnTop ? LABEL_NUDGE : -LABEL_NUDGE]
       : [0, 0];
 
+    /**
+     * Layout defect fix (live-browser-measured on /stocks and /stocks/AVGO)
+     * — `grid.containLabel: true` reserves space for AXIS tick labels, but
+     * NOT for a series-level `endLabel`, so a fixed `grid.right` clips any
+     * end label wider than it: "$53,940.96" and "$40,995.32" each overflowed
+     * a 927px-wide chart by 4px, and "$12,515.67" overflowed a 686px one by
+     * the same 4px — any value >= $10,000 at the constant `right: 56` this
+     * replaced. Sized from the WIDER of the two series' own last-drawn
+     * values (never a guess), plus the label's own `distance` from the line
+     * end and a small safety margin — see the three constants above. The
+     * D15 collision nudge above is untouched: it only ever moves a label
+     * vertically (`offset`'s Y component), never changes its horizontal
+     * extent.
+     */
+    const marketLabelText = lastMarket !== undefined ? formatMoney(lastMarket) : '';
+    const costLabelText = lastCost !== undefined ? formatMoney(lastCost) : '';
+    const widestEndLabelWidth = Math.max(
+      measureTextWidth(marketLabelText, END_LABEL_FONT_SIZE),
+      measureTextWidth(costLabelText, END_LABEL_FONT_SIZE),
+    );
+    const gridRight =
+      points.length === 0
+        ? MIN_GRID_RIGHT
+        : Math.ceil(widestEndLabelWidth) + END_LABEL_DISTANCE + END_LABEL_MARGIN;
+
     const endMarker = (color: string) => ({
       symbol: 'circle',
       showSymbol: false,
@@ -166,7 +219,16 @@ export class CostVsMarketChart {
     });
 
     return {
-      grid: { left: 64, right: 56, top: 24, bottom: 48, containLabel: true },
+      // Layout defect fix (live-browser-measured): with `containLabel: true`
+      // the axis tick labels are already reserved INSIDE the grid box, so
+      // `left`/`bottom` are pure outer breathing room, not a duplicate
+      // reservation on top of the labels — the old `left: 64`/`bottom: 48`
+      // double-counted that space and pushed the plot area in by ~107px on
+      // a 400px chart. Matched to the sibling `annual-return-chart.ts`'s
+      // `left`/`bottom`, which gets this right; `right` is computed above
+      // from the widest end label actually being drawn, and `top` stays at
+      // 24 to clear the legend at `top: 0`.
+      grid: { left: 48, right: gridRight, top: 24, bottom: 32, containLabel: true },
       legend: legend(tokens, { top: 0, left: 0 }),
       tooltip: {
         ...axisTooltip(tokens),
@@ -191,6 +253,13 @@ export class CostVsMarketChart {
           color: tokens.onSurfaceMuted,
           fontSize: 11,
           formatter: (value: number) => formatAxisTick(value, spanDays),
+          // Layout defect fix (live-browser-measured): at a ~400px chart
+          // width the plot area narrows to ~150px, and a multi-year "All"
+          // span's ticks ("2021 2022 2023 2024 2025 2026") render as one
+          // unbroken, overlapping string without this — ECharts drops
+          // whichever ticks would collide instead of drawing over each
+          // other.
+          hideOverlap: true,
         },
         splitLine: { show: false },
       },
@@ -216,7 +285,11 @@ export class CostVsMarketChart {
               formatMoney((params as { value: [string, number] }).value[1]),
             color: tokens.onSurface,
             fontFamily: 'var(--ui-font-family-sans)',
-            fontSize: 11,
+            fontSize: END_LABEL_FONT_SIZE,
+            // Fixed explicitly (rather than relying on ECharts' own implicit
+            // default) so `gridRight` above can size the grid from exactly
+            // this value, not a guess at it.
+            distance: END_LABEL_DISTANCE,
             offset: marketLabelOffset,
           },
         },
@@ -235,7 +308,8 @@ export class CostVsMarketChart {
               formatMoney((params as { value: [string, number] }).value[1]),
             color: tokens.onSurface,
             fontFamily: 'var(--ui-font-family-sans)',
-            fontSize: 11,
+            fontSize: END_LABEL_FONT_SIZE,
+            distance: END_LABEL_DISTANCE,
             offset: costLabelOffset,
           },
         },

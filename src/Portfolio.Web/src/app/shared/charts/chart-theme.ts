@@ -193,6 +193,43 @@ export function foldToOther<T extends { value: number }>(
   return [...head, makeOther(tail)];
 }
 
+/** Mirrors `ui.tokens.scss`'s `--ui-font-family-sans` — the one case (canvas
+ *  2D text measurement) that cannot resolve a CSS custom property itself, for
+ *  the same "duplicated fallback, not a duplicated source of truth" reason as
+ *  `FALLBACK_LIGHT` above. */
+const FALLBACK_FONT_FAMILY = "system-ui, -apple-system, 'Segoe UI', sans-serif";
+
+let measureContext: CanvasRenderingContext2D | null | undefined;
+
+/**
+ * Pixel width of `text` set at `fontSizePx` in the app's own sans font — the
+ * one honest way to reserve chart-level label space that ECharts' own layout
+ * does NOT account for automatically. `grid.containLabel` reserves space for
+ * AXIS tick labels, but not for a series-level `endLabel` (the cost-vs-market
+ * chart's right-edge value labels) — a fixed `grid.right` clips any end
+ * label wider than it, measured live: "$53,940.96" clipped to "$53,940.9" at
+ * a 927px chart width. Falls back to a per-character estimate that is
+ * deliberately WIDE, never narrow, on the rare environment with no canvas at
+ * all — under-measuring clips text, over-measuring only wastes a few idle
+ * pixels of padding.
+ */
+export function measureTextWidth(
+  text: string,
+  fontSizePx: number,
+  root: HTMLElement = document.documentElement,
+): number {
+  if (measureContext === undefined) {
+    measureContext =
+      typeof document === 'undefined' ? null : document.createElement('canvas').getContext('2d');
+  }
+  if (!measureContext) {
+    return text.length * fontSizePx * 0.7;
+  }
+  const fontFamily = readVar(getComputedStyle(root), '--ui-font-family-sans', FALLBACK_FONT_FAMILY);
+  measureContext.font = `${fontSizePx}px ${fontFamily}`;
+  return measureContext.measureText(text).width;
+}
+
 /** Text tokens only — labels, axis text and legend never wear a series
  *  colour (marks-and-anatomy.md: "text never wears the data color"). */
 export function textStyle(

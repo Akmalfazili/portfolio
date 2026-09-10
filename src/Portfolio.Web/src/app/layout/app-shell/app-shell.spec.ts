@@ -93,6 +93,7 @@ describe('AppShell — section accent token switching', () => {
     httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(EMPTY_SUMMARY('Stock'));
     httpMock.expectOne(API_ROUTES.portfolioAllocation('Stock')).flush(EMPTY_ALLOCATION('Stock'));
     httpMock.expectOne(API_ROUTES.stockAnnualReturns).flush({ years: [] });
+    httpMock.expectOne(API_ROUTES.stockPerformance).flush({ points: [], unchartedSymbols: [] });
   }
 
   function flushCryptoOverview() {

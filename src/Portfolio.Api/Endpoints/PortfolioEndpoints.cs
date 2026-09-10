@@ -8,8 +8,8 @@ namespace Portfolio.Api.Endpoints;
 /// <summary>
 /// Portfolio-level calculations. <c>{assetClass}</c> works for both <see cref="AssetClass.Stock"/>
 /// and <see cref="AssetClass.Crypto"/> — neither summary nor allocation needs price history.
-/// Annual returns are stocks only, per the crypto scope decision, hence the fixed literal
-/// <c>/stock/</c> segment rather than a class parameter.
+/// Annual returns and the cost-vs-market-value performance series are stocks only, per the crypto
+/// scope decision, hence the fixed literal <c>/stock/</c> segment rather than a class parameter.
 /// </summary>
 public static class PortfolioEndpoints
 {
@@ -44,6 +44,14 @@ public static class PortfolioEndpoints
         {
             var annualReturns = await performanceService.GetAnnualReturnsAsync(cancellationToken);
             return TypedResults.Ok(annualReturns);
+        });
+
+        group.MapGet("/stock/performance", async (
+            IPortfolioPerformanceService performanceService,
+            CancellationToken cancellationToken) =>
+        {
+            var performance = await performanceService.GetPortfolioPerformanceAsync(cancellationToken);
+            return TypedResults.Ok(performance);
         });
 
         return app;

@@ -9,6 +9,7 @@ import { API_ROUTES } from '../../core/api/api-routes';
 import {
   AnnualReturnsDto,
   PortfolioAllocationDto,
+  PortfolioPerformanceDto,
   PortfolioSummaryDto,
 } from '../../core/api/models';
 import { PRICES_HUB_CONNECTION_FACTORY, PriceStore } from '../../core/prices/price-store';
@@ -75,6 +76,14 @@ const ANNUAL_RETURNS: AnnualReturnsDto = {
   years: [{ year: 2026, timeWeightedReturnPercent: 1.7775 }],
 };
 
+const STOCK_PERFORMANCE: PortfolioPerformanceDto = {
+  points: [
+    { date: '2026-08-01', costBasisUsd: 3864, marketValueUsd: 3900 },
+    { date: '2026-08-15', costBasisUsd: 3864, marketValueUsd: 4010.5 },
+  ],
+  unchartedSymbols: [],
+};
+
 describe('PortfolioOverviewPage', () => {
   let fixture: ComponentFixture<PortfolioOverviewPage>;
   let httpMock: HttpTestingController;
@@ -105,11 +114,13 @@ describe('PortfolioOverviewPage', () => {
     summary = STOCK_SUMMARY,
     allocation = STOCK_ALLOCATION,
     annualReturns = ANNUAL_RETURNS,
+    performance = STOCK_PERFORMANCE,
   ) {
     fixture.detectChanges();
     httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(summary);
     httpMock.expectOne(API_ROUTES.portfolioAllocation('Stock')).flush(allocation);
     httpMock.expectOne(API_ROUTES.stockAnnualReturns).flush(annualReturns);
+    httpMock.expectOne(API_ROUTES.stockPerformance).flush(performance);
   }
 
   it('shows the loading state before the requests resolve', () => {
@@ -123,7 +134,7 @@ describe('PortfolioOverviewPage', () => {
     await fixture.whenStable();
   });
 
-  it('does NOT request annual-returns for the crypto section', () => {
+  it('does NOT request annual-returns or performance for the crypto section', () => {
     fixture.componentRef.setInput('assetClass', 'Crypto');
     fixture.detectChanges();
     httpMock
@@ -133,6 +144,7 @@ describe('PortfolioOverviewPage', () => {
       .expectOne(API_ROUTES.portfolioAllocation('Crypto'))
       .flush({ ...STOCK_ALLOCATION, assetClass: 'Crypto' });
     httpMock.expectNone(API_ROUTES.stockAnnualReturns);
+    httpMock.expectNone(API_ROUTES.stockPerformance);
   });
 
   it('shows the empty state with a call to action when there are no holdings', async () => {
@@ -156,6 +168,7 @@ describe('PortfolioOverviewPage', () => {
       .flush('boom', { status: 500, statusText: 'Server Error' });
     httpMock.expectOne(API_ROUTES.portfolioAllocation('Stock')).flush(STOCK_ALLOCATION);
     httpMock.expectOne(API_ROUTES.stockAnnualReturns).flush(ANNUAL_RETURNS);
+    httpMock.expectOne(API_ROUTES.stockPerformance).flush(STOCK_PERFORMANCE);
     await fixture.whenStable();
     fixture.detectChanges();
 
@@ -166,6 +179,7 @@ describe('PortfolioOverviewPage', () => {
     httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY);
     httpMock.expectOne(API_ROUTES.portfolioAllocation('Stock')).flush(STOCK_ALLOCATION);
     httpMock.expectOne(API_ROUTES.stockAnnualReturns).flush(ANNUAL_RETURNS);
+    httpMock.expectOne(API_ROUTES.stockPerformance).flush(STOCK_PERFORMANCE);
   });
 
   it('renders summary tiles, the holdings table, and the annual-return chart for stocks; AAPL shows "Awaiting price" not -100%', async () => {
@@ -177,6 +191,177 @@ describe('PortfolioOverviewPage', () => {
     expect(text).toContain('AAPL');
     expect(text).toContain('Awaiting price');
     expect(text).toContain('Annual return');
+  });
+
+  describe('Cost vs market value panel (stocks only)', () => {
+    it('renders the panel, positioned before Allocation, with a "Daily closes · as of" caption naming the last point\'s date', async () => {
+      flushInitial();
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      const panels = Array.from(
+        fixture.nativeElement.querySelectorAll('.overview__panel-title'),
+      ) as HTMLElement[];
+      const titles = panels.map((el) => el.textContent?.trim());
+      const costVsMarketIndex = titles.indexOf('Cost vs market value');
+      const allocationIndex = titles.indexOf('Allocation');
+      expect(costVsMarketIndex).toBeGreaterThanOrEqual(0);
+      expect(allocationIndex).toBeGreaterThan(costVsMarketIndex);
+
+      expect(fixture.nativeElement.querySelector('app-cost-vs-market-chart')).toBeTruthy();
+      const text = fixture.nativeElement.textContent as string;
+      expect(text).toContain('Daily closes');
+      expect(text).toContain('15 Aug 2026'); // formatDateOnlyLong of the last STOCK_PERFORMANCE point
+    });
+
+    it('never requests /api/portfolio/stock/performance and renders no panel for crypto', () => {
+      fixture.componentRef.setInput('assetClass', 'Crypto');
+      fixture.detectChanges();
+      httpMock
+        .expectOne(API_ROUTES.portfolioSummary('Crypto'))
+        .flush({ ...STOCK_SUMMARY, assetClass: 'Crypto' });
+      httpMock
+        .expectOne(API_ROUTES.portfolioAllocation('Crypto'))
+        .flush({ ...STOCK_ALLOCATION, assetClass: 'Crypto' });
+      httpMock.expectNone(API_ROUTES.stockPerformance);
+
+      expect(fixture.nativeElement.textContent).not.toContain('Cost vs market value');
+      expect(fixture.nativeElement.querySelector('app-cost-vs-market-chart')).toBeFalsy();
+    });
+
+    it('shows a singular uncharted-symbol caveat for one symbol', async () => {
+      flushInitial(STOCK_SUMMARY, STOCK_ALLOCATION, ANNUAL_RETURNS, {
+        ...STOCK_PERFORMANCE,
+        unchartedSymbols: ['AAPL'],
+      });
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      const text = fixture.nativeElement.textContent as string;
+      expect(text).toContain('AAPL has no price history yet — left out of both lines, not a loss.');
+    });
+
+    it('pluralises the uncharted-symbol caveat for 2+ symbols', async () => {
+      flushInitial(STOCK_SUMMARY, STOCK_ALLOCATION, ANNUAL_RETURNS, {
+        ...STOCK_PERFORMANCE,
+        unchartedSymbols: ['AAPL', 'MSFT'],
+      });
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      const text = fixture.nativeElement.textContent as string;
+      expect(text).toContain(
+        'AAPL and MSFT have no price history yet — left out of both lines, not a loss.',
+      );
+    });
+
+    it('shows no uncharted caveat when unchartedSymbols is empty', async () => {
+      flushInitial();
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      expect(fixture.nativeElement.textContent).not.toContain('no price history yet');
+    });
+
+    it('shows the portfolio-appropriate empty message when there are no points', async () => {
+      flushInitial(STOCK_SUMMARY, STOCK_ALLOCATION, ANNUAL_RETURNS, {
+        points: [],
+        unchartedSymbols: [],
+      });
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      const text = fixture.nativeElement.textContent as string;
+      expect(text).toContain('once your stocks have transactions and daily closes');
+      expect(text).not.toContain('once the position has transactions');
+    });
+
+    it("shows the panel's own loading state without blanking already-loaded summary tiles", async () => {
+      fixture.detectChanges();
+      httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY);
+      httpMock.expectOne(API_ROUTES.portfolioAllocation('Stock')).flush(STOCK_ALLOCATION);
+      httpMock.expectOne(API_ROUTES.stockAnnualReturns).flush(ANNUAL_RETURNS);
+      // Performance request deliberately left unflushed — still in flight.
+      await Promise.resolve();
+      fixture.detectChanges();
+
+      const text = fixture.nativeElement.textContent as string;
+      expect(text).toContain('AAPL');
+      expect(text).toContain('Loading cost vs market value');
+
+      httpMock.expectOne(API_ROUTES.stockPerformance).flush(STOCK_PERFORMANCE);
+    });
+
+    it("shows the panel's own error state on a first-ever failed load, with a working retry, without blanking the rest of the page", async () => {
+      fixture.detectChanges();
+      httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY);
+      httpMock.expectOne(API_ROUTES.portfolioAllocation('Stock')).flush(STOCK_ALLOCATION);
+      httpMock.expectOne(API_ROUTES.stockAnnualReturns).flush(ANNUAL_RETURNS);
+      httpMock
+        .expectOne(API_ROUTES.stockPerformance)
+        .flush('boom', { status: 500, statusText: 'Server Error' });
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      let text = fixture.nativeElement.textContent as string;
+      expect(text).toContain("Couldn't load cost vs market value");
+      expect(text).toContain('AAPL'); // the rest of the page is unaffected
+
+      fixture.componentInstance.retryPerformance();
+      fixture.detectChanges();
+      httpMock.expectOne(API_ROUTES.stockPerformance).flush(STOCK_PERFORMANCE);
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      text = fixture.nativeElement.textContent as string;
+      expect(text).not.toContain("Couldn't load cost vs market value");
+      expect(fixture.nativeElement.querySelector('app-cost-vs-market-chart')).toBeTruthy();
+    });
+
+    /**
+     * The `resourceState` rule (see `shared/util/resource-state.ts` and this
+     * page's own comment on `performanceState`): a reload that FAILS must not
+     * blank content that is already on screen. `performanceResource` is
+     * reloaded on every completed refresh cycle, exactly like
+     * `annualReturnsResource`, so it needs the identical protection.
+     */
+    it('keeps the chart on screen after a failed reload on a refresh cycle, following a good initial load', async () => {
+      flushInitial();
+      await fixture.whenStable();
+      fixture.detectChanges();
+      expect(fixture.nativeElement.querySelector('app-cost-vs-market-chart')).toBeTruthy();
+
+      fakeHub.emit('RefreshStatus', {
+        lastRefreshedAt: '2026-08-01T10:00:00Z',
+        nyseOpen: false,
+        sgxOpen: false,
+        nextScheduledRunAt: null,
+        sources: [],
+      });
+      fixture.detectChanges();
+      fakeHub.emit('RefreshStatus', {
+        lastRefreshedAt: '2026-08-01T10:05:00Z',
+        nyseOpen: false,
+        sgxOpen: false,
+        nextScheduledRunAt: null,
+        sources: [],
+      });
+      fixture.detectChanges();
+
+      httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY);
+      httpMock.expectOne(API_ROUTES.portfolioAllocation('Stock')).flush(STOCK_ALLOCATION);
+      httpMock.expectOne(API_ROUTES.stockAnnualReturns).flush(ANNUAL_RETURNS);
+      httpMock
+        .expectOne(API_ROUTES.stockPerformance)
+        .flush('boom', { status: 500, statusText: 'Server Error' });
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      const text = fixture.nativeElement.textContent as string;
+      expect(text).not.toContain("Couldn't load cost vs market value");
+      expect(fixture.nativeElement.querySelector('app-cost-vs-market-chart')).toBeTruthy();
+      expect(text).toContain('Daily closes');
+    });
   });
 
   it('D17 — caveats the totals rather than presenting them as complete when a holding is unpriced', async () => {
@@ -304,7 +489,7 @@ describe('PortfolioOverviewPage', () => {
     expect(fixture.componentInstance.allocationSlices()[0].value).toBe(3864); // cost basis, not market value (0)
   });
 
-  it('reloads summary/allocation/annual-returns after a refresh cycle completes, but not on the first status snapshot', async () => {
+  it('reloads summary/allocation/annual-returns/performance after a refresh cycle completes, but not on the first status snapshot', async () => {
     flushInitial();
     await fixture.whenStable();
     fixture.detectChanges();
@@ -330,6 +515,7 @@ describe('PortfolioOverviewPage', () => {
     httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY);
     httpMock.expectOne(API_ROUTES.portfolioAllocation('Stock')).flush(STOCK_ALLOCATION);
     httpMock.expectOne(API_ROUTES.stockAnnualReturns).flush(ANNUAL_RETURNS);
+    httpMock.expectOne(API_ROUTES.stockPerformance).flush(STOCK_PERFORMANCE);
   });
 
   /**
@@ -380,6 +566,7 @@ describe('PortfolioOverviewPage', () => {
     httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(STOCK_SUMMARY);
     httpMock.expectOne(API_ROUTES.portfolioAllocation('Stock')).flush(STOCK_ALLOCATION);
     httpMock.expectOne(API_ROUTES.stockAnnualReturns).flush(ANNUAL_RETURNS);
+    httpMock.expectOne(API_ROUTES.stockPerformance).flush(STOCK_PERFORMANCE);
   });
 
   it('does not blank the page on a failed background reload — the toolbar refresh indicator surfaces refresh health, not a full-page error', async () => {
@@ -409,6 +596,7 @@ describe('PortfolioOverviewPage', () => {
       .flush('boom', { status: 500, statusText: 'Server Error' });
     httpMock.expectOne(API_ROUTES.portfolioAllocation('Stock')).flush(STOCK_ALLOCATION);
     httpMock.expectOne(API_ROUTES.stockAnnualReturns).flush(ANNUAL_RETURNS);
+    httpMock.expectOne(API_ROUTES.stockPerformance).flush(STOCK_PERFORMANCE);
     await fixture.whenStable();
     fixture.detectChanges();
 
@@ -433,5 +621,6 @@ describe('PortfolioOverviewPage', () => {
 
     httpMock.expectOne(API_ROUTES.portfolioAllocation('Stock')).flush(STOCK_ALLOCATION);
     httpMock.expectOne(API_ROUTES.stockAnnualReturns).flush(ANNUAL_RETURNS);
+    httpMock.expectOne(API_ROUTES.stockPerformance).flush(STOCK_PERFORMANCE);
   });
 });

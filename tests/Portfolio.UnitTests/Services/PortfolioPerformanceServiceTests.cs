@@ -143,4 +143,167 @@ public sealed class PortfolioPerformanceServiceTests : IDisposable
 
         result.Years.Should().BeEmpty();
     }
+
+    [Fact]
+    public async Task GetPortfolioPerformanceAsync_NoStockTransactions_ReturnsEmpty()
+    {
+        var result = await _sut.GetPortfolioPerformanceAsync(CancellationToken.None);
+
+        result.Points.Should().BeEmpty();
+        result.UnchartedSymbols.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetPortfolioPerformanceAsync_IgnoresCryptoTransactionsAndHistory()
+    {
+        var eth = AddAsset(4, "ETH", AssetClass.Crypto, "USD");
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = eth.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
+            Quantity = 1m, PricePerUnit = 2000m, Fees = 0m, Currency = "USD",
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await _sut.GetPortfolioPerformanceAsync(CancellationToken.None);
+
+        result.Points.Should().BeEmpty();
+        result.UnchartedSymbols.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetPortfolioPerformanceAsync_TwoAssetsDifferentCalendars_CarriesForwardOnMissingDate()
+    {
+        var aapl = AddAsset(1, "AAPL", AssetClass.Stock, "USD");
+        var msft = AddAsset(2, "MSFT", AssetClass.Stock, "USD");
+
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = aapl.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
+            Quantity = 10m, PricePerUnit = 100m, Fees = 0m, Currency = "USD",
+        });
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = msft.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
+            Quantity = 5m, PricePerUnit = 200m, Fees = 0m, Currency = "USD",
+        });
+
+        // AAPL has closes on both days; MSFT only on day 1 — day 2 must carry MSFT's day-1 close
+        // forward rather than dropping MSFT from the total.
+        _db.PriceHistories.Add(new PriceHistory { AssetId = aapl.Id, Date = new DateOnly(2026, 1, 1), Close = 100m, Currency = "USD" });
+        _db.PriceHistories.Add(new PriceHistory { AssetId = aapl.Id, Date = new DateOnly(2026, 1, 2), Close = 110m, Currency = "USD" });
+        _db.PriceHistories.Add(new PriceHistory { AssetId = msft.Id, Date = new DateOnly(2026, 1, 1), Close = 200m, Currency = "USD" });
+        await _db.SaveChangesAsync();
+
+        var result = await _sut.GetPortfolioPerformanceAsync(CancellationToken.None);
+
+        result.Points.Should().HaveCount(2);
+        result.Points[0].Date.Should().Be(new DateOnly(2026, 1, 1));
+        result.Points[0].CostBasisUsd.Should().Be(1000m + 1000m); // AAPL 10*100 + MSFT 5*200
+        result.Points[0].MarketValueUsd.Should().Be(1000m + 1000m);
+
+        result.Points[1].Date.Should().Be(new DateOnly(2026, 1, 2));
+        result.Points[1].CostBasisUsd.Should().Be(1000m + 1000m); // cost basis unchanged
+        // AAPL 10*110 = 1100, MSFT carried forward at 5*200 = 1000
+        result.Points[1].MarketValueUsd.Should().Be(1100m + 1000m);
+
+        result.UnchartedSymbols.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetPortfolioPerformanceAsync_InclusionRule_ExcludesAssetBeforeItsFirstClose()
+    {
+        var aapl = AddAsset(1, "AAPL", AssetClass.Stock, "USD");
+        var msft = AddAsset(2, "MSFT", AssetClass.Stock, "USD");
+
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = aapl.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
+            Quantity = 10m, PricePerUnit = 100m, Fees = 0m, Currency = "USD",
+        });
+        // MSFT is bought on day 1 too, but its first close only lands on day 2 — before that, MSFT
+        // must contribute to neither line, not just to market value.
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = msft.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
+            Quantity = 5m, PricePerUnit = 200m, Fees = 0m, Currency = "USD",
+        });
+
+        _db.PriceHistories.Add(new PriceHistory { AssetId = aapl.Id, Date = new DateOnly(2026, 1, 1), Close = 100m, Currency = "USD" });
+        _db.PriceHistories.Add(new PriceHistory { AssetId = aapl.Id, Date = new DateOnly(2026, 1, 2), Close = 100m, Currency = "USD" });
+        _db.PriceHistories.Add(new PriceHistory { AssetId = msft.Id, Date = new DateOnly(2026, 1, 2), Close = 200m, Currency = "USD" });
+        await _db.SaveChangesAsync();
+
+        var result = await _sut.GetPortfolioPerformanceAsync(CancellationToken.None);
+
+        result.Points.Should().HaveCount(2);
+
+        // Day 1: only AAPL has a close, so MSFT's cost basis is excluded too, not just its market value.
+        result.Points[0].Date.Should().Be(new DateOnly(2026, 1, 1));
+        result.Points[0].CostBasisUsd.Should().Be(1000m);
+        result.Points[0].MarketValueUsd.Should().Be(1000m);
+
+        // Day 2: MSFT now has its first close, so it joins both lines.
+        result.Points[1].Date.Should().Be(new DateOnly(2026, 1, 2));
+        result.Points[1].CostBasisUsd.Should().Be(1000m + 1000m);
+        result.Points[1].MarketValueUsd.Should().Be(1000m + 1000m);
+    }
+
+    [Fact]
+    public async Task GetPortfolioPerformanceAsync_HeldAssetWithNoHistory_IsUncharted_ClosedAssetIsNot()
+    {
+        var aapl = AddAsset(1, "AAPL", AssetClass.Stock, "USD");
+        var nvda = AddAsset(2, "NVDA", AssetClass.Stock, "USD"); // held, never priced
+        var tsla = AddAsset(3, "TSLA", AssetClass.Stock, "USD"); // bought then fully sold, never priced
+
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = aapl.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
+            Quantity = 10m, PricePerUnit = 100m, Fees = 0m, Currency = "USD",
+        });
+        _db.PriceHistories.Add(new PriceHistory { AssetId = aapl.Id, Date = new DateOnly(2026, 1, 1), Close = 100m, Currency = "USD" });
+
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = nvda.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
+            Quantity = 3m, PricePerUnit = 50m, Fees = 0m, Currency = "USD",
+        });
+
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = tsla.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
+            Quantity = 2m, PricePerUnit = 300m, Fees = 0m, Currency = "USD",
+        });
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = tsla.Id, Type = TransactionType.Sell, TradeDate = new DateOnly(2026, 1, 2),
+            Quantity = 2m, PricePerUnit = 300m, Fees = 0m, Currency = "USD",
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await _sut.GetPortfolioPerformanceAsync(CancellationToken.None);
+
+        result.UnchartedSymbols.Should().ContainSingle().Which.Should().Be("NVDA");
+    }
+
+    [Fact]
+    public async Task GetPortfolioPerformanceAsync_SgdAsset_ConvertsAtPerDateFxRate()
+    {
+        var z74 = AddAsset(5, "Z74", AssetClass.Stock, "SGD");
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = z74.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
+            Quantity = 100m, PricePerUnit = 5m, Fees = 0m, Currency = "SGD", // 500 SGD gross
+        });
+        _db.PriceHistories.Add(new PriceHistory { AssetId = z74.Id, Date = new DateOnly(2026, 1, 1), Close = 5m, Currency = "SGD" });
+        _db.PriceHistories.Add(new PriceHistory { AssetId = z74.Id, Date = new DateOnly(2026, 1, 2), Close = 5m, Currency = "SGD" });
+        _db.FxRates.Add(new FxRate { Base = "USD", Quote = "SGD", Date = new DateOnly(2026, 1, 1), Rate = 1.25m });
+        _db.FxRates.Add(new FxRate { Base = "USD", Quote = "SGD", Date = new DateOnly(2026, 1, 2), Rate = 1.30m }); // rate moved the next day
+        await _db.SaveChangesAsync();
+
+        var result = await _sut.GetPortfolioPerformanceAsync(CancellationToken.None);
+
+        result.Points.Should().HaveCount(2);
+        result.Points[0].MarketValueUsd.Should().Be(400m); // 500 / 1.25, exact
+        result.Points[1].MarketValueUsd.Should().Be(Math.Round(500m / 1.30m, 4)); // day-2 rate, not day-1's
+    }
 }

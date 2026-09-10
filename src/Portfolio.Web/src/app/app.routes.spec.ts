@@ -65,6 +65,7 @@ describe('app routing — assetClass parameterisation', () => {
     httpMock.expectOne(API_ROUTES.portfolioSummary('Stock')).flush(EMPTY_SUMMARY('Stock'));
     httpMock.expectOne(API_ROUTES.portfolioAllocation('Stock')).flush(EMPTY_ALLOCATION('Stock'));
     httpMock.expectOne(API_ROUTES.stockAnnualReturns).flush({ years: [] });
+    httpMock.expectOne(API_ROUTES.stockPerformance).flush({ points: [], unchartedSymbols: [] });
   }
 
   it('redirects / to /stocks', async () => {
@@ -85,6 +86,7 @@ describe('app routing — assetClass parameterisation', () => {
     httpMock.expectOne(API_ROUTES.portfolioSummary('Crypto')).flush(EMPTY_SUMMARY('Crypto'));
     httpMock.expectOne(API_ROUTES.portfolioAllocation('Crypto')).flush(EMPTY_ALLOCATION('Crypto'));
     httpMock.expectNone(API_ROUTES.stockAnnualReturns);
+    httpMock.expectNone(API_ROUTES.stockPerformance);
   });
 
   it('binds both the :symbol param and data.assetClass onto AssetDetailPage', async () => {

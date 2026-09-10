@@ -20,7 +20,7 @@ import { ALL_ROWS, TableSort, createTableState } from '../../shared/table/table-
 import { TRANSACTION_ROW_HEIGHT_PX } from '../../shared/table/table-row-height';
 import { VirtualRowgroup } from '../../shared/table/virtual-rowgroup';
 import { GainLossCard } from './components/gain-loss-card';
-import { CostVsMarketChart } from './components/cost-vs-market-chart';
+import { CostVsMarketChart } from '../../shared/charts/cost-vs-market-chart';
 
 type TransactionColumn = 'date' | 'type' | 'quantity' | 'price' | 'fees';
 type DividendColumn = 'exDate' | 'amount' | 'units' | 'income';

@@ -20,4 +20,12 @@ public interface IPortfolioPerformanceService
 
     /// <summary>Time-weighted return per calendar year, across the whole stock portfolio.</summary>
     Task<AnnualReturnsDto> GetAnnualReturnsAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Portfolio-wide cost-basis-vs-market-value series, across every <see cref="Domain.Enums.AssetClass.Stock"/>
+    /// asset that has a transaction. See <see cref="Dtos.PortfolioPerformanceDto"/> for the
+    /// per-date inclusion rule. Empty <see cref="Dtos.PortfolioPerformanceDto.Points"/> and an empty
+    /// <see cref="Dtos.PortfolioPerformanceDto.UnchartedSymbols"/> when no stock has any transaction.
+    /// </summary>
+    Task<PortfolioPerformanceDto> GetPortfolioPerformanceAsync(CancellationToken cancellationToken);
 }

@@ -25,6 +25,9 @@ export const API_ROUTES = {
   portfolioSummary: (assetClass: AssetClass) => `/api/portfolio/${assetClass}/summary`,
   portfolioAllocation: (assetClass: AssetClass) => `/api/portfolio/${assetClass}/allocation`,
   stockAnnualReturns: '/api/portfolio/stock/annual-returns',
+  // Portfolio-wide cost-basis-vs-market-value series, stocks only — same
+  // scope restriction as stockAnnualReturns above.
+  stockPerformance: '/api/portfolio/stock/performance',
   // The one sanctioned exception to asset-class segregation — see
   // ZakatReportDto. `asOf` is optional; omitted, the server defaults to today.
   zakatReport: (asOf?: string) => (asOf ? `/api/zakat?asOf=${asOf}` : '/api/zakat'),
