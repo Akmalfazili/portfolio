@@ -1,8 +1,6 @@
 import { HttpErrorResponse } from '@angular/common/http';
-import { DestroyRef, InjectionToken, Injectable, computed, inject, signal } from '@angular/core';
-import * as signalR from '@microsoft/signalr';
+import { DestroyRef, Injectable, computed, inject, signal } from '@angular/core';
 
-import { PRICES_HUB_URL } from '../api/api-routes';
 import { PricesApi } from '../api/prices.api';
 import {
   PriceRefreshCycleResult,
@@ -11,40 +9,21 @@ import {
   RefreshCooldownProblemDetails,
 } from '../api/models';
 import { createCountdown } from './countdown';
+import {
+  PRICES_HUB_CONNECTION_FACTORY,
+  PriceConnectionState,
+  PricesHub,
+  PricesHubConnection,
+} from './prices-hub';
 
-export type PriceConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'polling-fallback';
-
-/** The subset of `signalR.HubConnection` PriceStore actually uses — narrow on purpose so tests can fake it. */
-export interface PricesHubConnection {
-  on(methodName: string, callback: (...args: unknown[]) => void): void;
-  onreconnecting(callback: (error?: Error) => void): void;
-  onreconnected(callback: (connectionId?: string) => void): void;
-  onclose(callback: (error?: Error) => void): void;
-  start(): Promise<void>;
-  stop(): Promise<void>;
-}
-
-/**
- * Factory seam for the hub connection — the default builds a real SignalR
- * connection to /hubs/prices; tests override this token with a fake so the
- * reconnect/degraded-mode state machine can be exercised without a live hub.
- */
-export const PRICES_HUB_CONNECTION_FACTORY = new InjectionToken<() => PricesHubConnection>(
-  'PRICES_HUB_CONNECTION_FACTORY',
-  {
-    providedIn: 'root',
-    factory: () => () =>
-      new signalR.HubConnectionBuilder()
-        .withUrl(PRICES_HUB_URL)
-        .withAutomaticReconnect([0, 2000, 5000, 10_000, 20_000, 30_000])
-        .configureLogging(signalR.LogLevel.Warning)
-        .build(),
-  },
-);
-
-const POLL_FALLBACK_INTERVAL_MS = 60_000;
-/** How often we retry re-establishing the push connection while degraded. */
-const HUB_RETRY_INTERVAL_MS = 60_000;
+// F4 — the hub lifecycle (connect state machine, poll fallback, hub retry,
+// visibilitychange catch-up) moved to `prices-hub.ts`. Re-exported so every
+// existing import site — `PRICES_HUB_CONNECTION_FACTORY` and `PriceStore`
+// together are imported `from './price-store'` by seven spec files plus
+// `testing/fake-hub-connection.ts` — keeps working unmodified. `price-store.ts`
+// stays the one public seam consumers reach for.
+export { PRICES_HUB_CONNECTION_FACTORY };
+export type { PriceConnectionState, PricesHubConnection };
 
 /**
  * Single source of truth for live prices and refresh status. Every view reads
@@ -52,7 +31,10 @@ const HUB_RETRY_INTERVAL_MS = 60_000;
  *
  * The hub at /hubs/prices is push-only: we never invoke a method on it, only
  * listen for "QuoteUpdated" and "RefreshStatus" (the latter pushed once on
- * connect, so a fresh tab isn't blank until the first tick).
+ * connect, so a fresh tab isn't blank until the first tick). `PricesHub`
+ * (`prices-hub.ts`) owns that transport; this store owns the quote cache, the
+ * status snapshot, the connection-state signal and the manual-refresh
+ * command, and is the only thing every view reads from.
  *
  * Degraded mode: the current REST surface (see core/api/models.ts) has no
  * "current quotes" endpoint — prices only ever arrive over the hub. So when
@@ -77,6 +59,10 @@ export class PriceStore {
   private readonly _refreshing = signal(false);
   private readonly _lastRefreshResult = signal<PriceRefreshCycleResult | null>(null);
   private readonly _lastError = signal<string | null>(null);
+  /** F4 — the SignalR transport, extracted into `PricesHub`. This store hands
+   *  it sink callbacks that write straight into the signals above; it never
+   *  holds a copy of anything the hub reports. */
+  private readonly hub = new PricesHub(this.pricesApi, this.createConnection);
 
   /** All known live prices, keyed by assetId. */
   readonly prices = this._prices.asReadonly();
@@ -93,29 +79,12 @@ export class PriceStore {
   readonly lastRefreshedAt = computed(() => this._status()?.lastRefreshedAt ?? null);
   readonly isDegraded = computed(() => this._connectionState() === 'polling-fallback');
 
-  private hubConnection: PricesHubConnection | null = null;
-  private pollTimer: ReturnType<typeof setInterval> | null = null;
-  private hubRetryTimer: ReturnType<typeof setInterval> | null = null;
-
-  private readonly onVisibilityChange = () => {
-    if (document.visibilityState !== 'visible') {
-      return;
-    }
-    // A status missed while the tab was throttled/hidden should apply
-    // immediately on focus rather than waiting up to 60s for the next poll —
-    // GET /api/prices/status is explicitly the safe thing to poll (CLAUDE.md:
-    // it can never cost a provider credit).
-    this.fetchStatus();
-    // If the socket died while the tab was frozen, don't wait out the rest of
-    // HUB_RETRY_INTERVAL_MS — try to reconnect right away.
-    if (this._connectionState() === 'polling-fallback') {
-      this.startConnection();
-    }
-  };
-
   constructor() {
-    this.connect();
-    document.addEventListener('visibilitychange', this.onVisibilityChange);
+    this.hub.connect({
+      onQuote: (payload) => this.applyQuote(payload),
+      onStatus: (status) => this._status.set(status),
+      onConnectionStateChange: (state) => this._connectionState.set(state),
+    });
     this.destroyRef.onDestroy(() => this.teardown());
   }
 
@@ -135,7 +104,7 @@ export class PriceStore {
       next: (result) => {
         this._refreshing.set(false);
         this._lastRefreshResult.set(result);
-        this.fetchStatus();
+        this.hub.refreshStatusNow();
       },
       error: (error: unknown) => {
         this._refreshing.set(false);
@@ -149,85 +118,6 @@ export class PriceStore {
     });
   }
 
-  private connect(): void {
-    this.hubConnection = this.createConnection();
-
-    this.hubConnection.on('QuoteUpdated', (...args: unknown[]) =>
-      this.applyQuote(args[0] as QuoteUpdateNotification),
-    );
-    this.hubConnection.on('RefreshStatus', (...args: unknown[]) =>
-      this._status.set(args[0] as PriceRefreshStatus),
-    );
-
-    this.hubConnection.onreconnecting(() => this._connectionState.set('reconnecting'));
-    this.hubConnection.onreconnected(() => {
-      this._connectionState.set('connected');
-      this.stopPollFallback();
-    });
-    this.hubConnection.onclose(() => this.enterDegradedMode());
-
-    this.startConnection();
-  }
-
-  private startConnection(): void {
-    this.hubConnection
-      ?.start()
-      .then(() => {
-        this._connectionState.set('connected');
-        this.stopPollFallback();
-      })
-      .catch(() => this.enterDegradedMode());
-  }
-
-  private enterDegradedMode(): void {
-    this._connectionState.set('polling-fallback');
-    this.startPollFallback();
-    this.scheduleHubRetry();
-  }
-
-  /** Background retry of the push connection while degraded — withAutomaticReconnect only
-   *  covers a drop mid-connection, not the case where it has given up entirely or the
-   *  initial handshake never succeeded, so this loop is what actually recovers. */
-  private scheduleHubRetry(): void {
-    if (this.hubRetryTimer) {
-      return;
-    }
-    this.hubRetryTimer = setInterval(() => {
-      if (this._connectionState() !== 'polling-fallback') {
-        return;
-      }
-      this.startConnection();
-    }, HUB_RETRY_INTERVAL_MS);
-  }
-
-  private startPollFallback(): void {
-    if (this.pollTimer) {
-      return;
-    }
-    this.fetchStatus();
-    this.pollTimer = setInterval(() => this.fetchStatus(), POLL_FALLBACK_INTERVAL_MS);
-  }
-
-  private stopPollFallback(): void {
-    if (this.pollTimer) {
-      clearInterval(this.pollTimer);
-      this.pollTimer = null;
-    }
-    if (this.hubRetryTimer) {
-      clearInterval(this.hubRetryTimer);
-      this.hubRetryTimer = null;
-    }
-  }
-
-  private fetchStatus(): void {
-    this.pricesApi.status().subscribe({
-      next: (status) => this._status.set(status),
-      error: () => {
-        // Keep the last known status rather than blanking the indicator on a transient failure.
-      },
-    });
-  }
-
   private applyQuote(payload: QuoteUpdateNotification): void {
     const next = new Map(this._prices());
     next.set(payload.assetId, payload);
@@ -235,9 +125,7 @@ export class PriceStore {
   }
 
   private teardown(): void {
-    document.removeEventListener('visibilitychange', this.onVisibilityChange);
-    this.stopPollFallback();
     this.cooldown.stop();
-    void this.hubConnection?.stop();
+    this.hub.dispose();
   }
 }
