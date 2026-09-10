@@ -29,6 +29,12 @@ public interface IAnnualReturnCalculator
     /// cash flow falling inside that sub-period. A flow need <em>not</em> be dated on a valuation
     /// date: each is attributed to the first valuation on or after its own date, so a trade dated a
     /// weekend or a market holiday still cancels correctly instead of being counted as a gain.
+    /// This trusts the caller's dates completely: a flow dated earlier than the point its own
+    /// asset can actually be reflected in <paramref name="dailyValues"/> — a trade preceding its
+    /// own asset's first stored close — corrupts that sub-period, or, if it lands on or before the
+    /// very first valuation, is silently absorbed into the opening balance instead of distorting a
+    /// return (D50). The caller is responsible for dating each flow no earlier than the point its
+    /// own asset can be reflected in the value series, never the raw trade date.
     /// Sub-period returns are geometrically linked (compounded, not summed)
     /// within each calendar year. A sub-period starting from a zero valuation (no position existed
     /// yet, or a position was fully closed) contributes no return for that step — there is no rate

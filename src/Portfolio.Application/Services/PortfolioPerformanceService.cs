@@ -87,15 +87,37 @@ public sealed class PortfolioPerformanceService(
         // (GrossAmountUsd / FeesUsd) computed once in LoadStockAssetDataAsync, rather than
         // resolving FX a second time here — the two are numerically identical, since
         // CostBasisTransactionFactory.ToUsd performs exactly this native/rate division.
+        //
+        // A flow is dated at max(TradeDate, that asset's first stored close) rather than its raw
+        // TradeDate — the same both-or-neither inclusion rule BuildPortfolioPerformance applies to
+        // the cost-vs-market chart, carried over to the cash-flow side. V(t) in
+        // BuildDailyPortfolioValues only ever reflects an asset from its first close onward, so a
+        // trade dated before that close (a holiday on the asset's own market, or simply the
+        // portfolio's earliest trade landing on a day another asset has no close either) would
+        // otherwise be counted on a day whose valuation doesn't contain it: a false loss that day,
+        // a false gain when the close finally appears — or, if that day happens to be the series'
+        // first valuation, dropped as "base of the chain" and read as pure gain (D50: Z74 bought
+        // 2020-07-10, no close until 2020-07-13, showed +82% for the day; ARVLF bought
+        // 2021-01-01 against a first close of 2021-03-25 showed -24% then +35%). An asset with no
+        // stored closes at all never enters V, so its flows are dropped entirely rather than
+        // reading as a false loss.
         var cashFlows = new List<PortfolioCashFlow>();
         foreach (var data in assetData)
         {
+            if (data.Closes.Count == 0)
+            {
+                continue;
+            }
+
+            var firstCloseDate = data.Closes[0].Date;
+
             foreach (var t in data.CostBasisTransactions)
             {
                 // A buy is a net investment into the portfolio (positive flow); a sell's net
                 // proceeds leave the portfolio (negative flow) — the sign the TWR formula needs.
                 var amountUsd = t.Type == TransactionType.Buy ? t.GrossAmountUsd + t.FeesUsd : -(t.GrossAmountUsd - t.FeesUsd);
-                cashFlows.Add(new PortfolioCashFlow(t.TradeDate, amountUsd));
+                var effectiveDate = t.TradeDate > firstCloseDate ? t.TradeDate : firstCloseDate;
+                cashFlows.Add(new PortfolioCashFlow(effectiveDate, amountUsd));
             }
         }
 

@@ -24,6 +24,13 @@ public sealed class AnnualReturnCalculator : IAnnualReturnCalculator
         // physically happened inside, whose closing V(t) already reflects it. Matching on exact
         // date alone dropped any flow dated a weekend, a market holiday, or any day with no stored
         // close, and a dropped deposit reads as a pure gain: the one thing TWR exists to prevent.
+        // This class trusts the caller's flow dates completely — it does not know, and must not
+        // need to know, whether a given date actually appears in the asset's own close history.
+        // That is exactly why the caller (PortfolioPerformanceService.GetAnnualReturnsAsync)
+        // pre-shifts each flow to max(TradeDate, that asset's first stored close date) before it
+        // ever reaches here (D50): a flow dated earlier than the value series can possibly reflect
+        // it would land on a valuation the flow isn't actually in, corrupting that sub-period and
+        // (see below) potentially reading as a silent no-op instead.
         var cashFlowByValuationDate = new Dictionary<DateOnly, decimal>();
         foreach (var flow in cashFlows)
         {
@@ -33,6 +40,15 @@ public sealed class AnnualReturnCalculator : IAnnualReturnCalculator
             // there is no sub-period for it to belong to. index == 0 — dated at or before the
             // opening valuation, which is the base of the chain rather than a sub-period, so no
             // return exists for it to distort. Both are correctly ignored rather than dropped.
+            //
+            // index == 0 is only safe under the caller's pre-shift above: it means this flow's
+            // (post-shift) date is on or before the very first valuation date, which can only
+            // happen when the flow's asset genuinely has a close on or before that first date — so
+            // the opening valuation already includes it. Before the pre-shift existed, index == 0
+            // could also mean an asset's first trade landed on a day some *other* asset's close
+            // fixed the timeline to, while this asset itself had no close yet — silently discarding
+            // a real investment instead of folding it into the base (D50: this was how the Z74
+            // 2020-07-10 buy vanished, turning FSLY's ordinary 07-13 return into a false +82%).
             if (index <= 0)
             {
                 continue;

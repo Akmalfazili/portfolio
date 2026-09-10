@@ -144,6 +144,124 @@ public sealed class PortfolioPerformanceServiceTests : IDisposable
         result.Years.Should().BeEmpty();
     }
 
+    /// <summary>
+    /// D50, the Z74 shape: A and B are bought on the same day, but B's first stored close only
+    /// lands on the next valuation (a holiday on B's own market, or simply no close yet). Prices
+    /// are flat throughout, so the true time-weighted return is 0%. Before the fix, B's flow was
+    /// dated on its raw trade date — day 1, the series' opening valuation — so it was silently
+    /// swallowed as "base of the chain" while day 1's own V never included B, and B's entire $1000
+    /// cost re-appeared as pure gain on day 2 (the live case: Z74 bought 2020-07-10, no close until
+    /// 2020-07-13, read as +82% for FSLY's ordinary day).
+    /// </summary>
+    [Fact]
+    public async Task GetAnnualReturnsAsync_AssetBoughtBeforeItsFirstClose_DoesNotInventAGain()
+    {
+        var a = AddAsset(1, "A", AssetClass.Stock, "USD");
+        var b = AddAsset(2, "B", AssetClass.Stock, "USD");
+
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = a.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
+            Quantity = 10m, PricePerUnit = 100m, Fees = 0m, Currency = "USD",
+        });
+        _db.Transactions.Add(new Transaction
+        {
+            // Bought the same day as A, but B has no stored close until the next valuation.
+            AssetId = b.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
+            Quantity = 5m, PricePerUnit = 200m, Fees = 0m, Currency = "USD",
+        });
+
+        _db.PriceHistories.Add(new PriceHistory { AssetId = a.Id, Date = new DateOnly(2026, 1, 1), Close = 100m, Currency = "USD" });
+        _db.PriceHistories.Add(new PriceHistory { AssetId = a.Id, Date = new DateOnly(2026, 1, 2), Close = 100m, Currency = "USD" });
+        _db.PriceHistories.Add(new PriceHistory { AssetId = b.Id, Date = new DateOnly(2026, 1, 2), Close = 200m, Currency = "USD" });
+        await _db.SaveChangesAsync();
+
+        var result = await _sut.GetAnnualReturnsAsync(CancellationToken.None);
+
+        result.Years.Should().ContainSingle();
+        result.Years[0].TimeWeightedReturnPercent.Should().Be(0.00m);
+    }
+
+    /// <summary>
+    /// D50, the ARVLF shape: B is bought on a date already inside the timeline (not the opening
+    /// valuation), but its first stored close only arrives several valuations later, and the span
+    /// crosses a calendar-year boundary. Prices are flat throughout, so both years' true return is
+    /// 0%. Before the fix, B's flow read as a false loss on its trade date (nothing in V(t) yet
+    /// reflects the purchase) and a matching false gain when the close finally appeared — split
+    /// across two different years here, so a net-zero compounded total across both years would not
+    /// be enough to prove the fix; each year must independently be 0%.
+    /// </summary>
+    [Fact]
+    public async Task GetAnnualReturnsAsync_AssetFirstClosedSeveralValuationsAfterPurchase_IsZeroInBothYears()
+    {
+        var a = AddAsset(1, "A", AssetClass.Stock, "USD");
+        var b = AddAsset(2, "B", AssetClass.Stock, "USD");
+
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = a.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2025, 12, 30),
+            Quantity = 10m, PricePerUnit = 100m, Fees = 0m, Currency = "USD",
+        });
+        _db.Transactions.Add(new Transaction
+        {
+            // Bought inside the timeline (not day 0), first close arrives after the year rolls over.
+            AssetId = b.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2025, 12, 31),
+            Quantity = 5m, PricePerUnit = 200m, Fees = 0m, Currency = "USD",
+        });
+
+        _db.PriceHistories.Add(new PriceHistory { AssetId = a.Id, Date = new DateOnly(2025, 12, 30), Close = 100m, Currency = "USD" });
+        _db.PriceHistories.Add(new PriceHistory { AssetId = a.Id, Date = new DateOnly(2025, 12, 31), Close = 100m, Currency = "USD" });
+        _db.PriceHistories.Add(new PriceHistory { AssetId = a.Id, Date = new DateOnly(2026, 1, 2), Close = 100m, Currency = "USD" });
+        _db.PriceHistories.Add(new PriceHistory { AssetId = a.Id, Date = new DateOnly(2026, 1, 5), Close = 100m, Currency = "USD" });
+        _db.PriceHistories.Add(new PriceHistory { AssetId = b.Id, Date = new DateOnly(2026, 1, 5), Close = 200m, Currency = "USD" });
+        await _db.SaveChangesAsync();
+
+        var result = await _sut.GetAnnualReturnsAsync(CancellationToken.None);
+
+        result.Years.Should().HaveCount(2);
+        result.Years[0].Year.Should().Be(2025);
+        result.Years[0].TimeWeightedReturnPercent.Should().Be(0.00m);
+        result.Years[1].Year.Should().Be(2026);
+        result.Years[1].TimeWeightedReturnPercent.Should().Be(0.00m);
+    }
+
+    /// <summary>
+    /// D50: a held position with transactions but zero stored price history at all — the same
+    /// "never priced" case <c>GetPortfolioPerformanceAsync</c> reports via
+    /// <c>UnchartedSymbols</c> — must not enter the cash-flow series either. Before the fix, its
+    /// cost was subtracted from V(t) on whichever valuation its trade date happened to land on
+    /// even though the asset itself never contributes a single dollar to V, which reads as a false
+    /// loss purely equal to its own cost (this test's unfixed-code result is 4.5%, not the true
+    /// 21% AAPL alone would show, computed by hand and confirmed against the pre-fix code path).
+    /// </summary>
+    [Fact]
+    public async Task GetAnnualReturnsAsync_NeverPricedAsset_DoesNotProduceALoss()
+    {
+        var aapl = AddAsset(1, "AAPL", AssetClass.Stock, "USD");
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = aapl.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 2),
+            Quantity = 10m, PricePerUnit = 100m, Fees = 0m, Currency = "USD",
+        });
+        _db.PriceHistories.Add(new PriceHistory { AssetId = aapl.Id, Date = new DateOnly(2026, 1, 2), Close = 100m, Currency = "USD" });
+        _db.PriceHistories.Add(new PriceHistory { AssetId = aapl.Id, Date = new DateOnly(2026, 6, 30), Close = 110m, Currency = "USD" });
+        _db.PriceHistories.Add(new PriceHistory { AssetId = aapl.Id, Date = new DateOnly(2026, 12, 31), Close = 121m, Currency = "USD" });
+
+        var nvda = AddAsset(2, "NVDA", AssetClass.Stock, "USD"); // held, never priced
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = nvda.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 6, 30),
+            Quantity = 3m, PricePerUnit = 50m, Fees = 0m, Currency = "USD",
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await _sut.GetAnnualReturnsAsync(CancellationToken.None);
+
+        // Same 1000 -> 1100 -> 1210 chain as AAPL alone: 21%, exactly as if NVDA were never held.
+        result.Years.Should().ContainSingle();
+        result.Years[0].TimeWeightedReturnPercent.Should().Be(21.00m);
+    }
+
     [Fact]
     public async Task GetPortfolioPerformanceAsync_NoStockTransactions_ReturnsEmpty()
     {
