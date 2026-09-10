@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
@@ -88,6 +89,7 @@ export class ZakatPage {
   private readonly zakatApi = inject(ZakatApi);
   private readonly assetsApi = inject(AssetsApi);
   private readonly notifications = inject(NotificationService);
+  private readonly destroyRef = inject(DestroyRef);
 
   private readonly reportResource = this.zakatApi.report();
   private readonly paymentsResource = this.zakatApi.payments();
@@ -295,13 +297,16 @@ export class ZakatPage {
       // Optimistic — rolled back via reload() below if the DELETE fails.
       this.paymentsResource.update((list) => (list ?? []).filter((p) => p.id !== payment.id));
 
-      this.zakatApi.deletePayment(payment.id).subscribe({
-        next: () => this.notifications.success('Payment record deleted.'),
-        error: () => {
-          this.notifications.error("Couldn't delete that payment record — it has been restored.");
-          this.paymentsResource.reload();
-        },
-      });
+      this.zakatApi
+        .deletePayment(payment.id)
+        .pipe(takeUntilDestroyed(this.destroyRef))
+        .subscribe({
+          next: () => this.notifications.success('Payment record deleted.'),
+          error: () => {
+            this.notifications.error("Couldn't delete that payment record — it has been restored.");
+            this.paymentsResource.reload();
+          },
+        });
     });
   }
 

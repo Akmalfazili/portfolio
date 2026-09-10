@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatDialog } from '@angular/material/dialog';
@@ -79,6 +80,7 @@ export class TransactionsPage {
   private readonly transactionsApi = inject(TransactionsApi);
   private readonly assetsApi = inject(AssetsApi);
   private readonly notifications = inject(NotificationService);
+  private readonly destroyRef = inject(DestroyRef);
 
   private readonly transactionsResource = this.transactionsApi.list();
   private readonly assetsResource = this.assetsApi.list();
@@ -217,17 +219,20 @@ export class TransactionsPage {
       // Optimistic removal — rolled back by reload() below if the DELETE fails.
       this.transactionsResource.update((list) => (list ?? []).filter((t) => t.id !== transaction.id));
 
-      this.transactionsApi.delete(transaction.id).subscribe({
-        next: () => {
-          this.notifications.success(`${transaction.assetSymbol} transaction deleted.`);
-        },
-        error: () => {
-          this.notifications.error(
-            `Couldn't delete the ${transaction.assetSymbol} transaction — it has been restored.`,
-          );
-          this.transactionsResource.reload();
-        },
-      });
+      this.transactionsApi
+        .delete(transaction.id)
+        .pipe(takeUntilDestroyed(this.destroyRef))
+        .subscribe({
+          next: () => {
+            this.notifications.success(`${transaction.assetSymbol} transaction deleted.`);
+          },
+          error: () => {
+            this.notifications.error(
+              `Couldn't delete the ${transaction.assetSymbol} transaction — it has been restored.`,
+            );
+            this.transactionsResource.reload();
+          },
+        });
     });
   }
 

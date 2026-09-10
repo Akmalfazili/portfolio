@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { HttpErrorResponse } from '@angular/common/http';
 import { FormControl, FormGroup, ReactiveFormsModule, ValidationErrors, Validators } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
@@ -69,6 +70,7 @@ export class ZakatPaymentFormDialog {
   readonly data = inject<ZakatPaymentFormDialogData>(MAT_DIALOG_DATA);
   private readonly dialogRef = inject(MatDialogRef<ZakatPaymentFormDialog, ZakatPaymentFormDialogResult>);
   private readonly zakatApi = inject(ZakatApi);
+  private readonly destroyRef = inject(DestroyRef);
 
   readonly today = todayDateOnly();
   readonly submitting = signal(false);
@@ -127,7 +129,7 @@ export class ZakatPaymentFormDialog {
         ? this.zakatApi.createPayment(request)
         : this.zakatApi.updatePayment(this.data.payment!.id, request);
 
-    call.subscribe({
+    call.pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (payment) => {
         this.submitting.set(false);
         this.dialogRef.close({ kind: 'saved', payment });

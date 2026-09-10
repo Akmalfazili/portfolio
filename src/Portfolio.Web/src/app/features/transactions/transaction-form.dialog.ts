@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { HttpErrorResponse } from '@angular/common/http';
 import { FormControl, FormGroup, ReactiveFormsModule, ValidationErrors, Validators } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
@@ -93,6 +94,7 @@ export class TransactionFormDialog {
   readonly data = inject<TransactionFormDialogData>(MAT_DIALOG_DATA);
   private readonly dialogRef = inject(MatDialogRef<TransactionFormDialog, TransactionFormDialogResult>);
   private readonly transactionsApi = inject(TransactionsApi);
+  private readonly destroyRef = inject(DestroyRef);
 
   readonly today = todayDateOnly();
   readonly submitting = signal(false);
@@ -187,7 +189,7 @@ export class TransactionFormDialog {
         ? this.transactionsApi.create(request)
         : this.transactionsApi.update(this.data.transaction!.id, request);
 
-    call.subscribe({
+    call.pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (transaction) => {
         this.submitting.set(false);
         this.dialogRef.close({ kind: 'saved', transaction });

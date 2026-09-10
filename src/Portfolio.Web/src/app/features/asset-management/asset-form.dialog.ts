@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { HttpErrorResponse } from '@angular/common/http';
 import { AbstractControl, FormControl, FormGroup, ReactiveFormsModule, ValidationErrors, ValidatorFn, Validators } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
@@ -102,6 +103,7 @@ export class AssetFormDialog {
   readonly data = inject<AssetFormDialogData>(MAT_DIALOG_DATA);
   private readonly dialogRef = inject(MatDialogRef<AssetFormDialog, AssetFormDialogResult>);
   private readonly assetsApi = inject(AssetsApi);
+  private readonly destroyRef = inject(DestroyRef);
 
   readonly isEdit = this.data.mode === 'edit';
 
@@ -292,7 +294,7 @@ export class AssetFormDialog {
 
     const call = this.existing ? this.assetsApi.replace(this.existing, request) : this.assetsApi.create(request);
 
-    call.subscribe({
+    call.pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (asset) => {
         this.submitting.set(false);
         this.dialogRef.close({ kind: 'saved', asset });

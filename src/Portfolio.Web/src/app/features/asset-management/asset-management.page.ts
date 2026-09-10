@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
@@ -123,6 +124,7 @@ export class AssetManagementPage {
   private readonly assetsApi = inject(AssetsApi);
   private readonly transactionsApi = inject(TransactionsApi);
   private readonly notifications = inject(NotificationService);
+  private readonly destroyRef = inject(DestroyRef);
 
   private readonly assetsResource = this.assetsApi.list();
 
@@ -227,17 +229,20 @@ export class AssetManagementPage {
       // Optimistic — rolled back below if the PUT fails.
       this.assetsResource.update((list) => (list ?? []).map((a) => (a.id === asset.id ? next : a)));
 
-      this.assetsApi.replace(asset, { isActive: activating }).subscribe({
-        next: () => {
-          this.notifications.success(`${asset.symbol} ${activating ? 'reactivated' : 'deactivated'}.`);
-        },
-        error: () => {
-          this.notifications.error(
-            `Couldn't ${activating ? 'reactivate' : 'deactivate'} ${asset.symbol} — it has been restored.`,
-          );
-          this.assetsResource.update((list) => (list ?? []).map((a) => (a.id === asset.id ? previous : a)));
-        },
-      });
+      this.assetsApi
+        .replace(asset, { isActive: activating })
+        .pipe(takeUntilDestroyed(this.destroyRef))
+        .subscribe({
+          next: () => {
+            this.notifications.success(`${asset.symbol} ${activating ? 'reactivated' : 'deactivated'}.`);
+          },
+          error: () => {
+            this.notifications.error(
+              `Couldn't ${activating ? 'reactivate' : 'deactivate'} ${asset.symbol} — it has been restored.`,
+            );
+            this.assetsResource.update((list) => (list ?? []).map((a) => (a.id === asset.id ? previous : a)));
+          },
+        });
     });
   }
 
@@ -256,10 +261,13 @@ export class AssetManagementPage {
    * only the PUT/DELETE below are outcomes worth a notification.
    */
   deleteAsset(asset: AssetDto): void {
-    this.transactionsApi.byAssetOnce(asset.id).subscribe({
-      next: (transactions) => this.confirmDelete(asset, transactions.length),
-      error: () => this.confirmDelete(asset, null),
-    });
+    this.transactionsApi
+      .byAssetOnce(asset.id)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (transactions) => this.confirmDelete(asset, transactions.length),
+        error: () => this.confirmDelete(asset, null),
+      });
   }
 
   private confirmDelete(asset: AssetDto, transactionCount: number | null): void {
@@ -286,17 +294,20 @@ export class AssetManagementPage {
 
       this.deletingId.set(asset.id);
 
-      this.assetsApi.delete(asset.id).subscribe({
-        next: () => {
-          this.deletingId.set(null);
-          this.assetsResource.update((list) => (list ?? []).filter((a) => a.id !== asset.id));
-          this.notifications.success(`${asset.symbol} and its history were deleted.`);
-        },
-        error: () => {
-          this.deletingId.set(null);
-          this.notifications.error(`Couldn't delete ${asset.symbol} — it is unchanged.`);
-        },
-      });
+      this.assetsApi
+        .delete(asset.id)
+        .pipe(takeUntilDestroyed(this.destroyRef))
+        .subscribe({
+          next: () => {
+            this.deletingId.set(null);
+            this.assetsResource.update((list) => (list ?? []).filter((a) => a.id !== asset.id));
+            this.notifications.success(`${asset.symbol} and its history were deleted.`);
+          },
+          error: () => {
+            this.deletingId.set(null);
+            this.notifications.error(`Couldn't delete ${asset.symbol} — it is unchanged.`);
+          },
+        });
     });
   }
 }

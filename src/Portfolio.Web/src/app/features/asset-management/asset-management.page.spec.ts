@@ -474,6 +474,36 @@ describe('AssetManagementPage', () => {
     expect(notifySuccess).not.toHaveBeenCalled();
   });
 
+  // F7 — the DELETE's subscribe() is piped through takeUntilDestroyed, so
+  // destroying the page while the request is still in flight (e.g. the user
+  // navigated away) unsubscribes and cancels the underlying HTTP call before
+  // any response can land. Without the pipe, `req.cancelled` would be false
+  // here and the eventual response would still call notifications.success
+  // against a component nobody can see any more.
+  it('cancels the in-flight DELETE, and calls no notification, when the component is destroyed first', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const dialog = TestBed.inject(MatDialog);
+    vi.spyOn(dialog, 'open').mockReturnValue({ afterClosed: () => of(true) } as ReturnType<MatDialog['open']>);
+
+    fixture.componentInstance.deleteAsset(AAPL);
+    httpMock.expectOne(API_ROUTES.transactionsByAsset(AAPL.id)).flush([]);
+
+    const req = httpMock.expectOne(API_ROUTES.asset(AAPL.id));
+    expect(req.request.method).toBe('DELETE');
+    expect(req.cancelled).toBeFalsy();
+
+    // The page is torn down while the DELETE is still in flight.
+    fixture.destroy();
+
+    expect(req.cancelled).toBe(true);
+    expect(notifySuccess).not.toHaveBeenCalled();
+    expect(notifyError).not.toHaveBeenCalled();
+  });
+
   // --- Sorting/pagination (shared table-state helper) ---------------------
 
   function symbolsInOrder(fixture: ComponentFixture<AssetManagementPage>): string[] {
