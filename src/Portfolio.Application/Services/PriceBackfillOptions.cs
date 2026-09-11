@@ -26,6 +26,33 @@ public sealed class PriceBackfillOptions
     /// scheduled backfill is due (see <see cref="Services.IPriceBackfillService.RunIfDueAsync"/>).
     /// Deliberately coarse — the check itself costs no provider call, and the gate it evaluates
     /// (NYSE closed, not already run today) only actually becomes true once a day, so there is no
-    /// benefit to polling as tightly as the live-quote refresh loop does.</summary>
+    /// benefit to polling as tightly as the live-quote refresh loop does. Also the floor on how
+    /// often a D51 retry can actually fire in practice — <see cref="FailedRunRetryDelay"/> below
+    /// defaults to the same 15 minutes so the retry is reachable on the very next tick rather than
+    /// waiting on a coarser poll it can never catch up to.</summary>
     public TimeSpan SchedulePollInterval { get; set; } = TimeSpan.FromMinutes(15);
+
+    /// <summary>
+    /// D51: how long <c>RunIfDueAsync</c> waits after a failed <c>BackfillScheduled</c> run for a
+    /// market before offering that market again as a retry. The trap this closes: "a run completed"
+    /// is not "the market is covered" — before D51, a market whose scheduled run failed (e.g. a
+    /// transient DNS outage right when the market's close became due) was indistinguishable from a
+    /// genuinely covered one, and the failed assets sat stale until the NEXT session close, which
+    /// could be a full day away or, for a Friday close, over the weekend. Defaults to 15 minutes —
+    /// the same as <see cref="SchedulePollInterval"/>, so a retry is offered on the very next poll
+    /// tick rather than an interval the poll loop can never actually observe.
+    /// </summary>
+    public TimeSpan FailedRunRetryDelay { get; set; } = TimeSpan.FromMinutes(15);
+
+    /// <summary>
+    /// D51: caps how many extra <c>BackfillScheduled</c> attempts one market gets per session close
+    /// on top of the first (full-pass) attempt, so a persistently broken provider cannot retry
+    /// forever and quietly burn the daily credit budget one small retry at a time. Defaults to 3 —
+    /// at most 1 full pass + 3 retries per close. A retry is narrowed to only the assets (and FX
+    /// pairs) still missing that market's latest close (see <c>PriceBackfillService.RunAsync</c>'s
+    /// remarks), so the worst-case added spend from this cap is
+    /// <c>MaxFailedRunRetriesPerClose × (assets that keep failing)</c> credits per close, not
+    /// <c>MaxFailedRunRetriesPerClose</c> full passes.
+    /// </summary>
+    public int MaxFailedRunRetriesPerClose { get; set; } = 3;
 }

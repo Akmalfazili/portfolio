@@ -50,8 +50,20 @@ public sealed class DividendBackfillServiceTests : IDisposable
     public void Dispose() => _db.Dispose();
 
     private DividendBackfillService CreateSut(
-        IDividendProvider provider, int maxAssetsPerRun = 500, TimeProvider? timeProvider = null) =>
-        new(_db, provider, timeProvider ?? _timeProvider, Options.Create(new DividendBackfillOptions { MaxAssetsPerRun = maxAssetsPerRun }), NullLogger<DividendBackfillService>.Instance);
+        IDividendProvider provider,
+        int maxAssetsPerRun = 500,
+        TimeProvider? timeProvider = null,
+        TimeSpan? failedAssetRetryInterval = null) =>
+        new(
+            _db,
+            provider,
+            timeProvider ?? _timeProvider,
+            Options.Create(new DividendBackfillOptions
+            {
+                MaxAssetsPerRun = maxAssetsPerRun,
+                FailedAssetRetryInterval = failedAssetRetryInterval ?? TimeSpan.FromMinutes(30),
+            }),
+            NullLogger<DividendBackfillService>.Instance);
 
     [Fact]
     public async Task RunAsync_InsertsDividendEvents_AndUpsertsASuccessfulAssetDividendState()
@@ -331,5 +343,310 @@ public sealed class DividendBackfillServiceTests : IDisposable
         result.Outcome.Should().Be(DividendBackfillOutcome.Completed);
         var run = (await _db.RefreshRuns.ToListAsync()).Should().ContainSingle().Subject;
         run.Trigger.Should().Be(RefreshTrigger.DividendBackfillScheduled);
+    }
+
+    // --- D51: a partial failure inside today's full run no longer latches the whole reporting
+    // day — a failed asset gets a narrowly-scoped retry once FailedAssetRetryInterval has passed.
+    // Regression tests confirmed to FAIL against the pre-D51 code (via a detached git worktree
+    // probe, same technique D47 used) before the fix was written — see tracker.md's D51 entry.
+
+    private Asset AddMsft()
+    {
+        var msft = new Asset
+        {
+            Id = 2, Symbol = "MSFT", Name = "Microsoft", AssetClass = AssetClass.Stock, Currency = "USD",
+            QuoteProviderKind = QuoteProviderKind.TwelveData, ProviderSymbol = "MSFT",
+        };
+        _db.Assets.Add(msft);
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = msft.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 1, 1),
+            Quantity = 5m, PricePerUnit = 300m, Fees = 0m, Currency = "USD",
+        });
+        return msft;
+    }
+
+    [Fact]
+    public async Task RunIfDueAsync_D51_PartialFailureToday_RetriesOnlyTheFailedAssetOnceTheIntervalHasPassed()
+    {
+        var msft = AddMsft();
+
+        // Today's full run already happened and was productive (AAPL succeeded) — but MSFT's own
+        // attempt inside it failed, well outside the default 30-minute FailedAssetRetryInterval.
+        _db.RefreshRuns.Add(new RefreshRun
+        {
+            Trigger = RefreshTrigger.DividendBackfillScheduled,
+            AssetClass = AssetClass.Stock,
+            StartedAt = _timeProvider.GetUtcNow().AddHours(-1),
+            CompletedAt = _timeProvider.GetUtcNow().AddHours(-1),
+            Success = false,
+            SymbolsRefreshed = 1, // AAPL alone still counts as "productive"
+        });
+        _db.AssetDividendStates.Add(new AssetDividendState
+        {
+            AssetId = _aapl.Id, LastAttemptedAt = _timeProvider.GetUtcNow().AddHours(-1), LastRunSuccess = true,
+        });
+        _db.AssetDividendStates.Add(new AssetDividendState
+        {
+            AssetId = msft.Id,
+            LastAttemptedAt = _timeProvider.GetUtcNow().AddMinutes(-45), // 45 min ago > 30-min interval
+            LastRunSuccess = false,
+            LastError = "Yahoo returned HTTP 500.",
+        });
+        await _db.SaveChangesAsync();
+
+        var provider = Substitute.For<IDividendProvider>();
+        provider.GetDividendHistoryAsync(msft, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(DividendHistoryFetchResult.Ok([new DividendPoint(new DateOnly(2026, 2, 1), 0.75m, "USD")]));
+
+        var sut = CreateSut(provider);
+
+        var result = await sut.RunIfDueAsync(CancellationToken.None);
+
+        result.Outcome.Should().Be(DividendBackfillOutcome.RetryCompleted);
+        result.Summary!.AssetsProcessed.Should().Contain("MSFT").And.NotContain("AAPL");
+        await provider.DidNotReceive().GetDividendHistoryAsync(
+            _aapl, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+        await provider.Received(1).GetDividendHistoryAsync(
+            msft, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+
+        var msftState = await _db.AssetDividendStates.SingleAsync(s => s.AssetId == msft.Id);
+        msftState.LastRunSuccess.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task RunIfDueAsync_D51_PartialFailureToday_NotYetDueForRetry_BeforeTheIntervalElapses()
+    {
+        var msft = AddMsft();
+
+        _db.RefreshRuns.Add(new RefreshRun
+        {
+            Trigger = RefreshTrigger.DividendBackfillScheduled,
+            AssetClass = AssetClass.Stock,
+            StartedAt = _timeProvider.GetUtcNow().AddMinutes(-10),
+            CompletedAt = _timeProvider.GetUtcNow().AddMinutes(-10),
+            Success = false,
+            SymbolsRefreshed = 1,
+        });
+        _db.AssetDividendStates.Add(new AssetDividendState
+        {
+            AssetId = msft.Id,
+            LastAttemptedAt = _timeProvider.GetUtcNow().AddMinutes(-10), // only 10 min ago < 30-min interval
+            LastRunSuccess = false,
+            LastError = "Yahoo returned HTTP 500.",
+        });
+        await _db.SaveChangesAsync();
+
+        var provider = Substitute.For<IDividendProvider>();
+        var sut = CreateSut(provider);
+
+        var result = await sut.RunIfDueAsync(CancellationToken.None);
+
+        result.Outcome.Should().Be(DividendBackfillOutcome.AlreadyRanToday);
+        result.Summary.Should().BeNull();
+        await provider.DidNotReceive().GetDividendHistoryAsync(
+            Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunIfDueAsync_D51_PartialFailureToday_ButAssetHasSinceSucceeded_DoesNotRetryIt()
+    {
+        // Proves the retry scan reads the CURRENT AssetDividendState, not a snapshot of what the
+        // failed RefreshRun row once reported — a success recorded after that row (e.g. via a
+        // manual retry) must clear the asset from the retry scan.
+        var msft = AddMsft();
+
+        _db.RefreshRuns.Add(new RefreshRun
+        {
+            Trigger = RefreshTrigger.DividendBackfillScheduled,
+            AssetClass = AssetClass.Stock,
+            StartedAt = _timeProvider.GetUtcNow().AddHours(-1),
+            CompletedAt = _timeProvider.GetUtcNow().AddHours(-1),
+            Success = true,
+            SymbolsRefreshed = 2,
+        });
+        _db.AssetDividendStates.Add(new AssetDividendState
+        {
+            AssetId = msft.Id, LastAttemptedAt = _timeProvider.GetUtcNow().AddHours(-1), LastRunSuccess = true,
+        });
+        await _db.SaveChangesAsync();
+
+        var provider = Substitute.For<IDividendProvider>();
+        var sut = CreateSut(provider);
+
+        var result = await sut.RunIfDueAsync(CancellationToken.None);
+
+        result.Outcome.Should().Be(DividendBackfillOutcome.AlreadyRanToday);
+        await provider.DidNotReceive().GetDividendHistoryAsync(
+            Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+    }
+
+    // --- D51 follow-up (found on coordinator review, before deploy): an ALL-failed full run has
+    // SymbolsRefreshed == 0, the same shape D41's genuinely-nothing-to-do case has — before this
+    // fix it fell through D41's unpaced branch and re-ran a full pass on every poll tick. Regression
+    // confirmed FAILING against the post-first-D51-pass/pre-follow-up code (a detached git worktree
+    // probe, same technique used throughout D51) before this fix was written — see tracker.md.
+
+    [Fact]
+    public async Task RunIfDueAsync_D51FollowUp_AllFailedFullRun_NotDueForRetryAt15Minutes_ReturnsRetryPending()
+    {
+        // Well short of the default 30-minute FailedAssetRetryInterval — must NOT re-run.
+        _db.RefreshRuns.Add(new RefreshRun
+        {
+            Trigger = RefreshTrigger.DividendBackfillScheduled,
+            AssetClass = AssetClass.Stock,
+            StartedAt = _timeProvider.GetUtcNow().AddMinutes(-15),
+            CompletedAt = _timeProvider.GetUtcNow().AddMinutes(-15),
+            Success = false, // every asset failed
+            SymbolsRefreshed = 0,
+        });
+        await _db.SaveChangesAsync();
+
+        var provider = Substitute.For<IDividendProvider>();
+        var sut = CreateSut(provider);
+
+        var result = await sut.RunIfDueAsync(CancellationToken.None);
+
+        result.Outcome.Should().Be(DividendBackfillOutcome.RetryPending);
+        result.Summary.Should().BeNull();
+        await provider.DidNotReceive().GetDividendHistoryAsync(
+            Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunIfDueAsync_D51FollowUp_AllFailedFullRun_DueForAFullRerunAt30Minutes()
+    {
+        // Past the default 30-minute FailedAssetRetryInterval — a full rerun is due (there is
+        // nothing narrower to retry than everything, since every asset failed last time).
+        _db.RefreshRuns.Add(new RefreshRun
+        {
+            Trigger = RefreshTrigger.DividendBackfillScheduled,
+            AssetClass = AssetClass.Stock,
+            StartedAt = _timeProvider.GetUtcNow().AddMinutes(-35),
+            CompletedAt = _timeProvider.GetUtcNow().AddMinutes(-35),
+            Success = false,
+            SymbolsRefreshed = 0,
+        });
+        await _db.SaveChangesAsync();
+
+        var provider = Substitute.For<IDividendProvider>();
+        provider.GetDividendHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(DividendHistoryFetchResult.Ok([new DividendPoint(new DateOnly(2026, 2, 1), 0.25m, "USD")]));
+
+        var sut = CreateSut(provider);
+
+        var result = await sut.RunIfDueAsync(CancellationToken.None);
+
+        result.Outcome.Should().Be(DividendBackfillOutcome.Completed);
+        result.Summary!.AssetsProcessed.Should().Contain("AAPL");
+        await provider.Received(1).GetDividendHistoryAsync(
+            _aapl, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunIfDueAsync_D51FollowUp_ZeroAssetSuccessfulRun_RunsAgainImmediately_D41RegressionGuard()
+    {
+        // D41's shape: a run with nothing to do (Success == true, SymbolsRefreshed == 0) must NOT
+        // be paced by FailedAssetRetryInterval, even seconds later — only a FAILED zero-asset run
+        // (the D51 follow-up case above) is paced.
+        _db.Transactions.RemoveRange(_db.Transactions);
+        await _db.SaveChangesAsync();
+
+        _db.RefreshRuns.Add(new RefreshRun
+        {
+            Trigger = RefreshTrigger.DividendBackfillScheduled,
+            AssetClass = AssetClass.Stock,
+            StartedAt = _timeProvider.GetUtcNow().AddMinutes(-1),
+            CompletedAt = _timeProvider.GetUtcNow().AddMinutes(-1),
+            Success = true, // nothing to do, not a failure
+            SymbolsRefreshed = 0,
+        });
+        await _db.SaveChangesAsync();
+
+        // AAPL's first transaction has just been recorded - the exact D41 trigger.
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = _aapl.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2027, 3, 1),
+            Quantity = 10m, PricePerUnit = 100m, Fees = 0m, Currency = "USD",
+        });
+        await _db.SaveChangesAsync();
+
+        var provider = Substitute.For<IDividendProvider>();
+        provider.GetDividendHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(DividendHistoryFetchResult.Ok([]));
+
+        var sut = CreateSut(provider);
+
+        var result = await sut.RunIfDueAsync(CancellationToken.None);
+
+        result.Outcome.Should().Be(DividendBackfillOutcome.Completed);
+        result.Summary!.AssetsProcessed.Should().Contain("AAPL");
+        await provider.Received(1).GetDividendHistoryAsync(
+            _aapl, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// D51 escalation follow-up (found on coordinator review, before deploy): a narrowed per-asset
+    /// retry writes its OWN <see cref="RefreshRun"/> row, and if every asset in that NARROWED set
+    /// fails again (e.g. one persistently delisted symbol), that row reads
+    /// <c>SymbolsRefreshed == 0 &amp;&amp; !Success</c> too — structurally identical to a fresh
+    /// all-failed FULL run once it becomes the newest row. Keying the gate on "the single most
+    /// recent scheduled run" (the shape of the first D51 follow-up's fix) misread it as exactly
+    /// that and escalated into a full run over every asset, every
+    /// <see cref="DividendBackfillOptions.FailedAssetRetryInterval"/>, for one bad symbol — the same
+    /// Yahoo-hammering the first follow-up had just closed, reopened through a different door.
+    /// Regression confirmed FAILING against the post-follow-up-#1/pre-follow-up-#2 code (a detached
+    /// git worktree probe) before this fix was written — see tracker.md.
+    ///
+    /// Driven end to end through the real SUT (not hand-seeded rows) across three ticks: an initial
+    /// full run (AAPL succeeds, MSFT fails), then two more ticks 35 minutes apart, each past
+    /// <see cref="DividendBackfillOptions.FailedAssetRetryInterval"/>. AAPL must never be re-fetched
+    /// after its one success, and every later tick must stay a narrowed MSFT-only retry
+    /// (<see cref="DividendBackfillOutcome.RetryCompleted"/>) — never escalate back to
+    /// <see cref="DividendBackfillOutcome.Completed"/> (a full run).
+    /// </summary>
+    [Fact]
+    public async Task RunIfDueAsync_D51Escalation_APersistentlyFailingAssetsNarrowedRetry_NeverEscalatesToAFullRun()
+    {
+        var msft = AddMsft();
+        await _db.SaveChangesAsync();
+
+        var provider = Substitute.For<IDividendProvider>();
+        provider.GetDividendHistoryAsync(_aapl, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(DividendHistoryFetchResult.Ok([]));
+        provider.GetDividendHistoryAsync(msft, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(DividendHistoryFetchResult.Failed("Yahoo returned HTTP 404 (delisted)."));
+
+        var pollTime = new MutableTimeProvider(new DateTimeOffset(2027, 3, 1, 8, 0, 0, TimeSpan.Zero));
+        var sut = CreateSut(provider, timeProvider: pollTime);
+
+        // Tick 1: nothing has run today - a full run. AAPL succeeds, MSFT fails.
+        var first = await sut.RunIfDueAsync(CancellationToken.None);
+        first.Outcome.Should().Be(DividendBackfillOutcome.Completed);
+        first.Summary!.AssetsProcessed.Should().Contain("AAPL");
+        first.Summary!.AssetsFailed.Should().ContainSingle(f => f.Symbol == "MSFT");
+
+        // Tick 2, 35 minutes later (past the default 30-minute FailedAssetRetryInterval): a
+        // productive run already happened today, so this must be a NARROWED retry of MSFT alone -
+        // which also fails, writing a SymbolsRefreshed == 0 && !Success row of its own.
+        pollTime.Now = pollTime.Now.AddMinutes(35);
+        var second = await sut.RunIfDueAsync(CancellationToken.None);
+        second.Outcome.Should().Be(DividendBackfillOutcome.RetryCompleted);
+        second.Summary!.AssetsFailed.Should().ContainSingle(f => f.Symbol == "MSFT");
+
+        // Tick 3, another 35 minutes later: THE ESCALATION CHECK. The most recent row (tick 2's
+        // narrowed retry) itself reads SymbolsRefreshed == 0 && !Success - the bug misread this as
+        // a fresh all-failed FULL run and re-fetched every asset. It must instead still recognise
+        // today's original run as productive and stay on the narrowed MSFT-only retry path.
+        pollTime.Now = pollTime.Now.AddMinutes(35);
+        var third = await sut.RunIfDueAsync(CancellationToken.None);
+        third.Outcome.Should().Be(DividendBackfillOutcome.RetryCompleted);
+        third.Summary!.AssetsFailed.Should().ContainSingle(f => f.Symbol == "MSFT");
+
+        // AAPL was fetched exactly once, ever - ticks 2 and 3 must never have touched it.
+        await provider.Received(1).GetDividendHistoryAsync(
+            _aapl, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+        await provider.Received(3).GetDividendHistoryAsync(
+            msft, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
     }
 }

@@ -32,6 +32,25 @@ namespace Portfolio.Application.Services;
 /// to just usually was not on file yet. The fix gates each market on its OWN session and its OWN
 /// last close (<see cref="IMarketCalendar.LastSessionCloseAt"/>) rather than NYSE's or a shared
 /// calendar-day latch — see <c>RunIfDueAsync</c> and tracker.md's D47 entry.</para>
+///
+/// <para><b>D51: "a run completed" is not "the market is covered" — D47's own trap, one layer
+/// down.</b> A transient outage (e.g. the API container's DNS taking ~30-60s to come up after a
+/// restart) landing exactly when a market's close became due could throw for some assets while
+/// others still succeeded; the run's <see cref="Domain.Entities.RefreshRun"/> row still counted as
+/// "completed since last close" for D47's gate, and D47's gate had no concept of failure — so the
+/// failed assets were stranded until the market's NEXT session close, which for a Friday failure
+/// means a full weekend stale. Two changes close this: <see cref="Domain.Entities.RefreshRun.Success"/>
+/// is now computed PER MARKET (a market's row fails iff one of ITS OWN assets or FX pairs failed —
+/// see the per-market loop at the end of <c>RunAsync</c>), and <c>RunIfDueAsync</c> offers a
+/// bounded, paced retry (<see cref="PriceBackfillOptions.FailedRunRetryDelay"/>,
+/// <see cref="PriceBackfillOptions.MaxFailedRunRetriesPerClose"/>) when the most recent run since a
+/// market's last close failed. A retry is narrowed to only the assets (and FX pairs) still missing
+/// that market's latest close — see the <c>retryOnlyMarkets</c> handling inside <c>RunAsync</c>'s
+/// private core below — so it never re-spends a credit confirming something a partially-successful
+/// first pass already filled in. Only <c>RunIfDueAsync</c>'s own scheduled retries are narrowed;
+/// the manual <c>POST /api/prices/backfill</c> path (the public <c>RunAsync</c>) stays a full pass,
+/// unchanged, because a full pass is also what fills history for a newly recorded back-dated
+/// transaction on an asset whose latest close is already on file.</para>
 /// </summary>
 public sealed class PriceBackfillService(
     IPortfolioDbContext db,
@@ -50,6 +69,10 @@ public sealed class PriceBackfillService(
         var now = timeProvider.GetUtcNow();
 
         var dueMarkets = new List<Market>();
+        // D51: markets in dueMarkets AND retryMarkets get a narrowed run (only what's still
+        // missing that market's latest close); markets in dueMarkets but NOT retryMarkets get the
+        // full pass, exactly as before D51.
+        var retryMarkets = new List<Market>();
         var skipped = new List<PriceBackfillMarketSkip>();
 
         foreach (var market in ProviderMarkets.All)
@@ -68,18 +91,51 @@ public sealed class PriceBackfillService(
             // the once-per-session throttle the old global once-per-day latch used to provide
             // separately (and wrongly — see the class remarks). Self-correcting after downtime: on
             // startup, any market closed and uncovered since its own last close is immediately due.
+            //
+            // D51: "has a run completed" is no longer sufficient on its own — it must also have
+            // SUCCEEDED, or this is exactly D47's trap one layer down (a completed-but-failed run
+            // silently treated as coverage). Pulled back as a list, newest first, rather than just
+            // MaxAsync(CompletedAt), because a retry decision also needs to know how many
+            // BackfillScheduled attempts this market has already had since its own last close.
             var lastClose = calendar.LastSessionCloseAt(market, now);
-            var lastRunCompletedAt = await db.RefreshRuns
-                .Where(r => r.Trigger == RefreshTrigger.BackfillScheduled && r.Market == market)
-                .MaxAsync(r => (DateTimeOffset?)r.CompletedAt, cancellationToken);
+            var runsSinceLastClose = await db.RefreshRuns
+                .Where(r => r.Trigger == RefreshTrigger.BackfillScheduled && r.Market == market
+                    && r.CompletedAt != null && r.CompletedAt >= lastClose)
+                .OrderByDescending(r => r.CompletedAt)
+                .ToListAsync(cancellationToken);
 
-            if (lastRunCompletedAt is { } completed && completed >= lastClose)
+            if (runsSinceLastClose.Count == 0)
+            {
+                // No attempt at all yet since this close — the ordinary due-ness case, a full pass.
+                dueMarkets.Add(market);
+                continue;
+            }
+
+            var mostRecentRun = runsSinceLastClose[0];
+            if (mostRecentRun.Success)
             {
                 skipped.Add(new PriceBackfillMarketSkip(market, PriceBackfillSkipReason.AlreadyCoveredSinceLastClose));
                 continue;
             }
 
+            // The most recent attempt since this close failed. A retry is warranted, but bounded
+            // (PriceBackfillOptions.MaxFailedRunRetriesPerClose) and paced
+            // (PriceBackfillOptions.FailedRunRetryDelay) — see PriceBackfillService's class remarks
+            // for why both exist.
+            if (runsSinceLastClose.Count > options.Value.MaxFailedRunRetriesPerClose)
+            {
+                skipped.Add(new PriceBackfillMarketSkip(market, PriceBackfillSkipReason.RetriesExhausted));
+                continue;
+            }
+
+            if (now - mostRecentRun.CompletedAt!.Value < options.Value.FailedRunRetryDelay)
+            {
+                skipped.Add(new PriceBackfillMarketSkip(market, PriceBackfillSkipReason.RetryPending));
+                continue;
+            }
+
             dueMarkets.Add(market);
+            retryMarkets.Add(market);
         }
 
         if (dueMarkets.Count == 0)
@@ -87,12 +143,34 @@ public sealed class PriceBackfillService(
             return new PriceBackfillRunResult([], skipped, null);
         }
 
-        var summary = await RunAsync(RefreshTrigger.BackfillScheduled, dueMarkets, cancellationToken);
+        var summary = await RunAsyncCore(RefreshTrigger.BackfillScheduled, dueMarkets, retryMarkets, cancellationToken);
         return new PriceBackfillRunResult(dueMarkets, skipped, summary);
     }
 
-    public async Task<PriceBackfillSummary> RunAsync(
-        RefreshTrigger trigger, IReadOnlyCollection<Market> markets, CancellationToken cancellationToken)
+    /// <summary>Unconditional entry point — always a full pass. See <see cref="IPriceBackfillService"/>.
+    /// D51's narrowed-retry path is reached only from <see cref="RunIfDueAsync"/>, via the private
+    /// <see cref="RunAsyncCore"/> overload below; this public method never narrows, by design (the
+    /// manual endpoint must stay a full pass, unchanged).</summary>
+    public Task<PriceBackfillSummary> RunAsync(
+        RefreshTrigger trigger, IReadOnlyCollection<Market> markets, CancellationToken cancellationToken) =>
+        RunAsyncCore(trigger, markets, retryOnlyMarkets: [], cancellationToken);
+
+    /// <summary>
+    /// D51: <paramref name="retryOnlyMarkets"/> (a subset of <paramref name="markets"/>) narrows
+    /// the run for exactly those markets to only the assets (and FX pairs) still missing that
+    /// market's own latest close — see the filter applied to <c>assets</c> and
+    /// <c>currenciesNeedingFx</c> below. A market in <paramref name="markets"/> but NOT in
+    /// <paramref name="retryOnlyMarkets"/> gets the full pass, exactly as before D51 — this is what
+    /// keeps the first scheduled pass per close (and the manual endpoint, which always passes an
+    /// empty <paramref name="retryOnlyMarkets"/>) unchanged: a full pass is also what fills history
+    /// for a newly recorded back-dated transaction on an asset whose latest close is already on
+    /// file, which a "missing the latest close" filter alone would never pick up.
+    /// </summary>
+    private async Task<PriceBackfillSummary> RunAsyncCore(
+        RefreshTrigger trigger,
+        IReadOnlyCollection<Market> markets,
+        IReadOnlyCollection<Market> retryOnlyMarkets,
+        CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
         var today = ReportingClock.Today(timeProvider);
@@ -115,6 +193,10 @@ public sealed class PriceBackfillService(
         var assetsTruncated = new List<string>();
         var priceHistoryInserted = 0;
         var fxRateInserted = 0;
+        // D51: which currencies' FX fetch failed, tracked separately from assetsFailed's flat
+        // string-keyed list so the per-market Success attribution below can ask "did a currency
+        // THIS market needs fail?" without parsing the "FX:USD/xxx" symbol format back apart.
+        var failedFxCurrencies = new HashSet<string>();
 
         // Crypto is gain/loss only, by decision — it keeps no PriceHistory at all, so backfilling
         // it would spend provider rate limit on data nothing reads. See the Phase 6 decision.
@@ -136,6 +218,13 @@ public sealed class PriceBackfillService(
             a => a.Symbol,
             a => ProviderMarkets.For(a.QuoteProviderKind)!.Value);
 
+        // D51: captured BEFORE the retry-narrowing filter below reassigns `assets` — this is the
+        // full market-scoped set, used to derive which currencies/markets are in play at all. FX
+        // narrowing and asset-loop narrowing are independent decisions (an asset can be up to date
+        // on its own close while its currency's FX row for that date genuinely is missing, or vice
+        // versa), so neither derivation should be based on the other's narrowed output.
+        var assetsInScope = assets;
+
         // D37: least-recently-backfilled first (nulls — never backfilled at all — first of all),
         // not the implicit clustered-index (Id) order EF/SQL Server return with no ORDER BY. That
         // stable ordering is exactly what made a budget-truncated run starve the SAME contiguous
@@ -147,6 +236,34 @@ public sealed class PriceBackfillService(
             .GroupBy(p => p.AssetId)
             .Select(g => new { AssetId = g.Key, LastDate = g.Max(p => p.Date) })
             .ToDictionaryAsync(x => x.AssetId, x => x.LastDate, cancellationToken);
+
+        // D51: retries fetch only what is missing. For a market in retryOnlyMarkets, an asset is
+        // excluded from this run entirely when its newest stored PriceHistory date already covers
+        // that market's own last session close — re-fetching it would just re-confirm a close
+        // already on file, spending a credit for nothing. A market NOT in retryOnlyMarkets (the
+        // ordinary first pass per close, and every manual run) is untouched by this filter — a full
+        // pass must still fetch every in-scope asset regardless of what it already has on file,
+        // because it is also what fills history for a newly recorded back-dated transaction on an
+        // asset whose latest close happens to already be on file.
+        if (retryOnlyMarkets.Count > 0)
+        {
+            var lastCloseLocalDateByMarket = retryOnlyMarkets.ToDictionary(
+                m => m, m => calendar.LocalDateOn(m, calendar.LastSessionCloseAt(m, now)));
+
+            assets = assets
+                .Where(a =>
+                {
+                    if (!lastCloseLocalDateByMarket.TryGetValue(marketByAssetSymbol[a.Symbol], out var requiredDate))
+                    {
+                        return true; // this asset's market isn't being retried this run — full pass
+                    }
+
+                    var alreadyHasLatestClose =
+                        lastBackfilledByAsset.TryGetValue(a.Id, out var lastDate) && lastDate >= requiredDate;
+                    return !alreadyHasLatestClose;
+                })
+                .ToList();
+        }
 
         assets = assets
             .OrderBy(a => lastBackfilledByAsset.TryGetValue(a.Id, out var lastDate) ? lastDate : DateOnly.MinValue)
@@ -160,12 +277,52 @@ public sealed class PriceBackfillService(
 
         // Derived up front, before either loop spends a call, so the FX loop below can run first
         // without waiting on the asset loop to discover which currencies are in play. Derived from
-        // the already market-filtered `assets`, so an SGX-only run only ever asks for USD/SGD, not
-        // any currency pair only an out-of-scope NYSE asset would need.
-        var currenciesNeedingFx = assets
+        // `assetsInScope` (the full market-scoped set, NOT the retry-narrowed `assets`), so an
+        // SGX-only run only ever asks for USD/SGD, not any currency pair only an out-of-scope NYSE
+        // asset would need — and so FX narrowing below (also D51) is judged on its own criterion,
+        // not accidentally starved by which individual assets a retry happened to exclude.
+        var currenciesNeedingFx = assetsInScope
             .Where(a => earliestTradeDateByAsset.ContainsKey(a.Id) && a.Currency != ReportingCurrency)
             .Select(a => a.Currency)
             .ToHashSet();
+
+        // Which market(s) need each non-USD currency — used both for D51's per-market Success
+        // attribution below (a market's RefreshRun row must fail if an FX pair only IT needs
+        // failed) and for D51's FX retry narrowing immediately below.
+        var marketsByCurrency = assetsInScope
+            .Where(a => earliestTradeDateByAsset.ContainsKey(a.Id) && a.Currency != ReportingCurrency)
+            .GroupBy(a => a.Currency)
+            .ToDictionary(g => g.Key, g => g.Select(a => marketByAssetSymbol[a.Symbol]).ToHashSet());
+
+        // D51: the FX equivalent of the asset-loop narrowing above. A currency is excluded from
+        // this run only when EVERY market that needs it is being retried (a currency needed by a
+        // full-pass market must still be fetched in full, unchanged) AND the newest stored FxRate
+        // for it already covers the latest of those markets' own last close.
+        if (retryOnlyMarkets.Count > 0 && currenciesNeedingFx.Count > 0)
+        {
+            var lastCloseLocalDateByMarket = retryOnlyMarkets.ToDictionary(
+                m => m, m => calendar.LocalDateOn(m, calendar.LastSessionCloseAt(m, now)));
+
+            foreach (var currency in currenciesNeedingFx.ToList())
+            {
+                var requiringMarkets = marketsByCurrency[currency];
+                if (!requiringMarkets.All(retryOnlyMarkets.Contains))
+                {
+                    continue; // at least one requiring market is a full pass — do not narrow
+                }
+
+                var requiredDate = requiringMarkets.Max(m => lastCloseLocalDateByMarket[m]);
+                var newestStoredFxDate = await db.FxRates
+                    .Where(f => f.Base == ReportingCurrency && f.Quote == currency)
+                    .Select(f => (DateOnly?)f.Date)
+                    .MaxAsync(cancellationToken);
+
+                if (newestStoredFxDate is { } stored && stored >= requiredDate)
+                {
+                    currenciesNeedingFx.Remove(currency);
+                }
+            }
+        }
 
         // FX runs before the per-asset price-history loop, and gets first claim on the shared
         // call budget, even though it appears second in PriceBackfillSummary's field order. This
@@ -177,8 +334,12 @@ public sealed class PriceBackfillService(
         // FX call at the end was reliably 429'd once more than ~8 stocks were held.
         foreach (var currency in currenciesNeedingFx)
         {
-            // The earliest date any asset in this currency needs a converted value.
-            var from = assets
+            // The earliest date any asset in this currency needs a converted value. Derived from
+            // `assetsInScope`, not the retry-narrowed `assets` — an FX call still fetched (i.e. not
+            // skipped by the narrowing above) must cover the full range every in-scope asset in
+            // this currency needs, not just the narrowed subset a retry happens to be fetching
+            // prices for.
+            var from = assetsInScope
                 .Where(a => a.Currency == currency && earliestTradeDateByAsset.ContainsKey(a.Id))
                 .Select(a => earliestTradeDateByAsset[a.Id])
                 .DefaultIfEmpty(today)
@@ -212,6 +373,7 @@ public sealed class PriceBackfillService(
                     ReportingCurrency,
                     currency);
                 assetsFailed.Add(new AssetBackfillFailure($"FX:{ReportingCurrency}/{currency}", ex.Message));
+                failedFxCurrencies.Add(currency);
                 continue;
             }
 
@@ -228,6 +390,7 @@ public sealed class PriceBackfillService(
                     fxResult.Error);
                 assetsFailed.Add(new AssetBackfillFailure(
                     $"FX:{ReportingCurrency}/{currency}", fxResult.Error ?? "Provider reported failure without a message."));
+                failedFxCurrencies.Add(currency);
                 continue;
             }
 
@@ -363,12 +526,25 @@ public sealed class PriceBackfillService(
         // outcome is shared across the run, but how many symbols a given market's row can claim
         // credit for is market-specific — see D45's reminder that internal bookkeeping numbers
         // need the same "which one actually happened" care as outward-facing DTOs).
+        //
+        // D51: Success is now computed PER MARKET too, not `assetsFailed.Count == 0` stamped
+        // identically on every market's row. A market's row fails iff one of ITS OWN assets failed,
+        // or an FX pair only ITS OWN assets need failed — NYSE's row must never read false because
+        // Z74's SGD conversion failed, and SGX's row must never read false because an unrelated
+        // NYSE asset failed. ErrorMessage stays whole-run text (not scoped per market) — it is a
+        // human-facing diagnostic string, never machine-read (RefreshRun.Success is the only field
+        // RunIfDueAsync's gate consults), so one shared summary is simplest and loses nothing.
         var runSummaryText = BuildRunSummary(assetsSkippedForBudget, assetsFailed, assetsSkippedTodayNotClosed, assetsTruncated);
         var completedAt = timeProvider.GetUtcNow();
         foreach (var market in markets)
         {
             var symbolsForMarket = assetsProcessed.Count(symbol =>
                 marketByAssetSymbol.TryGetValue(symbol, out var assetMarket) && assetMarket == market);
+
+            var assetFailureForThisMarket = assetsFailed.Any(f =>
+                marketByAssetSymbol.TryGetValue(f.Symbol, out var assetMarket) && assetMarket == market);
+            var fxFailureForThisMarket = failedFxCurrencies.Any(currency =>
+                marketsByCurrency.TryGetValue(currency, out var requiringMarkets) && requiringMarkets.Contains(market));
 
             db.AddRefreshRun(new RefreshRun
             {
@@ -377,7 +553,7 @@ public sealed class PriceBackfillService(
                 Market = market,
                 StartedAt = now,
                 CompletedAt = completedAt,
-                Success = assetsFailed.Count == 0,
+                Success = !assetFailureForThisMarket && !fxFailureForThisMarket,
                 ErrorMessage = runSummaryText,
                 SymbolsRefreshed = symbolsForMarket,
             });

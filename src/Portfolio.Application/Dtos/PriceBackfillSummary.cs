@@ -54,6 +54,11 @@ public sealed record PriceBackfillSummary(
 /// SGX's close backfill didn't run, and vice versa. A skip list whose name asserts a single
 /// reason is the most repeated defect family in this project (D10, D26, D33, D35, D38, D45) —
 /// this enum exists so "why" is carried per market rather than collapsed into one label.
+///
+/// <para>D51 added <see cref="RetryPending"/> and <see cref="RetriesExhausted"/>, both "attempted
+/// and failed" outcomes, so neither is ever confused with <see cref="AlreadyCoveredSinceLastClose"/>
+/// ("attempted and succeeded") — the same not-attempted-vs-attempted-and-failed split this project
+/// keeps re-learning the hard way, one level below the market/asset split it already made.</para>
 /// </summary>
 public enum PriceBackfillSkipReason
 {
@@ -63,11 +68,33 @@ public enum PriceBackfillSkipReason
     /// own close will pick it up.</summary>
     SessionOpen,
 
-    /// <summary>A scheduled backfill has already completed for this market since its own last
-    /// session close (see <c>IMarketCalendar.LastSessionCloseAt</c>). Running again would only
-    /// re-spend a provider call to insert nothing new, since a market publishes exactly one close
-    /// per session and <c>PriceHistory</c> gains at most one new row per asset per session.</summary>
+    /// <summary>A scheduled backfill has already completed <b>successfully</b> for this market
+    /// since its own last session close (see <c>IMarketCalendar.LastSessionCloseAt</c>). Running
+    /// again would only re-spend a provider call to insert nothing new, since a market publishes
+    /// exactly one close per session and <c>PriceHistory</c> gains at most one new row per asset per
+    /// session.</summary>
     AlreadyCoveredSinceLastClose,
+
+    /// <summary>
+    /// D51: the most recent scheduled run for this market since its own last close failed (at
+    /// least one of its assets or FX pairs did not succeed), and a retry is warranted — but not
+    /// yet: fewer than <c>PriceBackfillOptions.FailedRunRetryDelay</c> has elapsed since that run
+    /// completed. The next poll tick after the delay elapses will retry it, narrowed to only what
+    /// is still missing. Deliberately distinct from <see cref="AlreadyCoveredSinceLastClose"/> —
+    /// this market is NOT covered, it is waiting to be retried.
+    /// </summary>
+    RetryPending,
+
+    /// <summary>
+    /// D51: this market has already used its full retry allowance for the current session close
+    /// (<c>PriceBackfillOptions.MaxFailedRunRetriesPerClose</c>) and every attempt still failed.
+    /// No further attempt will be made until the market's NEXT session close, when the retry count
+    /// resets for free (it is scoped to runs since the current <c>LastSessionCloseAt</c>).
+    /// Deliberately distinct from <see cref="AlreadyCoveredSinceLastClose"/> — this market is
+    /// stale, not covered; a caller reading only "skipped" without this reason would not be able to
+    /// tell healthy quiescence apart from a persistently broken provider.
+    /// </summary>
+    RetriesExhausted,
 }
 
 /// <summary>One market <c>RunIfDueAsync</c> decided not to cover this tick, and why — see

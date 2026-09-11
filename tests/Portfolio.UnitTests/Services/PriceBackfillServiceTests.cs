@@ -97,14 +97,21 @@ public sealed class PriceBackfillServiceTests : IDisposable
         int maxCallsPerRun = 800,
         IMarketCalendar? calendar = null,
         ITwelveDataCreditThrottle? creditThrottle = null,
-        TimeProvider? timeProvider = null) =>
+        TimeProvider? timeProvider = null,
+        TimeSpan? failedRunRetryDelay = null,
+        int? maxFailedRunRetriesPerClose = null) =>
         new(
             _db,
             router,
             fxProvider,
             calendar ?? AlwaysClosedCalendar(),
             timeProvider ?? _timeProvider,
-            Options.Create(new PriceBackfillOptions { MaxProviderCallsPerRun = maxCallsPerRun }),
+            Options.Create(new PriceBackfillOptions
+            {
+                MaxProviderCallsPerRun = maxCallsPerRun,
+                FailedRunRetryDelay = failedRunRetryDelay ?? TimeSpan.FromMinutes(15),
+                MaxFailedRunRetriesPerClose = maxFailedRunRetriesPerClose ?? 3,
+            }),
             creditThrottle ?? ThrottleWithRemainingBudget(800),
             NullLogger<PriceBackfillService>.Instance);
 
@@ -128,6 +135,21 @@ public sealed class PriceBackfillServiceTests : IDisposable
     {
         var calendar = Substitute.For<IMarketCalendar>();
         calendar.IsOpen(Arg.Any<Market>(), Arg.Any<DateTimeOffset>()).Returns(false);
+        return calendar;
+    }
+
+    /// <summary>
+    /// D51: a calendar substitute with a controllable, fixed "last session close" (and its
+    /// exchange-local date) for one market, and IsOpen always false — used by the retry tests below
+    /// so the exact close instant/date driving the narrowing and due-ness decisions is explicit and
+    /// stable, rather than depending on the real calendar's weekend/holiday walking.
+    /// </summary>
+    private static IMarketCalendar CalendarWithFixedClose(Market market, DateTimeOffset closeInstant, DateOnly closeLocalDate)
+    {
+        var calendar = Substitute.For<IMarketCalendar>();
+        calendar.IsOpen(Arg.Any<Market>(), Arg.Any<DateTimeOffset>()).Returns(false);
+        calendar.LastSessionCloseAt(market, Arg.Any<DateTimeOffset>()).Returns(closeInstant);
+        calendar.LocalDateOn(market, closeInstant).Returns(closeLocalDate);
         return calendar;
     }
 
@@ -876,5 +898,341 @@ public sealed class PriceBackfillServiceTests : IDisposable
         var result = await sut.RunIfDueAsync(CancellationToken.None);
 
         result.MarketsRun.Should().Contain([Market.Nyse, Market.Sgx]);
+    }
+
+    // --- D51: a FAILED scheduled run is due again for a bounded, paced, narrowly-scoped retry.
+    // Regression tests confirmed to FAIL against the pre-D51 code (via a detached git worktree
+    // probe, same technique D47 used) before the fix was written — see tracker.md's D51 entry.
+
+    [Fact]
+    public async Task RunIfDueAsync_D51_RetryPendingBeforeTheDelayElapses_IsNotDue_DistinctReason()
+    {
+        var closeInstant = new DateTimeOffset(2026, 8, 5, 9, 0, 0, TimeSpan.Zero);
+        var closeLocalDate = new DateOnly(2026, 8, 5);
+        var calendar = CalendarWithFixedClose(Market.Nyse, closeInstant, closeLocalDate);
+
+        _db.RefreshRuns.Add(new RefreshRun
+        {
+            Trigger = RefreshTrigger.BackfillScheduled,
+            AssetClass = AssetClass.Stock,
+            Market = Market.Nyse,
+            StartedAt = closeInstant,
+            CompletedAt = closeInstant.AddMinutes(5),
+            Success = false, // the DNS-outage shape from the live 2026-09-11 incident
+            SymbolsRefreshed = 0,
+        });
+        _db.RefreshRuns.Add(new RefreshRun // SGX already covered — kept out of this run's scope
+        {
+            Trigger = RefreshTrigger.BackfillScheduled, AssetClass = AssetClass.Stock, Market = Market.Sgx,
+            StartedAt = closeInstant, CompletedAt = closeInstant, Success = true, SymbolsRefreshed = 1,
+        });
+        await _db.SaveChangesAsync();
+
+        // Only 5 minutes after the failed run completed — well short of the default 15-minute
+        // FailedRunRetryDelay.
+        var probeTime = new FixedTimeProvider(closeInstant.AddMinutes(10));
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        var fxProvider = Substitute.For<IFxRateProvider>();
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider, calendar: calendar, timeProvider: probeTime);
+
+        var result = await sut.RunIfDueAsync(CancellationToken.None);
+
+        result.MarketsRun.Should().NotContain(Market.Nyse);
+        result.MarketsSkipped.Should().ContainSingle(s => s.Market == Market.Nyse && s.Reason == PriceBackfillSkipReason.RetryPending);
+        await stockProvider.DidNotReceive().GetHistoryAsync(
+            Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunIfDueAsync_D51_RetryDueAfterTheDelayElapses_NarrowsToOnlyAssetsMissingTheLatestClose()
+    {
+        var msft = new Asset
+        {
+            Id = 2, Symbol = "MSFT", Name = "Microsoft", AssetClass = AssetClass.Stock, Currency = "USD",
+            QuoteProviderKind = QuoteProviderKind.TwelveData, ProviderSymbol = "MSFT",
+        };
+        _db.Assets.Add(msft);
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = msft.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 7, 1),
+            Quantity = 1m, PricePerUnit = 300m, Fees = 0m, Currency = "USD",
+        });
+
+        var closeInstant = new DateTimeOffset(2026, 8, 5, 9, 0, 0, TimeSpan.Zero);
+        var closeLocalDate = new DateOnly(2026, 8, 5);
+
+        // AAPL already holds the market's latest close — the retry must NOT re-fetch it.
+        _db.PriceHistories.Add(new PriceHistory { AssetId = _aapl.Id, Date = closeLocalDate, Close = 200m, Currency = "USD" });
+
+        _db.RefreshRuns.Add(new RefreshRun
+        {
+            Trigger = RefreshTrigger.BackfillScheduled, AssetClass = AssetClass.Stock, Market = Market.Nyse,
+            StartedAt = closeInstant, CompletedAt = closeInstant.AddMinutes(5), Success = false, SymbolsRefreshed = 1,
+        });
+        _db.RefreshRuns.Add(new RefreshRun // SGX already covered — kept out of this run's scope
+        {
+            Trigger = RefreshTrigger.BackfillScheduled, AssetClass = AssetClass.Stock, Market = Market.Sgx,
+            StartedAt = closeInstant, CompletedAt = closeInstant, Success = true, SymbolsRefreshed = 1,
+        });
+        await _db.SaveChangesAsync();
+
+        var calendar = CalendarWithFixedClose(Market.Nyse, closeInstant, closeLocalDate);
+        // 25 minutes after the close, 20 minutes after the failed run completed — past the default
+        // 15-minute FailedRunRetryDelay.
+        var probeTime = new FixedTimeProvider(closeInstant.AddMinutes(25));
+
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(msft, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(closeLocalDate, 301m, "USD")], callInfo.ArgAt<DateOnly>(1))));
+
+        var fxProvider = Substitute.For<IFxRateProvider>();
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider, calendar: calendar, timeProvider: probeTime);
+
+        var result = await sut.RunIfDueAsync(CancellationToken.None);
+
+        result.MarketsRun.Should().Contain(Market.Nyse);
+        result.Summary!.AssetsProcessed.Should().Contain("MSFT").And.NotContain("AAPL");
+        await stockProvider.DidNotReceive().GetHistoryAsync(
+            _aapl, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+        await stockProvider.Received(1).GetHistoryAsync(
+            msft, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunIfDueAsync_D51_RetriesExhausted_IsNotDue_DistinctFromCoveredOrPending()
+    {
+        var closeInstant = new DateTimeOffset(2026, 8, 5, 9, 0, 0, TimeSpan.Zero);
+        var closeLocalDate = new DateOnly(2026, 8, 5);
+        var calendar = CalendarWithFixedClose(Market.Nyse, closeInstant, closeLocalDate);
+
+        // Two failed BackfillScheduled runs since this close (the full pass plus one retry) against
+        // a MaxFailedRunRetriesPerClose of 1 — one retry is all this market gets.
+        _db.RefreshRuns.Add(new RefreshRun
+        {
+            Trigger = RefreshTrigger.BackfillScheduled, AssetClass = AssetClass.Stock, Market = Market.Nyse,
+            StartedAt = closeInstant, CompletedAt = closeInstant.AddMinutes(5), Success = false, SymbolsRefreshed = 0,
+        });
+        _db.RefreshRuns.Add(new RefreshRun
+        {
+            Trigger = RefreshTrigger.BackfillScheduled, AssetClass = AssetClass.Stock, Market = Market.Nyse,
+            StartedAt = closeInstant.AddMinutes(30), CompletedAt = closeInstant.AddMinutes(30), Success = false, SymbolsRefreshed = 0,
+        });
+        _db.RefreshRuns.Add(new RefreshRun // SGX already covered — kept out of this run's scope
+        {
+            Trigger = RefreshTrigger.BackfillScheduled, AssetClass = AssetClass.Stock, Market = Market.Sgx,
+            StartedAt = closeInstant, CompletedAt = closeInstant, Success = true, SymbolsRefreshed = 1,
+        });
+        await _db.SaveChangesAsync();
+
+        var probeTime = new FixedTimeProvider(closeInstant.AddHours(1));
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        var fxProvider = Substitute.For<IFxRateProvider>();
+
+        var sut = CreateSut(
+            RouterAlwaysReturning(stockProvider), fxProvider, calendar: calendar, timeProvider: probeTime, maxFailedRunRetriesPerClose: 1);
+
+        var result = await sut.RunIfDueAsync(CancellationToken.None);
+
+        result.MarketsRun.Should().NotContain(Market.Nyse);
+        result.MarketsSkipped.Should().ContainSingle(s => s.Market == Market.Nyse && s.Reason == PriceBackfillSkipReason.RetriesExhausted);
+        await stockProvider.DidNotReceive().GetHistoryAsync(
+            Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunIfDueAsync_D51_MostRecentRunSinceCloseSucceeded_IsNotDue_CoveredNotRetryReason()
+    {
+        var closeInstant = new DateTimeOffset(2026, 8, 5, 9, 0, 0, TimeSpan.Zero);
+        var closeLocalDate = new DateOnly(2026, 8, 5);
+        var calendar = CalendarWithFixedClose(Market.Nyse, closeInstant, closeLocalDate);
+
+        _db.RefreshRuns.Add(new RefreshRun
+        {
+            Trigger = RefreshTrigger.BackfillScheduled, AssetClass = AssetClass.Stock, Market = Market.Nyse,
+            StartedAt = closeInstant, CompletedAt = closeInstant.AddMinutes(5), Success = true, SymbolsRefreshed = 1,
+        });
+        _db.RefreshRuns.Add(new RefreshRun // SGX already covered — kept out of this run's scope
+        {
+            Trigger = RefreshTrigger.BackfillScheduled, AssetClass = AssetClass.Stock, Market = Market.Sgx,
+            StartedAt = closeInstant, CompletedAt = closeInstant, Success = true, SymbolsRefreshed = 1,
+        });
+        await _db.SaveChangesAsync();
+
+        var probeTime = new FixedTimeProvider(closeInstant.AddHours(1));
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        var fxProvider = Substitute.For<IFxRateProvider>();
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider, calendar: calendar, timeProvider: probeTime);
+
+        var result = await sut.RunIfDueAsync(CancellationToken.None);
+
+        result.MarketsRun.Should().NotContain(Market.Nyse);
+        result.MarketsSkipped.Should().ContainSingle(s => s.Market == Market.Nyse && s.Reason == PriceBackfillSkipReason.AlreadyCoveredSinceLastClose);
+    }
+
+    [Fact]
+    public async Task RunAsync_D51_FxRetryRule_SkipsFxWhenAlreadyCoveringTheRequiredDate_ButStillFetchesAStalePrice()
+    {
+        // Proves the FX skip is judged on ITS OWN criterion (the FX table's own newest date), not
+        // derived from whether the price loop happened to narrow the same asset out — Z74's own
+        // price is deliberately left stale here so both loops' independence is visible in one test.
+        var closeInstant = new DateTimeOffset(2026, 8, 5, 17, 0, 0, TimeSpan.Zero);
+        var closeLocalDate = new DateOnly(2026, 8, 5);
+        var calendar = CalendarWithFixedClose(Market.Sgx, closeInstant, closeLocalDate);
+
+        _db.FxRates.Add(new FxRate { Date = closeLocalDate, Base = "USD", Quote = "SGD", Rate = 1.30m });
+
+        _db.RefreshRuns.Add(new RefreshRun // NYSE already covered — kept out of this run's scope
+        {
+            Trigger = RefreshTrigger.BackfillScheduled, AssetClass = AssetClass.Stock, Market = Market.Nyse,
+            StartedAt = closeInstant, CompletedAt = closeInstant, Success = true, SymbolsRefreshed = 1,
+        });
+        _db.RefreshRuns.Add(new RefreshRun
+        {
+            Trigger = RefreshTrigger.BackfillScheduled, AssetClass = AssetClass.Stock, Market = Market.Sgx,
+            StartedAt = closeInstant, CompletedAt = closeInstant.AddMinutes(5), Success = false, SymbolsRefreshed = 0,
+        });
+        await _db.SaveChangesAsync();
+
+        var probeTime = new FixedTimeProvider(closeInstant.AddMinutes(25));
+
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(_z74, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(closeLocalDate, 4.05m, "SGD")], callInfo.ArgAt<DateOnly>(1))));
+
+        var fxProvider = Substitute.For<IFxRateProvider>();
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider, calendar: calendar, timeProvider: probeTime);
+
+        var result = await sut.RunIfDueAsync(CancellationToken.None);
+
+        result.MarketsRun.Should().Contain(Market.Sgx);
+        await fxProvider.DidNotReceive().GetHistoryAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+        await stockProvider.Received(1).GetHistoryAsync(
+            _z74, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunAsync_D51_FxRetryRule_FetchesFxWhenStale_EvenIfTheAssetItselfIsAlreadyUpToDate()
+    {
+        var closeInstant = new DateTimeOffset(2026, 8, 5, 17, 0, 0, TimeSpan.Zero);
+        var closeLocalDate = new DateOnly(2026, 8, 5);
+        var calendar = CalendarWithFixedClose(Market.Sgx, closeInstant, closeLocalDate);
+
+        // Z74's own price is already up to date — the retry's price loop must skip it entirely...
+        _db.PriceHistories.Add(new PriceHistory { AssetId = _z74.Id, Date = closeLocalDate, Close = 4m, Currency = "SGD" });
+        // ...but USD/SGD's newest stored rate is a day stale, so the FX loop must still fetch it.
+        _db.FxRates.Add(new FxRate { Date = closeLocalDate.AddDays(-1), Base = "USD", Quote = "SGD", Rate = 1.29m });
+
+        _db.RefreshRuns.Add(new RefreshRun
+        {
+            Trigger = RefreshTrigger.BackfillScheduled, AssetClass = AssetClass.Stock, Market = Market.Nyse,
+            StartedAt = closeInstant, CompletedAt = closeInstant, Success = true, SymbolsRefreshed = 1,
+        });
+        _db.RefreshRuns.Add(new RefreshRun
+        {
+            Trigger = RefreshTrigger.BackfillScheduled, AssetClass = AssetClass.Stock, Market = Market.Sgx,
+            StartedAt = closeInstant, CompletedAt = closeInstant.AddMinutes(5), Success = false, SymbolsRefreshed = 0,
+        });
+        await _db.SaveChangesAsync();
+
+        var probeTime = new FixedTimeProvider(closeInstant.AddMinutes(25));
+
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        var fxProvider = Substitute.For<IFxRateProvider>();
+        fxProvider.GetHistoryAsync("USD", "SGD", Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(closeLocalDate, 1.31m)]));
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider, calendar: calendar, timeProvider: probeTime);
+
+        var result = await sut.RunIfDueAsync(CancellationToken.None);
+
+        result.MarketsRun.Should().Contain(Market.Sgx);
+        await fxProvider.Received(1).GetHistoryAsync(
+            "USD", "SGD", Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+        await stockProvider.DidNotReceive().GetHistoryAsync(
+            _z74, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunAsync_D51_PerMarketSuccess_NyseAssetFailureDoesNotMarkSgxRowFailed_AndViceVersa()
+    {
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(_aapl, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(new HistoryFetchResult([], new DateOnly(2026, 7, 20), new DateOnly(2026, 7, 20), Truncated: false, Success: false, Error: "Twelve Data returned HTTP 400."));
+        stockProvider.GetHistoryAsync(_z74, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(new DateOnly(2026, 7, 20), 4m, "SGD")], callInfo.ArgAt<DateOnly>(1))));
+
+        var fxProvider = Substitute.For<IFxRateProvider>();
+        fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]));
+
+        var router = Substitute.For<IQuoteProviderRouter>();
+        router.GetProvider(_aapl).Returns(stockProvider);
+        router.GetProvider(_z74).Returns(stockProvider);
+
+        var sut = CreateSut(router, fxProvider);
+
+        await sut.RunAsync(RefreshTrigger.BackfillManual, BothMarkets, CancellationToken.None);
+
+        var runs = await _db.RefreshRuns.ToListAsync();
+        runs.Should().ContainSingle(r => r.Market == Market.Nyse && !r.Success, "AAPL (NYSE) failed");
+        runs.Should().ContainSingle(r => r.Market == Market.Sgx && r.Success, "Z74 (SGX) and the FX it needs both succeeded, unrelated to NYSE's own failure");
+    }
+
+    [Fact]
+    public async Task RunAsync_D51_PerMarketSuccess_FxFailureMarksOnlyTheMarketThatNeedsIt_AsFailed()
+    {
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(new DateOnly(2026, 7, 20), 200m, "USD")], callInfo.ArgAt<DateOnly>(1))));
+
+        var fxProvider = Substitute.For<IFxRateProvider>();
+        fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(FxHistoryFetchResult.Failed("Twelve Data returned HTTP 429."));
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider);
+
+        await sut.RunAsync(RefreshTrigger.BackfillManual, BothMarkets, CancellationToken.None);
+
+        var runs = await _db.RefreshRuns.ToListAsync();
+        // Only Z74/SGX (SGD-denominated) needs USD/SGD in this fixture — NYSE's only asset (AAPL)
+        // is USD-denominated and needs no FX at all, so its row must stay Success even though the
+        // shared FX call failed.
+        runs.Should().ContainSingle(r => r.Market == Market.Sgx && !r.Success, "SGX's own asset (Z74) needs the USD/SGD rate that failed");
+        runs.Should().ContainSingle(r => r.Market == Market.Nyse && r.Success, "AAPL needs no FX conversion at all");
+    }
+
+    [Fact]
+    public async Task RunAsync_D51_ManualTrigger_IsAlwaysAFullPass_FetchesEvenAnAssetAlreadyHoldingTheLatestClose()
+    {
+        // Only RunIfDueAsync's own scheduled retries narrow scope (D51). The manual RunAsync (used
+        // by POST /api/prices/backfill) must behave exactly as before D51 — a full pass regardless
+        // of what is already on file, because it is also what fills history for a newly recorded
+        // back-dated transaction on an asset whose latest close happens to already be there.
+        _db.PriceHistories.Add(new PriceHistory { AssetId = _aapl.Id, Date = new DateOnly(2026, 7, 21), Close = 201m, Currency = "USD" });
+
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(new DateOnly(2026, 7, 21), 202m, "USD")], callInfo.ArgAt<DateOnly>(1))));
+
+        var fxProvider = Substitute.For<IFxRateProvider>();
+        fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]));
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider);
+
+        await sut.RunAsync(RefreshTrigger.BackfillManual, BothMarkets, CancellationToken.None);
+
+        await stockProvider.Received(1).GetHistoryAsync(
+            _aapl, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
     }
 }

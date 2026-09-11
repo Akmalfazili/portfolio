@@ -18,6 +18,12 @@ namespace Portfolio.Application.Services;
 /// D47: due-ness (and the run itself) is scoped per <see cref="Market"/>, not global. NYSE and SGX
 /// keep independent session calendars — gating SGX's close backfill on NYSE's session (or vice
 /// versa) is exactly the bug D47 fixes; see the class remarks on <c>PriceBackfillService</c>.
+///
+/// D51: <see cref="RunIfDueAsync"/> also treats a completed-but-FAILED scheduled run as due for a
+/// bounded, paced retry, narrowed to only what that retry still needs — see the class remarks on
+/// <c>PriceBackfillService</c> and <see cref="PriceBackfillOptions.FailedRunRetryDelay"/> /
+/// <see cref="PriceBackfillOptions.MaxFailedRunRetriesPerClose"/>. <see cref="RunAsync"/>'s own
+/// public contract is unchanged — it is always a full pass, exactly as before D51.
 /// </summary>
 public interface IPriceBackfillService
 {

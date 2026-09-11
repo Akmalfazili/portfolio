@@ -26,11 +26,40 @@ public sealed record DividendBackfillSummary(
 /// <summary>How one <c>IDividendBackfillService.RunIfDueAsync</c> check concluded.</summary>
 public enum DividendBackfillOutcome
 {
-    /// <summary>A backfill actually ran; <see cref="DividendBackfillRunResult.Summary"/> is set.</summary>
+    /// <summary>A full backfill actually ran, covering every in-scope stock asset;
+    /// <see cref="DividendBackfillRunResult.Summary"/> is set.</summary>
     Completed,
 
-    /// <summary>A scheduled backfill has already completed once today — dividends move quarterly at
-    /// most, so re-running today would only re-spend calls to insert nothing new.</summary>
+    /// <summary>
+    /// D51: a productive full run already happened today, but a run "happening" is not every asset
+    /// in it succeeding — the same trap D47/D51 closed for the price backfill, one layer down. This
+    /// run instead retried exactly the asset(s) whose most recent attempt failed at least
+    /// <see cref="DividendBackfillOptions.FailedAssetRetryInterval"/> ago;
+    /// <see cref="DividendBackfillRunResult.Summary"/> is set and scoped to only those assets —
+    /// never confuse its <c>AssetsProcessed</c> count with "every stock was checked today".
+    /// </summary>
+    RetryCompleted,
+
+    /// <summary>
+    /// D51 follow-up (found on review, before deploy): the most recent scheduled run today
+    /// processed zero assets AND failed outright — every asset in scope failed, not "there was
+    /// nothing to do" (contrast <see cref="AlreadyRanToday"/>'s zero-asset case, which has
+    /// <c>Success == true</c> and is never paced). Deliberately distinguished from
+    /// <see cref="AlreadyRanToday"/> so it reads honestly as "attempted and failed, waiting to
+    /// retry" rather than "covered" — a market that failed outright is not covered. Paced by
+    /// <see cref="DividendBackfillOptions.FailedAssetRetryInterval"/>, the same interval the
+    /// partial-failure retry (<see cref="RetryCompleted"/>) uses;
+    /// <see cref="DividendBackfillRunResult.Summary"/> is null — nothing ran.
+    /// </summary>
+    RetryPending,
+
+    /// <summary>A productive scheduled backfill has already completed once today and every asset in
+    /// scope is either covered or not yet due for a retry — dividends move quarterly at most, so
+    /// re-running today would only re-spend calls to insert nothing new. Note what this does NOT
+    /// cover: a zero-asset "nothing to do" run (D41) and an all-failed run not yet due for its own
+    /// retry (D51 follow-up) both resolve differently — see <see cref="Completed"/> and
+    /// <see cref="RetryPending"/> respectively, and <c>DividendBackfillService.RunIfDueAsync</c> for
+    /// exactly how the three are told apart.</summary>
     AlreadyRanToday,
 }
 
@@ -54,8 +83,17 @@ public interface IDividendBackfillService
     Task<DividendBackfillSummary> RunAsync(RefreshTrigger trigger, CancellationToken cancellationToken);
 
     /// <summary>Runs <see cref="RunAsync"/> with <see cref="RefreshTrigger.DividendBackfillScheduled"/>,
-    /// but only once per calendar day — dividends move quarterly, so a background poll finding
-    /// nothing new every tick would just waste Yahoo calls for no benefit.</summary>
+    /// but only once per calendar day for a FULL run — dividends move quarterly, so a background
+    /// poll re-checking every asset on every tick would just waste Yahoo calls for no benefit.
+    /// D51: once a PRODUCTIVE full run (at least one asset succeeded) has happened today, this also
+    /// offers a narrowly-scoped RETRY (see <see cref="DividendBackfillOutcome.RetryCompleted"/>) for
+    /// any asset whose last attempt failed at least
+    /// <see cref="DividendBackfillOptions.FailedAssetRetryInterval"/> ago — unlike the price
+    /// backfill's Twelve Data retries, this has no attempt cap, since Yahoo is free and keyless. An
+    /// ALL-failed run (every asset failed, so nothing succeeded) is paced by the same interval before
+    /// being retried in full (see <see cref="DividendBackfillOutcome.RetryPending"/>) rather than
+    /// re-run unconditionally on every poll tick — a genuinely empty run (D41: no stock has a
+    /// transaction yet) is the only case retried with no delay at all.</summary>
     Task<DividendBackfillRunResult> RunIfDueAsync(CancellationToken cancellationToken);
 }
 
