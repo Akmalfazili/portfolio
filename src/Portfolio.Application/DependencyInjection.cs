@@ -44,6 +44,12 @@ public static class DependencyInjection
         // the scoped IPortfolioDbContext, so it must share the ambient scope's DbContext rather
         // than capturing one for the process lifetime.
         services.AddScoped<PriceRefreshStatusStore>();
+        // Scoped alongside the store, not singleton: it reaches the scoped IPortfolioDbContext
+        // directly (unlike the throttle, which reaches it only via IServiceScopeFactory because the
+        // throttle itself is a process-lifetime singleton). Shared by every producer of
+        // PriceRefreshStatus so a fourth one cannot reintroduce the per-transport enrichment split
+        // this type was added to close — see its own remarks.
+        services.AddScoped<PriceRefreshStatusEnricher>();
         // Registered under its own concrete type too, not just the interface: a manual refresh
         // that needs to detach a large Twelve Data sweep (D38) resolves a second instance of this
         // same type from a fresh scope via IServiceScopeFactory, so it needs its own db/router/etc

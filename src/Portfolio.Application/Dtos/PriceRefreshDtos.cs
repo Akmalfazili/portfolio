@@ -107,12 +107,25 @@ public sealed record PriceRefreshStatus(
     /// <summary>D38/D37: the Twelve Data quote-sweep interval currently in effect, derived from
     /// the live active-symbol count and today's remaining credit budget (see
     /// <see cref="Services.TwelveDataCadenceCalculator"/>) rather than a cadence hardcoded for one
-    /// portfolio size. Null only if this field has not been populated by the endpoint (never the
-    /// case for <c>GET /api/prices/status</c> itself — additive field, defaults to null so older
-    /// serialized snapshots still deserialize).</summary>
+    /// portfolio size.
+    ///
+    /// <para>Populated identically, via <see cref="Services.PriceRefreshStatusEnricher"/>, by every
+    /// producer of this DTO: <c>GET /api/prices/status</c>, the snapshot a newly connected SignalR
+    /// client receives, and every SignalR <c>RefreshStatus</c> broadcast. (Previously the enrichment
+    /// lived only inline in the status endpoint's handler, so this field and the two below it were
+    /// always null over SignalR and only ever populated over HTTP — a duplicated-code-path bug fixed
+    /// alongside this doc comment; see the tracker entry.) Null has no remaining meaning today: the
+    /// underlying computation always resolves to a concrete number — zero credits spent and zero
+    /// active symbols are valid inputs that still derive a real interval, not an "unknown" state.
+    /// It stays a nullable <c>int</c> only so a snapshot serialized before these fields existed still
+    /// deserializes.</para></summary>
     int? EffectiveTwelveDataIntervalSeconds = null,
     /// <summary>Twelve Data credits spent today (UTC), from the persisted daily ledger — see
-    /// <see cref="Abstractions.ITwelveDataCreditThrottle"/>.</summary>
+    /// <see cref="Abstractions.ITwelveDataCreditThrottle"/>. Same "populated identically everywhere,
+    /// never legitimately null after enrichment" rule as <see cref="EffectiveTwelveDataIntervalSeconds"/>
+    /// — see that field's remarks.</summary>
     int? CreditsUsedToday = null,
-    /// <summary>Twelve Data's daily credit budget (800 on the free tier).</summary>
+    /// <summary>Twelve Data's daily credit budget (800 on the free tier). Same "populated identically
+    /// everywhere, never legitimately null after enrichment" rule as
+    /// <see cref="EffectiveTwelveDataIntervalSeconds"/>.</summary>
     int? CreditBudget = null);

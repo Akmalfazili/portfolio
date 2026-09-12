@@ -1,8 +1,6 @@
 using Microsoft.AspNetCore.Http.HttpResults;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using Portfolio.Application.Abstractions;
 using Portfolio.Application.Dtos;
 using Portfolio.Application.Services;
@@ -87,10 +85,8 @@ public static class PricesEndpoints
 
         group.MapGet("/status", async (
             PriceRefreshStatusStore statusStore,
+            PriceRefreshStatusEnricher enricher,
             IMarketCalendar calendar,
-            ITwelveDataCreditThrottle creditThrottle,
-            IPortfolioDbContext db,
-            IOptions<PriceRefreshOptions> refreshOptions,
             TimeProvider timeProvider,
             CancellationToken cancellationToken) =>
         {
@@ -101,23 +97,11 @@ public static class PricesEndpoints
                 cancellationToken);
 
             // D38/D37: surface the derived cadence and today's credit spend so degradation as the
-            // portfolio grows is visible on the wire rather than silently inferred — additive
-            // fields only, the pre-existing shape is untouched.
-            var creditStatus = await creditThrottle.GetStatusAsync(cancellationToken);
-            var activeTwelveDataCount = await db.Assets.CountAsync(
-                a => a.IsActive && a.QuoteProviderKind == QuoteProviderKind.TwelveData, cancellationToken);
-            var effectiveInterval = TwelveDataCadenceCalculator.DeriveStockOpenInterval(
-                activeTwelveDataCount,
-                creditStatus.RemainingToday,
-                TimeSpan.FromMinutes(TwelveDataCreditPolicy.NyseSessionMinutes),
-                refreshOptions.Value.StockOpenInterval);
-
-            var extended = status with
-            {
-                EffectiveTwelveDataIntervalSeconds = (int)effectiveInterval.TotalSeconds,
-                CreditsUsedToday = creditStatus.CreditsUsedToday,
-                CreditBudget = creditStatus.DailyBudget,
-            };
+            // portfolio grows is visible on the wire rather than silently inferred. The enrichment
+            // itself now lives in one place (PriceRefreshStatusEnricher) shared with the SignalR
+            // hub-connect and broadcast paths, so this endpoint's payload is identical to what those
+            // two now also send instead of being the only producer that ever populated these fields.
+            var extended = await enricher.EnrichAsync(status, cancellationToken);
 
             return TypedResults.Ok(extended);
         });

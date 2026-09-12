@@ -197,6 +197,7 @@ public sealed class PriceRefreshStatusStoreTests : IDisposable
             _calendar,
             _broadcaster,
             new PriceRefreshStatusStore(db),
+            new PriceRefreshStatusEnricher(db, creditThrottle, Options.Create(_options)),
             creditThrottle,
             Substitute.For<IServiceScopeFactory>(), // unused — no test here exercises RefreshNowAsync's detach path
             new ManualRefreshInFlightGate(),

@@ -14,6 +14,7 @@ namespace Portfolio.Api.Hubs;
 /// </summary>
 public sealed class PricesHub(
     PriceRefreshStatusStore statusStore,
+    PriceRefreshStatusEnricher enricher,
     IMarketCalendar calendar,
     TimeProvider timeProvider) : Hub
 {
@@ -25,7 +26,13 @@ public sealed class PricesHub(
             calendar.IsOpen(Market.Sgx, now),
             Context.ConnectionAborted);
 
-        await Clients.Caller.SendAsync("RefreshStatus", status);
+        // Enriched with the same PriceRefreshStatusEnricher GET /api/prices/status uses, so a
+        // freshly connected client's first payload already carries the derived cadence/credit
+        // fields instead of the nulls this path used to send until the next broadcast (see the
+        // enricher's own remarks).
+        var extended = await enricher.EnrichAsync(status, Context.ConnectionAborted);
+
+        await Clients.Caller.SendAsync("RefreshStatus", extended);
         await base.OnConnectedAsync();
     }
 }

@@ -23,6 +23,7 @@ public sealed class PriceRefreshService(
     IMarketCalendar calendar,
     IPriceUpdateBroadcaster broadcaster,
     PriceRefreshStatusStore statusStore,
+    PriceRefreshStatusEnricher statusEnricher,
     ITwelveDataCreditThrottle creditThrottle,
     IServiceScopeFactory scopeFactory,
     ManualRefreshInFlightGate manualRefreshGate,
@@ -180,7 +181,15 @@ public sealed class PriceRefreshService(
             calendar.IsOpen(Market.Nyse, now),
             calendar.IsOpen(Market.Sgx, now),
             cancellationToken);
-        await broadcaster.BroadcastRefreshStatusAsync(status, cancellationToken);
+
+        // Enriched with the same PriceRefreshStatusEnricher GET /api/prices/status and the hub's
+        // connect handler use, so a broadcast can no longer be the transport that silently sends
+        // null for the derived cadence/credit fields (see the enricher's own remarks). This adds
+        // one ledger-row lookup and one Assets count per broadcast — both cheap local reads, never
+        // a Twelve Data call — in exchange for those three fields no longer flickering null on
+        // every push (crypto pushes as often as every two minutes).
+        var extended = await statusEnricher.EnrichAsync(status, cancellationToken);
+        await broadcaster.BroadcastRefreshStatusAsync(extended, cancellationToken);
 
         return new PriceRefreshCycleResult(PriceRefreshOutcome.Completed, null, outcomes, totalSymbolsRefreshed);
     }

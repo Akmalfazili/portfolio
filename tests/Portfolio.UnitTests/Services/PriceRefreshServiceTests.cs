@@ -84,18 +84,23 @@ public sealed class PriceRefreshServiceTests : IDisposable
 
     public void Dispose() => _db.Dispose();
 
-    private PriceRefreshService CreateSut(IQuoteProviderRouter router, ITwelveDataCreditThrottle? creditThrottle = null) => new(
-        _db,
-        router,
-        _calendar,
-        _broadcaster,
-        _statusStore,
-        creditThrottle ?? AlwaysFullBudgetThrottle(),
-        Substitute.For<IServiceScopeFactory>(), // unused unless NeedsDetachedTwelveDataSweepAsync is true - see the dedicated detach test below, which builds a real container instead
-        new ManualRefreshInFlightGate(),
-        _timeProvider,
-        Options.Create(_options),
-        NullLogger<PriceRefreshService>.Instance);
+    private PriceRefreshService CreateSut(IQuoteProviderRouter router, ITwelveDataCreditThrottle? creditThrottle = null)
+    {
+        var throttle = creditThrottle ?? AlwaysFullBudgetThrottle();
+        return new(
+            _db,
+            router,
+            _calendar,
+            _broadcaster,
+            _statusStore,
+            new PriceRefreshStatusEnricher(_db, throttle, Options.Create(_options)),
+            throttle,
+            Substitute.For<IServiceScopeFactory>(), // unused unless NeedsDetachedTwelveDataSweepAsync is true - see the dedicated detach test below, which builds a real container instead
+            new ManualRefreshInFlightGate(),
+            _timeProvider,
+            Options.Create(_options),
+            NullLogger<PriceRefreshService>.Instance);
+    }
 
     /// <summary>A credit-throttle fake reporting a full, untouched daily budget — the default for
     /// tests that are not themselves about credit pacing or the derived cadence.</summary>
@@ -202,6 +207,41 @@ public sealed class PriceRefreshServiceTests : IDisposable
             Arg.Is<QuoteUpdateNotification>(n => n != null && n.AssetId == _aapl.Id && n.Price == 333.02m),
             Arg.Any<CancellationToken>());
         await _broadcaster.Received(1).BroadcastRefreshStatusAsync(Arg.Any<PriceRefreshStatus>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RefreshDueAsync_BroadcastsAnEnrichedStatus_WithTheDerivedCadenceAndCreditFieldsPopulated()
+    {
+        // Regression coverage for the transport asymmetry PriceRefreshStatusEnricher fixed: this
+        // status used to reach the broadcaster bare (all three of these fields null), because the
+        // enrichment lived only inline in the GET /api/prices/status handler. See
+        // PricesHubTests for the matching coverage on the hub-connect transport.
+        _calendar.IsOpen(Market.Nyse, Arg.Any<DateTimeOffset>()).Returns(true);
+
+        var twelveData = FakeProvider(QuoteProviderKind.TwelveData);
+        twelveData.GetQuotesAsync(Arg.Any<IReadOnlyCollection<Asset>>(), Arg.Any<CancellationToken>())
+            .Returns([new QuoteFetchResult(_aapl.Id, true, 333.02m, "USD", _timeProvider.Now, null)]);
+
+        var router = RouterFor((_aapl, twelveData));
+        _db.Assets.RemoveRange(_z74, _eth);
+        await _db.SaveChangesAsync();
+
+        var throttle = Substitute.For<ITwelveDataCreditThrottle>();
+        throttle.GetStatusAsync(Arg.Any<CancellationToken>()).Returns(new TwelveDataCreditStatus(50, 800, 750));
+        throttle.TryAcquireAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(true);
+
+        var sut = CreateSut(router, throttle);
+        var result = await sut.RefreshDueAsync(CancellationToken.None);
+
+        result.Outcome.Should().Be(PriceRefreshOutcome.Completed);
+
+        await _broadcaster.Received(1).BroadcastRefreshStatusAsync(
+            Arg.Is<PriceRefreshStatus>(s =>
+                s != null &&
+                s.CreditsUsedToday == 50 &&
+                s.CreditBudget == 800 &&
+                s.EffectiveTwelveDataIntervalSeconds != null),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -618,6 +658,7 @@ public sealed class PriceRefreshServiceTests : IDisposable
         services.AddDbContext<PortfolioDbContext>(o => o.UseInMemoryDatabase(dbName));
         services.AddScoped<IPortfolioDbContext>(sp => sp.GetRequiredService<PortfolioDbContext>());
         services.AddScoped(sp => new PriceRefreshStatusStore(sp.GetRequiredService<IPortfolioDbContext>()));
+        services.AddScoped<PriceRefreshStatusEnricher>();
         services.AddSingleton(calendar);
         services.AddSingleton(router);
         services.AddSingleton(Substitute.For<IPriceUpdateBroadcaster>());
