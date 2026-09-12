@@ -1,5 +1,16 @@
-import { describeRefreshOutcome } from './refresh-outcome';
+import {
+  describeRefreshOutcome,
+  SOURCE_MARKET_LABEL,
+  SOURCE_MARKET_TITLE,
+} from './refresh-outcome';
 import { PriceRefreshCycleResult, PriceRefreshStatus } from '../api/models';
+
+describe('SOURCE_MARKET_LABEL vs SOURCE_MARKET_TITLE — must stay two separate maps', () => {
+  it('CoinGecko is lowercase mid-sentence but title-case as a row heading', () => {
+    expect(SOURCE_MARKET_LABEL.CoinGecko).toBe('crypto');
+    expect(SOURCE_MARKET_TITLE.CoinGecko).toBe('Crypto');
+  });
+});
 
 function status(overrides: Partial<PriceRefreshStatus> = {}): PriceRefreshStatus {
   return {

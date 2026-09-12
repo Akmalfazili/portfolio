@@ -164,6 +164,19 @@ html {
   margin-top: calc(var(--ui-layout-toolbar-height) + var(--ui-space-2));
 }
 
+// The refresh-details panel (RefreshIndicator) is a mat-menu used as a
+// popover — MatMenu's `class` input adds this class to the *panel container*
+// it creates via CDK overlay, which sits outside RefreshIndicator's own view
+// encapsulation (the same reason `.app-snackbar-panel` above lives here and
+// not in a component stylesheet). Content authored INSIDE the `<mat-menu>`
+// template (`.refresh-panel__*` in refresh-indicator.scss) is unaffected by
+// this — that markup is compiled as part of RefreshIndicator's own view and
+// keeps its scoped attribute, exactly like theme-toggle.scss's
+// `.theme-toggle__check` already does inside its own `<mat-menu>`.
+.refresh-panel {
+  max-width: min(var(--ui-layout-dialog-width-sm), calc(100vw - var(--ui-space-8)));
+}
+
 body {
   // D14 fix: do NOT set color-scheme here. `color-scheme` is an inherited
   // CSS property, and ui.tokens.scss already sets the correct value on

@@ -1,7 +1,10 @@
+@use '../../../styles/ui.mixins' as ui;
+
 .refresh-indicator {
   display: flex;
   align-items: center;
   gap: var(--ui-space-2);
+  min-width: 0;
   font-size: var(--ui-font-size-sm);
   color: var(--ui-color-on-surface-secondary);
   font-variant-numeric: var(--ui-font-numeric-variant);
@@ -11,18 +14,199 @@
   color: var(--ui-color-status-warning);
 }
 
+// Unstyled-button reset — this is a text trigger with a caret, not a
+// standard Material button, so it must not inherit mat-button's own padding
+// and min-width (that would make the toolbar noticeably wider for no reason
+// on a handset-width screen).
+.refresh-indicator__trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-1);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--ui-radius-xs);
+
+  &:focus-visible {
+    @include ui.ui-focus-ring;
+  }
+}
+
 .refresh-indicator__warning {
   color: var(--ui-color-status-warning);
   width: var(--ui-size-icon-sm);
   height: var(--ui-size-icon-sm);
   font-size: var(--ui-size-icon-sm);
+  flex: none;
 }
 
 .refresh-indicator__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.refresh-indicator__caret {
+  flex: none;
+  width: var(--ui-size-icon-sm);
+  height: var(--ui-size-icon-sm);
+  font-size: var(--ui-size-icon-sm);
+  color: var(--ui-color-on-surface-muted);
 }
 
 .refresh-indicator__cooldown {
   font-size: var(--ui-font-size-xs);
   font-weight: var(--ui-font-weight-semibold);
+}
+
+// -----------------------------------------------------------------------------
+// Details panel (mat-menu content) — reachable from the trigger above. Styled
+// like a small popover rather than an actionable menu list, since nothing in
+// it is clickable; see refresh-indicator.ts's header comment for why.
+//
+// The panel's own max-width (the `class="refresh-panel"` on `<mat-menu>`) is
+// set in the global styles.scss, not here — see that rule's comment for why
+// a class passed to MatMenu's `class` input can't be reached from a scoped
+// component stylesheet. Everything below targets content authored INSIDE the
+// `<mat-menu>` template, which stays correctly scoped.
+// -----------------------------------------------------------------------------
+.refresh-panel__content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-3);
+  padding: var(--ui-space-2) var(--ui-space-4) var(--ui-space-4);
+  // Not a link/button, but still selectable/readable text — cursor default
+  // rather than the inherited menu-item pointer.
+  cursor: default;
+  white-space: normal;
+}
+
+.refresh-panel__lead {
+  margin: 0;
+  font-weight: var(--ui-font-weight-semibold);
+  color: var(--ui-color-on-surface);
+}
+
+.refresh-panel__waiting {
+  margin: 0;
+  color: var(--ui-color-on-surface-secondary);
+  font-size: var(--ui-font-size-sm);
+}
+
+.refresh-panel__rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.refresh-panel__row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-1);
+  padding-bottom: var(--ui-space-2);
+  border-bottom: 1px solid var(--ui-color-border);
+
+  &:last-child {
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
+}
+
+.refresh-panel__row-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-space-2);
+}
+
+.refresh-panel__row-label {
+  font-weight: var(--ui-font-weight-semibold);
+  color: var(--ui-color-on-surface);
+}
+
+.refresh-panel__row-chip {
+  font-size: var(--ui-font-size-xs);
+  font-weight: var(--ui-font-weight-medium);
+  color: var(--ui-color-on-surface-muted);
+}
+
+.refresh-panel__row-chip--open {
+  color: var(--ui-color-status-good);
+}
+
+// The one thing in this panel that must be the most legible — what a press
+// will actually do to this market, right now.
+.refresh-panel__row-action {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-1);
+  margin: 0;
+  font-weight: var(--ui-font-weight-semibold);
+  color: var(--ui-color-on-surface-secondary);
+
+  mat-icon {
+    width: var(--ui-size-icon-sm);
+    height: var(--ui-size-icon-sm);
+    font-size: var(--ui-size-icon-sm);
+    flex: none;
+    color: var(--ui-color-on-surface-muted);
+  }
+}
+
+.refresh-panel__row-action--will {
+  color: var(--ui-color-status-good);
+
+  mat-icon {
+    color: var(--ui-color-status-good);
+  }
+}
+
+.refresh-panel__row-meta,
+.refresh-panel__row-cadence {
+  margin: 0;
+  font-size: var(--ui-font-size-xs);
+  color: var(--ui-color-on-surface-secondary);
+}
+
+// Same amber-warning-banner convention as portfolio-overview's `__caveat` and
+// transactions' `__warning` — a failed attempt is a real caveat, not decor.
+.refresh-panel__row-error {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  margin: 0;
+  padding: var(--ui-space-2) var(--ui-space-3);
+  background: color-mix(in srgb, var(--ui-color-status-warning) 14%, transparent);
+  color: var(--ui-color-on-surface);
+  border-radius: var(--ui-radius-sm);
+  font-size: var(--ui-font-size-xs);
+
+  mat-icon {
+    color: var(--ui-color-status-warning);
+    width: var(--ui-size-icon-sm);
+    height: var(--ui-size-icon-sm);
+    font-size: var(--ui-size-icon-sm);
+    flex: none;
+  }
+}
+
+.refresh-panel__rule {
+  width: 100%;
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--ui-color-border);
+}
+
+.refresh-panel__footer {
+  margin: 0;
+  font-size: var(--ui-font-size-xs);
+  color: var(--ui-color-on-surface-muted);
 }

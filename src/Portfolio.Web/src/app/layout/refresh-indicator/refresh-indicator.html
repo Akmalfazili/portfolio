@@ -1,21 +1,26 @@
-<div
-  class="refresh-indicator"
-  [class.refresh-indicator--stale]="isStale() || isDegraded()"
-  [matTooltip]="tooltip()"
-  matTooltipPosition="below"
->
-  @if (isDegraded()) {
-    <mat-icon class="refresh-indicator__warning" aria-hidden="true">wifi_off</mat-icon>
-  } @else if (isStale()) {
-    <mat-icon class="refresh-indicator__warning" aria-hidden="true">warning</mat-icon>
-  }
+<div class="refresh-indicator" [class.refresh-indicator--stale]="isStale() || isDegraded()">
+  <button
+    type="button"
+    class="refresh-indicator__trigger"
+    [matMenuTriggerFor]="detailsMenu"
+    [attr.aria-label]="panelTriggerLabel()"
+  >
+    @if (isDegraded()) {
+      <mat-icon class="refresh-indicator__warning" aria-hidden="true">wifi_off</mat-icon>
+    } @else if (isStale()) {
+      <mat-icon class="refresh-indicator__warning" aria-hidden="true">warning</mat-icon>
+    }
 
-  <span class="refresh-indicator__label">{{ relativeLabel() }}</span>
+    <span class="refresh-indicator__label">{{ relativeLabel() }}</span>
+    <mat-icon class="refresh-indicator__caret" aria-hidden="true">arrow_drop_down</mat-icon>
+  </button>
 
   <button
     mat-icon-button
     type="button"
     [attr.aria-label]="buttonLabel()"
+    [matTooltip]="tooltip()"
+    matTooltipPosition="below"
     [disabled]="disabled()"
     (click)="refresh()"
   >
@@ -28,3 +33,65 @@
     }
   </button>
 </div>
+
+<mat-menu #detailsMenu="matMenu" class="refresh-panel" xPosition="before">
+  <div class="refresh-panel__content">
+    <p class="refresh-panel__lead">Pressing refresh fetches live prices right now.</p>
+
+    @if (status() === null) {
+      <p class="refresh-panel__waiting">Waiting for the first status update from the server…</p>
+    } @else {
+      <ul class="refresh-panel__rows">
+        @for (row of marketRows(); track row.provider) {
+          <li class="refresh-panel__row">
+            <div class="refresh-panel__row-header">
+              <span class="refresh-panel__row-label">{{ row.label }}</span>
+              <span
+                class="refresh-panel__row-chip"
+                [class.refresh-panel__row-chip--open]="row.isOpen"
+              >
+                {{ row.alwaysOpen ? 'Always on' : row.isOpen ? 'Open' : 'Closed' }}
+              </span>
+            </div>
+
+            <p
+              class="refresh-panel__row-action"
+              [class.refresh-panel__row-action--will]="row.willRefresh"
+            >
+              <mat-icon aria-hidden="true">{{
+                row.willRefresh ? 'check_circle' : 'block'
+              }}</mat-icon>
+              {{ row.willRefresh ? 'Will refresh now' : "Won't refresh — market is closed" }}
+            </p>
+
+            <p class="refresh-panel__row-meta">
+              @if (row.hasData) {
+                Last updated {{ row.lastSuccessLabel }} · next automatic check
+                {{ row.nextDueLabel }}.
+              } @else {
+                No refresh recorded yet.
+              }
+            </p>
+
+            @if (row.hasData && row.cadenceLabel) {
+              <p class="refresh-panel__row-cadence">Automatic checks {{ row.cadenceLabel }}.</p>
+            }
+
+            @if (row.attemptedAndFailed) {
+              <p class="refresh-panel__row-error">
+                <mat-icon aria-hidden="true">warning</mat-icon>
+                Last attempt failed — {{ row.errorSummary }}
+              </p>
+            }
+          </li>
+        }
+      </ul>
+    }
+
+    <hr class="refresh-panel__rule" />
+    <p class="refresh-panel__footer">
+      Daily closing prices and dividend history update on their own schedule. This button only
+      fetches live prices — it never touches those.
+    </p>
+  </div>
+</mat-menu>

@@ -1,4 +1,4 @@
-import { formatRelativeTime, isRefreshStale } from './relative-time';
+import { formatDueIn, formatRelativeTime, isRefreshStale } from './relative-time';
 
 describe('formatRelativeTime', () => {
   const now = new Date('2026-07-31T12:10:00Z').getTime();
@@ -25,6 +25,35 @@ describe('formatRelativeTime', () => {
 
   it('formats days ago', () => {
     expect(formatRelativeTime('2026-07-28T12:10:00Z', now)).toBe('3d ago');
+  });
+});
+
+describe('formatDueIn', () => {
+  const now = new Date('2026-07-31T12:10:00Z').getTime();
+
+  it('returns "not yet scheduled" for null', () => {
+    expect(formatDueIn(null, now)).toBe('not yet scheduled');
+  });
+
+  it('returns "due now" for a due time at or before now', () => {
+    expect(formatDueIn('2026-07-31T12:10:00Z', now)).toBe('due now');
+    expect(formatDueIn('2026-07-31T12:05:00Z', now)).toBe('due now');
+  });
+
+  it('formats seconds until due', () => {
+    expect(formatDueIn('2026-07-31T12:10:30Z', now)).toBe('in 30s');
+  });
+
+  it('formats minutes until due', () => {
+    expect(formatDueIn('2026-07-31T12:15:00Z', now)).toBe('in 5 min');
+  });
+
+  it('formats hours until due', () => {
+    expect(formatDueIn('2026-07-31T15:10:00Z', now)).toBe('in 3h');
+  });
+
+  it('formats days until due', () => {
+    expect(formatDueIn('2026-08-03T12:10:00Z', now)).toBe('in 3d');
   });
 });
 

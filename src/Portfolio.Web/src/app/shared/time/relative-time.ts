@@ -28,6 +28,42 @@ export function formatRelativeTime(fromIso: string | null, nowMs: number): strin
 }
 
 /**
+ * Formats a still-pending future ISO instant as an "in N min"-style label,
+ * relative to `nowMs` — the symmetric counterpart to `formatRelativeTime` for
+ * a due time that has not happened yet (the refresh-details panel's "next
+ * automatic check" row). A due time at or before `nowMs` reads as "due now"
+ * rather than a confusing negative offset.
+ */
+export function formatDueIn(dueIso: string | null, nowMs: number): string {
+  if (!dueIso) {
+    return 'not yet scheduled';
+  }
+  const due = new Date(dueIso).getTime();
+  if (Number.isNaN(due)) {
+    return 'not yet scheduled';
+  }
+
+  const diffMs = due - nowMs;
+  if (diffMs <= 0) {
+    return 'due now';
+  }
+  const diffSec = Math.round(diffMs / 1000);
+  if (diffSec < 60) {
+    return `in ${diffSec}s`;
+  }
+  const diffMin = Math.round(diffSec / 60);
+  if (diffMin < 60) {
+    return `in ${diffMin} min`;
+  }
+  const diffHour = Math.round(diffMin / 60);
+  if (diffHour < 24) {
+    return `in ${diffHour}h`;
+  }
+  const diffDay = Math.round(diffHour / 24);
+  return `in ${diffDay}d`;
+}
+
+/**
  * Whether the last refresh should be treated as stale for the amber warning
  * state. Prefers the backend's own `nextScheduledRunAt` (so a normal 60-minute
  * closed-market cadence is never mistaken for staleness) with a grace window

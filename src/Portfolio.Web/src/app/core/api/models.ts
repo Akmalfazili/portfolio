@@ -199,6 +199,21 @@ export interface PriceRefreshStatus {
   sgxOpen: boolean;
   nextScheduledRunAt: string | null;
   sources: SourceRefreshStatus[];
+
+  /**
+   * The Twelve Data quote-sweep interval currently in effect (seconds),
+   * derived at runtime from the live active-symbol count and today's
+   * remaining credit budget (`TwelveDataCadenceCalculator`) — never a cadence
+   * hardcoded for one portfolio size. Optional/nullable: older cached
+   * snapshots and anything that predates this field simply omit it, and it
+   * must never be treated as "no automatic refresh happens".
+   */
+  effectiveTwelveDataIntervalSeconds?: number | null;
+  /** Twelve Data credits spent today (UTC), from the persisted daily ledger.
+   *  Personal-tool tone only — never render this as an alarming number. */
+  creditsUsedToday?: number | null;
+  /** Twelve Data's daily credit budget (800 on the free tier). */
+  creditBudget?: number | null;
 }
 
 export interface SourceRefreshOutcome {

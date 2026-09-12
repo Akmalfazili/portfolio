@@ -32,10 +32,46 @@ import { PriceRefreshCycleResult, PriceRefreshStatus, QuoteProviderKind } from '
  * or a genuinely in-flight background sweep reads as "already up to date" —
  * the opposite of what happened.
  */
-const SOURCE_MARKET_LABEL: Record<QuoteProviderKind, string> = {
+/**
+ * `QuoteProviderKind` -> human market name, for MID-SENTENCE use: "Refreshed
+ * 3 symbols (crypto)", "…for crypto — US market and SGX are closed…". Read by
+ * `describeRefreshOutcome` below and by the idle pre-click tooltip
+ * (`describeIdleRefreshPreview` in `refresh-panel.ts`).
+ *
+ * Do NOT use this for a panel ROW TITLE — `CoinGecko: 'crypto'` is
+ * deliberately lowercase because it sits mid-sentence in every place this map
+ * is read today, and title-casing it here to fix a row heading would break
+ * those sentences ("Refreshed 3 symbols (Crypto)" reads wrong). The
+ * refresh-details panel's row titles use `SOURCE_MARKET_TITLE` below instead
+ * — a second, deliberately separate map — rather than sharing this one.
+ */
+export const SOURCE_MARKET_LABEL: Record<QuoteProviderKind, string> = {
   TwelveData: 'US market',
   Yahoo: 'SGX',
   CoinGecko: 'crypto',
+};
+
+/**
+ * `QuoteProviderKind` -> row TITLE, for the refresh-details panel only
+ * (`refresh-panel.ts`'s `MarketRefreshRow.label`) — a title-cased heading
+ * sitting alone in its own column, never mid-sentence. `SOURCE_MARKET_LABEL`
+ * above is wrong there: a screen reader reading "crypto" as a row heading
+ * next to "US market" and "SGX" reads as a typo, not a stylistic choice.
+ *
+ * "US stocks" (not "US market") is deliberate: the row beneath already says
+ * "Won't refresh — market is closed" for a closed row, so a title of "US
+ * market" would repeat "market" twice in the same row ("US market … market is
+ * closed"). "US stocks" names what is being tracked, matching "SGX" and
+ * "Crypto" (a venue/asset-class name), and leaves "market is closed" to be
+ * the one place that talks about market state.
+ *
+ * Do NOT merge this back into `SOURCE_MARKET_LABEL` — see that map's own
+ * comment for why they must stay two maps.
+ */
+export const SOURCE_MARKET_TITLE: Record<QuoteProviderKind, string> = {
+  TwelveData: 'US stocks',
+  Yahoo: 'SGX',
+  CoinGecko: 'Crypto',
 };
 
 export function describeRefreshOutcome(
@@ -107,7 +143,8 @@ function closedMarkets(status: PriceRefreshStatus | null): string[] {
   return closed;
 }
 
-function joinWithAnd(parts: string[]): string {
+/** Shared by the idle pre-click tooltip (`refresh-panel.ts`) so "A, B and C" is worded once. */
+export function joinWithAnd(parts: string[]): string {
   return parts.length <= 1
     ? (parts[0] ?? '')
     : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`;
