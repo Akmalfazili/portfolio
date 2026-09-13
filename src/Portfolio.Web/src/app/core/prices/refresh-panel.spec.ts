@@ -82,6 +82,77 @@ describe('buildMarketRefreshRows', () => {
     expect(us.errorSummary!.endsWith('…')).toBe(true);
   });
 
+  it('times a failed attempt with the same "N ago" wording as lastSuccessLabel, so a stale failure cannot read as current', () => {
+    // A frozen SGX status from a Friday-evening outage, read on a Sunday
+    // while the market is closed (D-style staleness bug): the failure
+    // shouldn't read as if it "just" happened just because nothing has
+    // retried it since.
+    const rows = buildMarketRefreshRows(
+      status({
+        sgxOpen: false,
+        sources: [
+          {
+            source: 'Yahoo',
+            lastAttemptedAt: '2026-07-31T04:00:00Z', // 8h10m before `now`
+            lastSuccessAt: '2026-07-28T04:00:00Z',
+            lastRunSuccess: false,
+            lastError: 'Yahoo request failed.',
+            symbolsRefreshed: 0,
+            nextDueAt: '2026-08-03T02:00:00Z',
+          },
+        ],
+      }),
+      now,
+    );
+    const sgx = rows.find((r) => r.provider === 'Yahoo')!;
+    expect(sgx.attemptedAndFailed).toBe(true);
+    expect(sgx.lastAttemptedLabel).toBe('8h ago');
+  });
+
+  it('degrades to a null lastAttemptedLabel — never "Invalid Date" — when a failed row has no lastAttemptedAt', () => {
+    const rows = buildMarketRefreshRows(
+      status({
+        sources: [
+          {
+            source: 'Yahoo',
+            lastAttemptedAt: null,
+            lastSuccessAt: '2026-07-28T04:00:00Z',
+            lastRunSuccess: false,
+            lastError: 'Yahoo request failed.',
+            symbolsRefreshed: 0,
+            nextDueAt: null,
+          },
+        ],
+      }),
+      now,
+    );
+    const sgx = rows.find((r) => r.provider === 'Yahoo')!;
+    expect(sgx.attemptedAndFailed).toBe(true);
+    expect(sgx.lastAttemptedLabel).toBeNull();
+  });
+
+  it('never surfaces a lastAttemptedLabel for a row that was not attempted-and-failed', () => {
+    const rows = buildMarketRefreshRows(
+      status({
+        sources: [
+          {
+            source: 'TwelveData',
+            lastAttemptedAt: '2026-07-31T12:00:00Z',
+            lastSuccessAt: '2026-07-31T12:00:00Z',
+            lastRunSuccess: true,
+            lastError: null,
+            symbolsRefreshed: 4,
+            nextDueAt: '2026-07-31T12:20:00Z',
+          },
+        ],
+      }),
+      now,
+    );
+    const us = rows.find((r) => r.provider === 'TwelveData')!;
+    expect(us.attemptedAndFailed).toBe(false);
+    expect(us.lastAttemptedLabel).toBeNull();
+  });
+
   it('titles each row from SOURCE_MARKET_TITLE, never the mid-sentence SOURCE_MARKET_LABEL', () => {
     // A screen reader/visual reader sees row titles in isolation, one per
     // column ("US stocks" / "SGX" / "Crypto") — never mid-sentence, where

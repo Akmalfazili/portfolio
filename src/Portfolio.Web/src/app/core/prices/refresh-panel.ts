@@ -50,6 +50,16 @@ export interface MarketRefreshRow {
   readonly attemptedAndFailed: boolean;
   /** Short, truncated summary — never the raw provider error string. */
   readonly errorSummary: string | null;
+  /**
+   * When the failed attempt happened, in the same "N ago" wording as
+   * `lastSuccessLabel` (via `formatRelativeTime`) so a failure from a market
+   * that has since closed — and therefore hasn't been retried — cannot read
+   * as having "just" happened. Null only when there is no failure to time
+   * (`attemptedAndFailed` false) or the backend somehow sent no
+   * `lastAttemptedAt` on a failed row; the template falls back to the
+   * un-timestamped wording in that case rather than rendering "Invalid Date".
+   */
+  readonly lastAttemptedLabel: string | null;
 }
 
 export function buildMarketRefreshRows(
@@ -87,6 +97,10 @@ function buildRow(
         : null,
     attemptedAndFailed,
     errorSummary: attemptedAndFailed ? summarizeError(source.lastError) : null,
+    lastAttemptedLabel:
+      attemptedAndFailed && source.lastAttemptedAt
+        ? formatRelativeTime(source.lastAttemptedAt, nowMs)
+        : null,
   };
 }
 

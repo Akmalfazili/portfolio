@@ -80,7 +80,11 @@
             @if (row.attemptedAndFailed) {
               <p class="refresh-panel__row-error">
                 <mat-icon aria-hidden="true">warning</mat-icon>
-                Last attempt failed — {{ row.errorSummary }}
+                @if (row.lastAttemptedLabel) {
+                  Last attempt failed {{ row.lastAttemptedLabel }} — {{ row.errorSummary }}
+                } @else {
+                  Last attempt failed — {{ row.errorSummary }}
+                }
               </p>
             }
           </li>

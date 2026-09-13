@@ -171,6 +171,57 @@ describe('RefreshIndicator', () => {
       expect(sgx.attemptedAndFailed).toBe(true);
       expect(sgx.errorSummary).toBe('HTTP 500 from chart endpoint');
     });
+
+    it('times an attempted-and-failed row from lastAttemptedAt, not from when it is being viewed', () => {
+      // The live D-style scenario this fix addresses: a Friday-evening failure
+      // on a market that is now closed for the weekend, viewed on Sunday. The
+      // row must time the FAILURE, not read as if it just happened.
+      setup({
+        status: signal(
+          status({
+            sgxOpen: false,
+            sources: [
+              {
+                source: 'Yahoo',
+                lastAttemptedAt: '2026-07-31T04:00:00Z',
+                lastSuccessAt: '2026-07-28T04:00:00Z',
+                lastRunSuccess: false,
+                lastError: 'Yahoo request failed.',
+                symbolsRefreshed: 0,
+                nextDueAt: null,
+              },
+            ],
+          }),
+        ),
+      });
+      const sgx = fixture.componentInstance.marketRows().find((r) => r.provider === 'Yahoo')!;
+      expect(sgx.attemptedAndFailed).toBe(true);
+      expect(sgx.lastAttemptedLabel).not.toBeNull();
+      expect(sgx.lastAttemptedLabel).not.toBe('never');
+    });
+
+    it('degrades to a null lastAttemptedLabel, never "Invalid Date", when the failed row has no lastAttemptedAt', () => {
+      setup({
+        status: signal(
+          status({
+            sources: [
+              {
+                source: 'Yahoo',
+                lastAttemptedAt: null,
+                lastSuccessAt: '2026-07-28T04:00:00Z',
+                lastRunSuccess: false,
+                lastError: 'Yahoo request failed.',
+                symbolsRefreshed: 0,
+                nextDueAt: null,
+              },
+            ],
+          }),
+        ),
+      });
+      const sgx = fixture.componentInstance.marketRows().find((r) => r.provider === 'Yahoo')!;
+      expect(sgx.attemptedAndFailed).toBe(true);
+      expect(sgx.lastAttemptedLabel).toBeNull();
+    });
   });
 
   describe('post-refresh outcome — moved to a snackbar, not the tooltip', () => {
