@@ -130,11 +130,25 @@ public sealed class PriceBackfillServiceTests : IDisposable
     /// <summary>Most tests here exercise <c>RunAsync</c> directly, which never consults the
     /// calendar - only <c>RunIfDueAsync</c> does. Default to "always closed" so a test that forgot
     /// to pass one would still see both markets due from <c>RunIfDueAsync</c> rather than a
-    /// silently-gated one.</summary>
+    /// silently-gated one.
+    ///
+    /// D53: <c>RunAsync</c> now ALSO consults the calendar unconditionally, to compute each
+    /// market's settled cap (<c>capByMarket</c> — see <c>PriceBackfillService</c>'s class remarks).
+    /// <c>LastSessionCloseAt</c>/<c>LocalDateOn</c> are stubbed here to resolve to the settled
+    /// instant's own UTC date, regardless of market or instant passed — "just closed, right now" —
+    /// so a test that only cares about ordinary asset/FX plumbing (the overwhelming majority of the
+    /// tests in this file) sees a cap that comfortably covers every fixture date (all in the past
+    /// relative to <c>_timeProvider</c>'s fixed "now") without needing to know anything about D53.
+    /// Tests that ARE about the cap itself use <see cref="CalendarWithFixedClose"/> or a real
+    /// <see cref="MarketCalendar"/> instead, exactly as the D51 retry tests already do.</summary>
     private static IMarketCalendar AlwaysClosedCalendar()
     {
         var calendar = Substitute.For<IMarketCalendar>();
         calendar.IsOpen(Arg.Any<Market>(), Arg.Any<DateTimeOffset>()).Returns(false);
+        calendar.LastSessionCloseAt(Arg.Any<Market>(), Arg.Any<DateTimeOffset>())
+            .Returns(callInfo => callInfo.ArgAt<DateTimeOffset>(1));
+        calendar.LocalDateOn(Arg.Any<Market>(), Arg.Any<DateTimeOffset>())
+            .Returns(callInfo => DateOnly.FromDateTime(callInfo.ArgAt<DateTimeOffset>(1).UtcDateTime));
         return calendar;
     }
 
@@ -675,7 +689,7 @@ public sealed class PriceBackfillServiceTests : IDisposable
     // tests cover only the extra gating.
 
     [Fact]
-    public async Task D47_Regression_SgxDueAt1705Sgt_EvenThoughAScheduledRunCompletedAt0405SameSgtDay()
+    public async Task D47_Regression_SgxDueAfter1700Sgt_EvenThoughAScheduledRunCompletedAt0405SameSgtDay()
     {
         // THE regression this closed. Confirmed (see tracker.md and this session's own probe) to
         // FAIL against the pre-fix code with PriceBackfillOutcome.AlreadyRanToday: the old gate was
@@ -684,6 +698,12 @@ public sealed class PriceBackfillServiceTests : IDisposable
         // suppress a second run for the rest of the SGT day — even though SGX's OWN session for
         // that day had not even opened yet at 04:05, and its 17:00 SGT close (published at 17:00,
         // never fetched) then had to wait until the following day's 04:05 run, ~11 hours late.
+        //
+        // D53 note: the probe instant below was originally 17:05 SGT (five minutes after SGX's
+        // close) and is now 17:35 SGT — D53's CloseSettleDelay (default 30 minutes) means due-ness
+        // is judged on the SETTLED instant, not raw "now", so SGX does not read due again until 30
+        // minutes after its own close, not the instant the calendar starts reporting it closed. See
+        // PriceBackfillOptions.CloseSettleDelay and the D53 tests below for that gap on its own.
         var stockProvider = Substitute.For<IQuoteProvider>();
         stockProvider.GetHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
             .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
@@ -724,13 +744,14 @@ public sealed class PriceBackfillServiceTests : IDisposable
         });
         await _db.SaveChangesAsync();
 
-        // "Now" = 17:05 SGT on 2026-08-05 (2026-08-05T09:05:00Z) — SGX has just closed and
-        // published TODAY's (2026-08-05) close, which the seeded SGX row above (completed the
-        // previous SGT day, before SGX's 2026-08-05 session even opened) has never covered.
-        var probeTime = new FixedTimeProvider(new DateTimeOffset(2026, 8, 5, 9, 5, 0, TimeSpan.Zero));
+        // "Now" = 17:35 SGT on 2026-08-05 (2026-08-05T09:35:00Z) — 35 minutes past SGX's 17:00
+        // close, past the default 30-minute CloseSettleDelay (D53), so TODAY's (2026-08-05) close
+        // now reads as settled — never covered by the seeded SGX row above (completed the previous
+        // SGT day, before SGX's 2026-08-05 session even opened).
+        var probeTime = new FixedTimeProvider(new DateTimeOffset(2026, 8, 5, 9, 35, 0, TimeSpan.Zero));
 
-        // Real calendar so SGX genuinely reads "closed" at 17:05 SGT (after its own 17:00 close)
-        // and NYSE genuinely reads "closed" too (09:05 UTC = 05:05 ET, before NYSE's 09:30 open) —
+        // Real calendar so SGX genuinely reads "closed" at 17:35 SGT (after its own 17:00 close)
+        // and NYSE genuinely reads "closed" too (09:35 UTC = 05:35 ET, before NYSE's 09:30 open) —
         // both markets closed, exactly like the live scenario this was diagnosed from.
         var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider, calendar: new MarketCalendar(), timeProvider: probeTime);
 
@@ -1234,5 +1255,323 @@ public sealed class PriceBackfillServiceTests : IDisposable
 
         await stockProvider.Received(1).GetHistoryAsync(
             _aapl, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+    }
+
+    // --- D53: a market reading "closed" is not the same as its close being SETTLED. Covers the
+    // per-market cap (capByMarket) for every trigger, including manual (which bypasses due-ness and
+    // the market calendar entirely but must never bypass the settle cap), and the due-ness gate's
+    // own use of the same settled instant. See tracker.md's D53 entry for the live evidence.
+
+    [Fact]
+    public async Task RunAsync_D53_ManualRunMidSgxSession_DoesNotStoreTodaysPartialBar_EvenIfTheProviderReturnsOne()
+    {
+        // The core defect, reproduced directly: Yahoo's chart endpoint has no documented guarantee
+        // that `period2` (the requested end) is honoured, so the provider mock here deliberately
+        // returns TODAY's bar anyway, alongside a genuine prior-day close — proving the cap's
+        // defense-in-depth filter (not just the requested range) is what keeps it out, not merely a
+        // cooperative provider.
+        var today = new DateOnly(2026, 7, 29); // ordinary Wednesday
+        var yesterday = new DateOnly(2026, 7, 28); // ordinary Tuesday, no SGX holiday
+
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(_z74, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [
+                    new PriceHistoryPoint(yesterday, 4.49m, "SGD"),
+                    new PriceHistoryPoint(today, 4.55m, "SGD"), // today's still-updating price
+                ],
+                callInfo.ArgAt<DateOnly>(1))));
+
+        var fxProvider = Substitute.For<IFxRateProvider>();
+        fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(yesterday, 1.29m)]));
+
+        // 10:00 SGT on 2026-07-29 (02:00 UTC) — mid-session, well before the 17:00 close.
+        var midSession = new FixedTimeProvider(new DateTimeOffset(2026, 7, 29, 2, 0, 0, TimeSpan.Zero));
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider, calendar: new MarketCalendar(), timeProvider: midSession);
+
+        var summary = await sut.RunAsync(RefreshTrigger.BackfillManual, [Market.Sgx], CancellationToken.None);
+
+        summary.AssetsProcessed.Should().Contain("Z74");
+        (await _db.PriceHistories.Where(p => p.AssetId == _z74.Id && p.Date == today).CountAsync()).Should().Be(0,
+            "today's SGX session has not finished, let alone settled");
+        (await _db.PriceHistories.Where(p => p.AssetId == _z74.Id && p.Date == yesterday).CountAsync()).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task RunAsync_D53_ManualRunDuringSgxLunchBreak_DoesNotStoreTodaysPartialBar()
+    {
+        var today = new DateOnly(2026, 7, 29);
+        var yesterday = new DateOnly(2026, 7, 28);
+
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(_z74, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [
+                    new PriceHistoryPoint(yesterday, 4.49m, "SGD"),
+                    new PriceHistoryPoint(today, 4.55m, "SGD"),
+                ],
+                callInfo.ArgAt<DateOnly>(1))));
+
+        var fxProvider = Substitute.For<IFxRateProvider>();
+        fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(yesterday, 1.29m)]));
+
+        // 12:48 SGT on 2026-07-29 (04:48 UTC) — SGX's own midday lunch break. IsOpen already reads
+        // false here (verified below), which is exactly why LastSessionCloseAt — not IsOpen — must
+        // be the mechanism that keeps the session's own unfinished day out: IsOpen going false at
+        // noon says nothing about whether the day's close has happened yet.
+        var lunchBreak = new FixedTimeProvider(new DateTimeOffset(2026, 7, 29, 4, 48, 0, TimeSpan.Zero));
+        var calendar = new MarketCalendar();
+        calendar.IsOpen(Market.Sgx, lunchBreak.GetUtcNow()).Should().BeFalse(
+            "SGX's lunch break reads as closed even though the session itself is not over");
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider, calendar: calendar, timeProvider: lunchBreak);
+
+        await sut.RunAsync(RefreshTrigger.BackfillManual, [Market.Sgx], CancellationToken.None);
+
+        (await _db.PriceHistories.Where(p => p.AssetId == _z74.Id && p.Date == today).CountAsync()).Should().Be(0);
+        (await _db.PriceHistories.Where(p => p.AssetId == _z74.Id && p.Date == yesterday).CountAsync()).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task RunAsync_D53_ManualRunMidNyseSession_DoesNotStoreTodaysPartialBar()
+    {
+        // The NYSE equivalent of the SGX cases above — the per-market cap applies identically
+        // regardless of which provider (Twelve Data here, Yahoo above) sits behind it.
+        var today = new DateOnly(2026, 7, 29);
+        var yesterday = new DateOnly(2026, 7, 28);
+
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(_aapl, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [
+                    new PriceHistoryPoint(yesterday, 200m, "USD"),
+                    new PriceHistoryPoint(today, 205m, "USD"),
+                ],
+                callInfo.ArgAt<DateOnly>(1))));
+
+        var fxProvider = Substitute.For<IFxRateProvider>(); // AAPL is USD — never called
+
+        // Noon ET on 2026-07-29 (16:00 UTC — EDT is UTC-4 in July) — mid-session, well before the
+        // 16:00 ET close.
+        var midSession = new FixedTimeProvider(new DateTimeOffset(2026, 7, 29, 16, 0, 0, TimeSpan.Zero));
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider, calendar: new MarketCalendar(), timeProvider: midSession);
+
+        await sut.RunAsync(RefreshTrigger.BackfillManual, [Market.Nyse], CancellationToken.None);
+
+        (await _db.PriceHistories.Where(p => p.AssetId == _aapl.Id && p.Date == today).CountAsync()).Should().Be(0);
+        (await _db.PriceHistories.Where(p => p.AssetId == _aapl.Id && p.Date == yesterday).CountAsync()).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task RunAsync_D53_FromBeyondMarketCap_IsDeferred_NotFailed_AndNeverCallsTheProvider()
+    {
+        // Generalizes the pre-D53 `from == today` guard: the earliest date an asset needs can be
+        // beyond its own market's settled cap WITHOUT being literally ReportingClock's "today" —
+        // exactly what happens once the cap itself can fall behind raw "today" (a lunch break, a
+        // closing-auction window, or simply CloseSettleDelay). FUT's earliest trade date is
+        // deliberately capDate + 1 — nowhere near this fixture's own dates — to prove the guard now
+        // reads the actual per-market cap, not a hardcoded comparison to "today".
+        var existingTransactions = _db.Transactions.ToList();
+        _db.Transactions.RemoveRange(existingTransactions);
+        _db.Assets.RemoveRange(_aapl, _z74);
+
+        var capDate = new DateOnly(2026, 8, 4);
+        var future = new Asset
+        {
+            Id = 10, Symbol = "FUT", Name = "Future Co", AssetClass = AssetClass.Stock, Currency = "USD",
+            QuoteProviderKind = QuoteProviderKind.TwelveData, ProviderSymbol = "FUT",
+        };
+        _db.Assets.Add(future);
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = future.Id, Type = TransactionType.Buy, TradeDate = capDate.AddDays(1),
+            Quantity = 1m, PricePerUnit = 10m, Fees = 0m, Currency = "USD",
+        });
+        await _db.SaveChangesAsync();
+
+        var calendar = CalendarWithFixedClose(Market.Nyse, new DateTimeOffset(2026, 8, 4, 20, 0, 0, TimeSpan.Zero), capDate);
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        var fxProvider = Substitute.For<IFxRateProvider>(); // USD-only fixture — never called
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider, calendar: calendar);
+
+        var summary = await sut.RunAsync(RefreshTrigger.BackfillManual, [Market.Nyse], CancellationToken.None);
+
+        summary.AssetsSkippedTodayNotClosed.Should().Contain("FUT");
+        summary.AssetsFailed.Should().BeEmpty();
+        summary.AssetsSkippedForBudget.Should().BeEmpty();
+        summary.AssetsProcessed.Should().BeEmpty();
+        await stockProvider.DidNotReceive().GetHistoryAsync(
+            Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunIfDueAsync_D53_WithinCloseSettleDelay_SgxIsNotDue_EvenThoughRawNowWouldReadItUncovered()
+    {
+        // The scheduling half of D53: at 17:10 SGT (10 minutes after SGX's nominal 17:00 close,
+        // inside the default 30-minute CloseSettleDelay), a due-ness check keyed on raw "now" would
+        // read SGX as closed and uncovered since today's close (only yesterday's is on file) and
+        // call it due — RunAsync would then defer every asset via the cap (still yesterday's close,
+        // not yet settled) and still write a SUCCESSFUL RefreshRun row for "today's" close, which
+        // would then read as AlreadyCoveredSinceLastClose on every later check — D51's trap one
+        // layer in. Due-ness must stay on the SAME settled instant the cap uses, so this market
+        // simply isn't due yet.
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        var fxProvider = Substitute.For<IFxRateProvider>();
+
+        // A normal daily run completed just after SGX's PREVIOUS (2026-07-28) close.
+        _db.RefreshRuns.Add(new RefreshRun
+        {
+            Trigger = RefreshTrigger.BackfillScheduled, AssetClass = AssetClass.Stock, Market = Market.Sgx,
+            StartedAt = new DateTimeOffset(2026, 7, 28, 9, 0, 0, TimeSpan.Zero),
+            CompletedAt = new DateTimeOffset(2026, 7, 28, 9, 5, 0, TimeSpan.Zero), // 17:05 SGT on 7/28
+            Success = true,
+            SymbolsRefreshed = 1,
+        });
+
+        // 17:10 SGT on 2026-07-29 (09:10 UTC).
+        var probeInstant = new DateTimeOffset(2026, 7, 29, 9, 10, 0, TimeSpan.Zero);
+        _db.RefreshRuns.Add(new RefreshRun // NYSE already covered — kept out of this run's scope
+        {
+            Trigger = RefreshTrigger.BackfillScheduled, AssetClass = AssetClass.Stock, Market = Market.Nyse,
+            StartedAt = probeInstant, CompletedAt = probeInstant, Success = true, SymbolsRefreshed = 1,
+        });
+        await _db.SaveChangesAsync();
+
+        var probeTime = new FixedTimeProvider(probeInstant);
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider, calendar: new MarketCalendar(), timeProvider: probeTime);
+
+        var result = await sut.RunIfDueAsync(CancellationToken.None);
+
+        result.MarketsRun.Should().NotContain(Market.Sgx);
+        result.MarketsSkipped.Should().ContainSingle(s => s.Market == Market.Sgx && s.Reason == PriceBackfillSkipReason.AlreadyCoveredSinceLastClose);
+        await stockProvider.DidNotReceive().GetHistoryAsync(
+            Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunIfDueAsync_D53_AfterCloseSettleDelayElapses_SgxIsDue_AndFetchesTodaysNowSettledClose()
+    {
+        // The other half: once CloseSettleDelay has actually elapsed since SGX's close, the
+        // scheduled path must both consider SGX due AND actually fetch (and store) today's close —
+        // the settle delay is a temporary hold, not a permanent one.
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(_z74, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(new DateOnly(2026, 7, 29), 4.50m, "SGD")], callInfo.ArgAt<DateOnly>(1))));
+
+        var fxProvider = Substitute.For<IFxRateProvider>();
+        fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(new DateOnly(2026, 7, 28), 1.30m)]));
+
+        _db.RefreshRuns.Add(new RefreshRun
+        {
+            Trigger = RefreshTrigger.BackfillScheduled, AssetClass = AssetClass.Stock, Market = Market.Sgx,
+            StartedAt = new DateTimeOffset(2026, 7, 28, 9, 0, 0, TimeSpan.Zero),
+            CompletedAt = new DateTimeOffset(2026, 7, 28, 9, 5, 0, TimeSpan.Zero),
+            Success = true,
+            SymbolsRefreshed = 1,
+        });
+
+        // 17:35 SGT on 2026-07-29 (09:35 UTC) — 35 minutes after today's close, past the 30-minute
+        // settle delay.
+        var probeInstant = new DateTimeOffset(2026, 7, 29, 9, 35, 0, TimeSpan.Zero);
+        _db.RefreshRuns.Add(new RefreshRun // NYSE already covered — kept out of this run's scope
+        {
+            Trigger = RefreshTrigger.BackfillScheduled, AssetClass = AssetClass.Stock, Market = Market.Nyse,
+            StartedAt = probeInstant, CompletedAt = probeInstant, Success = true, SymbolsRefreshed = 1,
+        });
+        await _db.SaveChangesAsync();
+
+        var probeTime = new FixedTimeProvider(probeInstant);
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider, calendar: new MarketCalendar(), timeProvider: probeTime);
+
+        var result = await sut.RunIfDueAsync(CancellationToken.None);
+
+        result.MarketsRun.Should().Contain(Market.Sgx);
+        result.Summary!.AssetsProcessed.Should().Contain("Z74");
+        (await _db.PriceHistories.Where(p => p.AssetId == _z74.Id && p.Date == new DateOnly(2026, 7, 29)).CountAsync()).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task RunIfDueAsync_D53_AfterNyseCloseAndSettleDelay_ScheduledRunRequestsThatDayInclusive_AndStoresItsClose()
+    {
+        // The end-to-end contract check for the D53 `end_date` follow-up: PriceBackfillService
+        // always treats its own `cap` as INCLUSIVE (IQuoteProvider.GetHistoryAsync's contract),
+        // regardless of what any one provider's wire format needs to achieve that —
+        // TwelveDataQuoteProviderTests covers the wire format itself (`end_date = to + 1`). This
+        // proves the SERVICE's own `to` argument is the closed day itself, not one day short of it,
+        // and that the close returned for that exact day is the one that gets stored.
+        var closeDate = new DateOnly(2026, 7, 29); // ordinary Wednesday
+        DateOnly? requestedTo = null;
+
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(_aapl, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                requestedTo = callInfo.ArgAt<DateOnly>(2);
+                return Task.FromResult(HistoryFetchResult.Ok(
+                    [new PriceHistoryPoint(closeDate, 210m, "USD")], callInfo.ArgAt<DateOnly>(1)));
+            });
+
+        var fxProvider = Substitute.For<IFxRateProvider>(); // AAPL is USD — never called
+
+        // NYSE closes 16:00 ET (20:00 UTC in July, EDT). 35 minutes later, past the 30-minute
+        // settle delay: 20:35 UTC on 2026-07-29.
+        var probeInstant = new DateTimeOffset(2026, 7, 29, 20, 35, 0, TimeSpan.Zero);
+        _db.RefreshRuns.Add(new RefreshRun // SGX already covered — kept out of this run's scope
+        {
+            Trigger = RefreshTrigger.BackfillScheduled, AssetClass = AssetClass.Stock, Market = Market.Sgx,
+            StartedAt = probeInstant, CompletedAt = probeInstant, Success = true, SymbolsRefreshed = 1,
+        });
+        await _db.SaveChangesAsync();
+
+        var probeTime = new FixedTimeProvider(probeInstant);
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider, calendar: new MarketCalendar(), timeProvider: probeTime);
+
+        var result = await sut.RunIfDueAsync(CancellationToken.None);
+
+        result.MarketsRun.Should().Contain(Market.Nyse);
+        requestedTo.Should().Be(closeDate, "the service's own `to` is the closed day ITSELF — inclusive, never one short");
+        (await _db.PriceHistories.Where(p => p.AssetId == _aapl.Id && p.Date == closeDate).CountAsync()).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task RunAsync_D53_FxNeverRequestsOrStoresTodaysRate_EvenIfTheProviderReturnsOne()
+    {
+        // FX has no market session to key a settle cap off (see `fxCap` in PriceBackfillService's
+        // class remarks), so it is capped to one UTC calendar day behind `now` regardless of either
+        // equity market's own session state. The FX provider mock here deliberately returns a rate
+        // dated "today" anyway, proving the defensive per-point filter — not just the requested
+        // range — is what keeps CLAUDE.md's "a live spot rate is never written into FxRates" rule
+        // intact even against an uncooperative provider.
+        var utcNow = new DateTimeOffset(2026, 7, 29, 3, 0, 0, TimeSpan.Zero);
+        var utcToday = DateOnly.FromDateTime(utcNow.UtcDateTime);
+        var utcYesterday = utcToday.AddDays(-1);
+
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(utcYesterday, 4m, "SGD")], callInfo.ArgAt<DateOnly>(1))));
+
+        var fxProvider = Substitute.For<IFxRateProvider>();
+        fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(FxHistoryFetchResult.Ok(
+            [
+                new FxRatePoint(utcYesterday, 1.29m),
+                new FxRatePoint(utcToday, 1.31m), // the live-spot-into-FxRates violation CLAUDE.md warns about
+            ]));
+
+        var fixedNow = new FixedTimeProvider(utcNow);
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider, calendar: AlwaysClosedCalendar(), timeProvider: fixedNow);
+
+        await sut.RunAsync(RefreshTrigger.BackfillManual, BothMarkets, CancellationToken.None);
+
+        await fxProvider.Received(1).GetHistoryAsync(
+            "USD", "SGD", Arg.Any<DateOnly>(), utcYesterday, Arg.Any<CancellationToken>());
+        (await _db.FxRates.Where(f => f.Date == utcToday).CountAsync()).Should().Be(0);
+        (await _db.FxRates.Where(f => f.Date == utcYesterday).CountAsync()).Should().Be(1);
     }
 }

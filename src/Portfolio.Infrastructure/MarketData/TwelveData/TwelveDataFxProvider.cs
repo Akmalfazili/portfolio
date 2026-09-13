@@ -80,9 +80,18 @@ public sealed class TwelveDataFxProvider(
             return FxHistoryFetchResult.Failed("Twelve Data daily credit budget exhausted.");
         }
 
+        // D53 follow-up: `to` is contractually INCLUSIVE (see IFxRateProvider.GetHistoryAsync), but
+        // Twelve Data's own `end_date` is not documented either way, and the coordinator's live
+        // evidence points at EXCLUSIVE — a scheduled run at 2026-09-12 14:46 UTC sent
+        // `end_date=2026-09-12` and stored no 2026-09-12 USD/SGD row, even though Twelve Data
+        // publishes weekend FX bars (2026-09-05/06 are on file, so the gap isn't "no rate exists").
+        // Sending `to.AddDays(1)` is correct either way — see TwelveDataQuoteProvider's identical
+        // remark. If `end_date` turns out to be inclusive after all, this can only return a rate
+        // for `to + 1`, which PriceBackfillService's `point.Date > fxCap` filter is REQUIRED to
+        // drop, not merely defence-in-depth.
         var requestUri =
             $"time_series?symbol={Uri.EscapeDataString(pair)}&interval=1day" +
-            $"&start_date={from:yyyy-MM-dd}&end_date={to:yyyy-MM-dd}&apikey={options.Value.ApiKey}";
+            $"&start_date={from:yyyy-MM-dd}&end_date={to.AddDays(1):yyyy-MM-dd}&apikey={options.Value.ApiKey}";
 
         using var response = await httpClient.GetAsync(requestUri, cancellationToken);
         var json = await response.Content.ReadAsStringAsync(cancellationToken);

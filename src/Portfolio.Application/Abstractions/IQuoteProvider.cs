@@ -24,10 +24,15 @@ public interface IQuoteProvider
         IReadOnlyCollection<Asset> assets, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Fetches daily closes for a single asset over <c>[from, to]</c> inclusive, for historical
-    /// backfill. Points are ordered ascending by date. Never throws for an ordinary upstream
-    /// failure — see <see cref="HistoryFetchResult"/> for how success, provider-window
-    /// truncation, and outright failure are distinguished in the return value.
+    /// Fetches daily closes for a single asset over <c>[from, to]</c> — <b><paramref name="to"/> is
+    /// INCLUSIVE</b> — for historical backfill. Points are ordered ascending by date. This is a
+    /// contract on the RETURNED points, not a promise about the upstream query string: an
+    /// implementation whose underlying provider treats its own end-date parameter as exclusive
+    /// (or whose inclusivity cannot be confirmed — see <c>TwelveDataQuoteProvider</c>'s remarks,
+    /// D53) must compensate on the wire so the caller still gets <paramref name="to"/> itself when
+    /// it exists, never silently one short. Never throws for an ordinary upstream failure — see
+    /// <see cref="HistoryFetchResult"/> for how success, provider-window truncation, and outright
+    /// failure are distinguished in the return value.
     /// </summary>
     Task<HistoryFetchResult> GetHistoryAsync(
         Asset asset, DateOnly from, DateOnly to, CancellationToken cancellationToken);

@@ -218,6 +218,26 @@ public sealed class TwelveDataQuoteProviderTests
     }
 
     [Fact]
+    public async Task GetHistoryAsync_SendsEndDateOneDayPastTo_NotToItself()
+    {
+        // D53 follow-up: `to` is contractually INCLUSIVE (IQuoteProvider.GetHistoryAsync), but live
+        // evidence (a manual mid-NYSE-session run that sent `end_date=2026-09-08` and inserted no
+        // 2026-09-08 rows at all — they only landed the next day once a run sent
+        // `end_date=2026-09-09`) points at Twelve Data's own `end_date` being EXCLUSIVE. Sending
+        // `to.AddDays(1)` is correct under either reading — see the provider's own remarks, and
+        // PriceBackfillServiceTests' D53 service-level coverage for the end-to-end behaviour this
+        // protects.
+        var handler = new StubHttpMessageHandler(HttpStatusCode.OK, """{"values":[],"status":"ok"}""");
+        var sut = CreateSut(handler);
+
+        await sut.GetHistoryAsync(Aapl, new DateOnly(2026, 9, 1), new DateOnly(2026, 9, 8), CancellationToken.None);
+
+        var query = Uri.UnescapeDataString(handler.LastRequest!.RequestUri!.Query);
+        query.Should().Contain("start_date=2026-09-01");
+        query.Should().Contain("end_date=2026-09-09"); // to (09-08) + 1 day, never `to` itself
+    }
+
+    [Fact]
     public async Task GetQuotesAsync_ThrottleDeniesAChunk_ReportsBudgetExhausted_WithoutCallingTheProvider()
     {
         var throttle = Substitute.For<ITwelveDataCreditThrottle>();

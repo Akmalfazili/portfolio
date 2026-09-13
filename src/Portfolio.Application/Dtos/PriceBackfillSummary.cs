@@ -36,10 +36,14 @@ public sealed record PriceBackfillSummary(
     /// caller does not have to go spelunking in logs to learn e.g. "Twelve Data returned HTTP 400."
     /// Raising the budget will not fix anything in this list.</summary>
     IReadOnlyList<AssetBackfillFailure> AssetsFailed,
-    /// <summary>Never attempted, and not a failure or a budget skip — the asset's earliest trade
-    /// date is today, and a same-day request cannot succeed regardless of the provider (an equity
-    /// daily close does not exist until the session ends). Costs zero calls; picked up
-    /// automatically once "today" becomes a past date on a later run.</summary>
+    /// <summary>Never attempted, and not a failure or a budget skip — the asset's earliest needed
+    /// date is beyond its own market's settled cap (<c>PriceBackfillOptions.CloseSettleDelay</c>,
+    /// D53): either it was bought today, or that market's most recent session hasn't finished
+    /// settling yet (mid-session, a lunch break, or a closing-auction window read as "closed" by
+    /// the calendar but not yet final). A same-day-or-unsettled request cannot succeed regardless of
+    /// the provider (an equity daily close does not exist, or is not yet final, until the session
+    /// ends and settles). Costs zero calls; picked up automatically once the cap advances past the
+    /// needed date on a later run.</summary>
     IReadOnlyList<string> AssetsSkippedTodayNotClosed,
     int PriceHistoryPointsInserted,
     int FxRatePointsInserted,

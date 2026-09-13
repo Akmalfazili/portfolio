@@ -55,4 +55,25 @@ public sealed class PriceBackfillOptions
     /// <c>MaxFailedRunRetriesPerClose</c> full passes.
     /// </summary>
     public int MaxFailedRunRetriesPerClose { get; set; } = 3;
+
+    /// <summary>
+    /// D53: how long after a market's own session close <c>PriceBackfillService</c> waits before
+    /// treating that close as settled and safe to store — for every trigger (scheduled, retry, AND
+    /// manual). The trap this closes: <see cref="IMarketCalendar.IsOpen"/> going false at a
+    /// session's nominal close time does not mean the close is final. SGX runs a closing routine
+    /// (pre-close auction ~17:00-17:06 SGT, trade-at-close to ~17:16) after the calendar already
+    /// reads "closed" at 17:00, and a request in that window (or, worse, mid-session, or during
+    /// SGX's own lunch break) can have its <c>end_date</c>/<c>period2</c> land on today's date and
+    /// come back with today's still-updating price stamped as if it were the day's close — which
+    /// then freezes permanently into <c>PriceHistory</c>, since the backfill never overwrites a
+    /// date it already holds. Defaults to 30 minutes, comfortably past SGX's ~17:16 settlement and
+    /// harmless for NYSE (which has no equivalent closing auction in this calendar's model).
+    /// <c>PriceBackfillService</c> derives every market's "cap" date — the latest date it will ever
+    /// request from a provider or accept from one — as
+    /// <c>calendar.LocalDateOn(market, calendar.LastSessionCloseAt(market, now - CloseSettleDelay))</c>,
+    /// and <c>RunIfDueAsync</c>'s own due-ness check uses the same settled instant for
+    /// <c>LastSessionCloseAt</c> — see the class remarks on both for why the two MUST stay on the
+    /// same clock, on pain of repeating D51's trap one level further in.
+    /// </summary>
+    public TimeSpan CloseSettleDelay { get; set; } = TimeSpan.FromMinutes(30);
 }

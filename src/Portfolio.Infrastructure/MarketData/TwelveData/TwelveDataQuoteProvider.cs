@@ -156,9 +156,18 @@ public sealed class TwelveDataQuoteProvider(
             return HistoryFetchResult.Failed(from, "Twelve Data daily credit budget exhausted.");
         }
 
+        // D53 follow-up: `to` is contractually INCLUSIVE (see IQuoteProvider.GetHistoryAsync), but
+        // Twelve Data's own `end_date` is not documented either way, and the coordinator's live
+        // evidence points at EXCLUSIVE — a manual run at 2026-09-08 14:57 UTC (NYSE in session)
+        // sent `end_date=2026-09-08` and inserted NO 2026-09-08 rows; they only landed the next day
+        // once a run sent `end_date=2026-09-09`. Sending `to.AddDays(1)` is correct under either
+        // reading: if exclusive, this is what actually reaches `to`; if inclusive, the extra day
+        // can only return a bar for `to + 1`, which the caller's own cap filter
+        // (PriceBackfillService's `point.Date > cap`) is REQUIRED to drop, not merely
+        // defence-in-depth — never assume this call alone respects the inclusive contract.
         var requestUri =
             $"time_series?symbol={Uri.EscapeDataString(asset.ProviderSymbol)}&interval=1day" +
-            $"&start_date={from:yyyy-MM-dd}&end_date={to:yyyy-MM-dd}&apikey={options.Value.ApiKey}";
+            $"&start_date={from:yyyy-MM-dd}&end_date={to.AddDays(1):yyyy-MM-dd}&apikey={options.Value.ApiKey}";
 
         using var response = await httpClient.GetAsync(requestUri, cancellationToken);
         var json = await response.Content.ReadAsStringAsync(cancellationToken);

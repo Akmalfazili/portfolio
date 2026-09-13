@@ -51,6 +51,64 @@ namespace Portfolio.Application.Services;
 /// the manual <c>POST /api/prices/backfill</c> path (the public <c>RunAsync</c>) stays a full pass,
 /// unchanged, because a full pass is also what fills history for a newly recorded back-dated
 /// transaction on an asset whose latest close is already on file.</para>
+///
+/// <para><b>D53: a market reading "closed" is not the same as its close being SETTLED — a completed
+/// but unfinished bar can freeze in permanently, for any trigger, not just a scheduled one.</b> The
+/// only guard against writing today's in-progress bar as today's close used to be
+/// <c>from == today</c>, which defers a range only when it is ENTIRELY today; it does nothing once
+/// an asset has ANY prior history, which is the ordinary case. Three ways this bit in practice: (1)
+/// the manual endpoint (<c>POST /api/prices/backfill</c>) deliberately bypasses due-ness and the
+/// market calendar entirely, so a manual click mid-session requests up to `today` and gets today's
+/// partial bar back; (2) SGX's midday lunch break reads <see cref="IMarketCalendar.IsOpen"/> false
+/// while the session is still ongoing; (3) SGX's closing routine (pre-close auction ~17:00-17:06
+/// SGT, trade-at-close to ~17:16) runs AFTER the calendar already models the session as closed at
+/// 17:00, so even a request right at the nominal close can land mid-auction. All three let a
+/// provider's `end_date`/`period2` argument (or, for a provider that ignores it, its response
+/// regardless of what was asked) include an unfinished bar, and the per-asset uniqueness check
+/// (<c>existingDateSet</c> below) means that bar is on file forever once inserted — it is never
+/// reconciled against a later, correct close for the same date. Fixed with a per-market "cap": the
+/// latest date this run will ever request from a provider or accept from one, computed once as
+/// <c>calendar.LocalDateOn(market, calendar.LastSessionCloseAt(market, now - CloseSettleDelay))</c>
+/// (<see cref="PriceBackfillOptions.CloseSettleDelay"/>) — see <c>capByMarket</c> in
+/// <c>RunAsyncCore</c> below, applied both as the requested `to` and, defensively, as a filter on
+/// whatever points a provider actually returns. Subtracting <c>CloseSettleDelay</c> from `now`
+/// BEFORE walking <c>LastSessionCloseAt</c> back is what handles the lunch break for free: at 12:48
+/// SGT, the settled instant (12:18 SGT) is still well before today's 17:00 close, so
+/// <c>LastSessionCloseAt</c> walks back to the PREVIOUS day's close exactly as it would mid-morning
+/// — there is no separate "is this a lunch break" case to get wrong.
+/// <c>RunIfDueAsync</c>'s own due-ness check is changed to consult <c>LastSessionCloseAt</c> on the
+/// SAME settled instant, not raw `now` — this is not optional: if due-ness stayed on raw `now`
+/// while the cap moved to the settled instant, a scheduled run firing between a close and
+/// `now - CloseSettleDelay` would find itself "due" against today's (unsettled) close, defer every
+/// asset via the cap, and still write a <i>successful</i> <c>RefreshRun</c> row for that close —
+/// which is D51's exact trap one layer in: the next tick would read that row as
+/// <see cref="Dtos.PriceBackfillSkipReason.AlreadyCoveredSinceLastClose"/> and never fetch the close
+/// at all. See tracker.md's D53 entry for the live evidence (8 of Z74's 1552 stored closes were
+/// wrong, all written by manual runs during SGX hours) and for why D48's same-date tie-break in
+/// <c>PortfolioSummaryService</c> depends on this fix rather than needing one of its own.</para>
+///
+/// <para><b>D53 follow-up: the cap alone is wrong if Twelve Data's `end_date` is EXCLUSIVE, and
+/// live evidence says it probably is.</b> The first D53 pass sent `end_date = cap` (or `= fxCap`)
+/// straight through, on the unstated assumption that `end_date` behaves like this contract's own
+/// `to` (inclusive). A coordinator review of the live `RefreshRuns`/`PriceHistories` history found
+/// the opposite: a manual NYSE run mid-session on 2026-09-08 sent `end_date=2026-09-08` and
+/// inserted no 2026-09-08 rows at all — they only landed the next day once a run sent
+/// `end_date=2026-09-09` — and a scheduled FX run on 2026-09-12 sent `end_date=2026-09-12` and
+/// stored no 2026-09-12 USD/SGD row, despite Twelve Data publishing weekend FX bars on file either
+/// side of it. The ORIGINAL (pre-D53) code only ever worked for NYSE by coincidence: SGT `today` is
+/// already D+1 relative to an NYSE close on day D, so an exclusive `end_date = D+1` still returned
+/// D. Sending the settled `cap` itself as an exclusive `end_date` would have silently landed every
+/// US close and every FX rate one day late, forever — <c>RunIfDueAsync</c> would still record the
+/// run as covering that close (D47/D51), and the read path would fall back to the stale mid-session
+/// quote because it out-dates the (missing) close, reopening D48's exact symptom every night.
+/// <c>TwelveDataQuoteProvider</c>/<c>TwelveDataFxProvider</c> now send `end_date = to.AddDays(1)`
+/// — correct under EITHER reading of `end_date`, since <see cref="IQuoteProvider.GetHistoryAsync"/>
+/// and <see cref="IFxRateProvider.GetHistoryAsync"/>'s own `to` is contractually inclusive
+/// regardless of what any one implementation's upstream query string requires to achieve that. This
+/// makes the `point.Date > cap`/`point.Date > fxCap` filters below load-bearing, not merely defence
+/// in depth, for a Twelve Data asset specifically: if `end_date` turns out to be inclusive after
+/// all, the `+1` day asks for (and may receive) one real day beyond the cap, and these filters are
+/// the only thing stopping it from reaching <c>PriceHistory</c>/<c>FxRates</c>.</para>
 /// </summary>
 public sealed class PriceBackfillService(
     IPortfolioDbContext db,
@@ -67,6 +125,11 @@ public sealed class PriceBackfillService(
     public async Task<PriceBackfillRunResult> RunIfDueAsync(CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
+        // D53: due-ness must be judged on the same SETTLED instant RunAsyncCore's per-market cap
+        // uses (see the class remarks) — never raw `now` — or a market can go "due" against a
+        // close that hasn't settled yet, get deferred by the cap, and still write a successful
+        // RefreshRun row that then reads as covered on every later check. See CloseSettleDelay.
+        var settledInstant = now - options.Value.CloseSettleDelay;
 
         var dueMarkets = new List<Market>();
         // D51: markets in dueMarkets AND retryMarkets get a narrowed run (only what's still
@@ -97,7 +160,10 @@ public sealed class PriceBackfillService(
             // silently treated as coverage). Pulled back as a list, newest first, rather than just
             // MaxAsync(CompletedAt), because a retry decision also needs to know how many
             // BackfillScheduled attempts this market has already had since its own last close.
-            var lastClose = calendar.LastSessionCloseAt(market, now);
+            //
+            // D53: evaluated on `settledInstant`, not `now` — see this method's opening remarks and
+            // the class-level D53 remarks above RunAsyncCore.
+            var lastClose = calendar.LastSessionCloseAt(market, settledInstant);
             var runsSinceLastClose = await db.RefreshRuns
                 .Where(r => r.Trigger == RefreshTrigger.BackfillScheduled && r.Market == market
                     && r.CompletedAt != null && r.CompletedAt >= lastClose)
@@ -175,6 +241,40 @@ public sealed class PriceBackfillService(
         var now = timeProvider.GetUtcNow();
         var today = ReportingClock.Today(timeProvider);
         var marketSet = markets.ToHashSet();
+        var retryOnlyMarketSet = retryOnlyMarkets.ToHashSet();
+
+        // D53: the settled instant every per-market "cap" below is computed from — see the class
+        // remarks. Applies to EVERY run, not just RunIfDueAsync's scheduled/retry paths: the manual
+        // endpoint bypasses due-ness entirely but must never bypass "is this close even finished
+        // settling," which is exactly the mid-session / lunch-break / closing-auction defect.
+        var settledInstant = now - options.Value.CloseSettleDelay;
+
+        // D53: per-market cap — the latest date this run will ever request from a provider or
+        // accept from one, for a given market. Computed once for every market in `markets` (a
+        // superset of `retryOnlyMarkets`), since a FULL pass needs this exactly as much as a
+        // narrowed retry does; see the per-asset loop and the FX loop below, both of which replace
+        // the old blanket `to: today` with this. Subtracting CloseSettleDelay from `now` before
+        // walking LastSessionCloseAt back is what handles SGX's lunch break and closing-auction
+        // window for free — see the class remarks for why.
+        var capByMarket = markets.ToDictionary(
+            m => m, m => calendar.LocalDateOn(m, calendar.LastSessionCloseAt(m, settledInstant)));
+
+        // D53: FX has no market session to key a settle cap off — Twelve Data's /time_series is
+        // the exact same endpoint, with the exact same query construction (see
+        // TwelveDataFxProvider.GetHistoryAsync next to TwelveDataQuoteProvider.GetHistoryAsync),
+        // for a currency pair as for an equity, so whether it withholds a still-updating "today"
+        // forex bar the way it apparently does for equities (see this class's D53 remarks, and
+        // tracker.md — verified true for every US PriceHistory row checked, never verified for FX)
+        // cannot be established from the client code alone: forex trades continuously five days a
+        // week with no discrete session close for a "the day is over" check to key off, unlike
+        // NYSE/SGX. Capping to one UTC calendar day behind `now` is the conservative choice either
+        // way — it can never write today's still-updating rate as a "close" (see CLAUDE.md's
+        // live-spot-into-FxRates rule), at the cost of an FX row landing up to a day later than it
+        // might safely have been able to. Deliberately UTC, not the SGT `today` above: Twelve
+        // Data's own daily ledger already keys off UTC midnight for the same reason (see
+        // ReportingClock's remarks on why that one field stays off this codebase's usual SGT
+        // "today"), and there is no SGT-based session boundary here to justify departing from it.
+        var fxCap = DateOnly.FromDateTime(now.UtcDateTime).AddDays(-1);
 
         // D37: the budget is derived from what Twelve Data's persisted daily ledger says is
         // actually left today, not a hardcoded constant — a fixed budget smaller than one full
@@ -245,19 +345,22 @@ public sealed class PriceBackfillService(
         // pass must still fetch every in-scope asset regardless of what it already has on file,
         // because it is also what fills history for a newly recorded back-dated transaction on an
         // asset whose latest close happens to already be on file.
-        if (retryOnlyMarkets.Count > 0)
+        if (retryOnlyMarketSet.Count > 0)
         {
-            var lastCloseLocalDateByMarket = retryOnlyMarkets.ToDictionary(
-                m => m, m => calendar.LocalDateOn(m, calendar.LastSessionCloseAt(m, now)));
-
+            // D53: reuses `capByMarket` (computed on the settled instant, once, for every market in
+            // scope) rather than a second, separately-computed "last close local date" keyed on raw
+            // `now` — the two must never drift apart, on pain of D51's trap one layer in (see the
+            // class remarks).
             assets = assets
                 .Where(a =>
                 {
-                    if (!lastCloseLocalDateByMarket.TryGetValue(marketByAssetSymbol[a.Symbol], out var requiredDate))
+                    var assetMarket = marketByAssetSymbol[a.Symbol];
+                    if (!retryOnlyMarketSet.Contains(assetMarket))
                     {
                         return true; // this asset's market isn't being retried this run — full pass
                     }
 
+                    var requiredDate = capByMarket[assetMarket];
                     var alreadyHasLatestClose =
                         lastBackfilledByAsset.TryGetValue(a.Id, out var lastDate) && lastDate >= requiredDate;
                     return !alreadyHasLatestClose;
@@ -298,20 +401,19 @@ public sealed class PriceBackfillService(
         // this run only when EVERY market that needs it is being retried (a currency needed by a
         // full-pass market must still be fetched in full, unchanged) AND the newest stored FxRate
         // for it already covers the latest of those markets' own last close.
-        if (retryOnlyMarkets.Count > 0 && currenciesNeedingFx.Count > 0)
+        if (retryOnlyMarketSet.Count > 0 && currenciesNeedingFx.Count > 0)
         {
-            var lastCloseLocalDateByMarket = retryOnlyMarkets.ToDictionary(
-                m => m, m => calendar.LocalDateOn(m, calendar.LastSessionCloseAt(m, now)));
-
+            // D53: reuses `capByMarket` (settled-instant based) rather than a second computation on
+            // raw `now` — see the same reasoning on the asset-loop narrowing above.
             foreach (var currency in currenciesNeedingFx.ToList())
             {
                 var requiringMarkets = marketsByCurrency[currency];
-                if (!requiringMarkets.All(retryOnlyMarkets.Contains))
+                if (!requiringMarkets.All(retryOnlyMarketSet.Contains))
                 {
                     continue; // at least one requiring market is a full pass — do not narrow
                 }
 
-                var requiredDate = requiringMarkets.Max(m => lastCloseLocalDateByMarket[m]);
+                var requiredDate = requiringMarkets.Max(m => capByMarket[m]);
                 var newestStoredFxDate = await db.FxRates
                     .Where(f => f.Base == ReportingCurrency && f.Quote == currency)
                     .Select(f => (DateOnly?)f.Date)
@@ -345,10 +447,10 @@ public sealed class PriceBackfillService(
                 .DefaultIfEmpty(today)
                 .Min();
 
-            if (from == today)
+            if (from > fxCap)
             {
-                // Same reasoning as the per-asset guard below: a same-day range cannot succeed, so
-                // do not spend a call finding that out.
+                // D53: same "deferred, not yet settled" bucket as the per-asset guard below — `from`
+                // is beyond the FX day-cap (see `fxCap` above), so there is nothing to fetch yet.
                 assetsSkippedTodayNotClosed.Add($"FX:{ReportingCurrency}/{currency}");
                 continue;
             }
@@ -362,7 +464,7 @@ public sealed class PriceBackfillService(
             FxHistoryFetchResult fxResult;
             try
             {
-                fxResult = await fxRateProvider.GetHistoryAsync(ReportingCurrency, currency, from, today, cancellationToken);
+                fxResult = await fxRateProvider.GetHistoryAsync(ReportingCurrency, currency, from, fxCap, cancellationToken);
                 callsUsed++;
             }
             catch (Exception ex)
@@ -395,13 +497,24 @@ public sealed class PriceBackfillService(
             }
 
             var existingFxDates = await db.FxRates
-                .Where(f => f.Base == ReportingCurrency && f.Quote == currency && f.Date >= from && f.Date <= today)
+                .Where(f => f.Base == ReportingCurrency && f.Quote == currency && f.Date >= from && f.Date <= fxCap)
                 .Select(f => f.Date)
                 .ToListAsync(cancellationToken);
             var existingFxDateSet = existingFxDates.ToHashSet();
 
             foreach (var point in fxResult.Points)
             {
+                // D53: never write a rate beyond the day-cap. This is NOT merely defence in depth —
+                // TwelveDataFxProvider deliberately sends `end_date = fxCap.AddDays(1)` because
+                // Twelve Data's own end-date semantics are unconfirmed and live evidence points at
+                // exclusive, so under an inclusive reading this filter is the ONLY thing standing
+                // between a legitimately-returned `fxCap + 1` rate and CLAUDE.md's "a live spot rate
+                // is never written into FxRates" rule. See this class's D53 remarks.
+                if (point.Date > fxCap)
+                {
+                    continue;
+                }
+
                 if (!existingFxDateSet.Add(point.Date))
                 {
                     continue;
@@ -426,19 +539,28 @@ public sealed class PriceBackfillService(
                 continue;
             }
 
-            if (from == today)
+            var market = marketByAssetSymbol[asset.Symbol];
+            var cap = capByMarket[market];
+
+            if (from > cap)
             {
-                // The requested range collapses to today alone, and an equity provider cannot
-                // return a daily close for a session that has not finished — Twelve Data returns
-                // HTTP 400 for exactly this, every time, regardless of budget. Short-circuit before
+                // D53: `from` is beyond this asset's own market's settled cap — either because it
+                // was bought today (the original guard this replaces) or because that market's most
+                // recent session hasn't finished SETTLING yet (mid-session, SGX's lunch break, or
+                // SGX's closing-auction window — see `capByMarket` and the class remarks above). An
+                // equity provider cannot return a genuine daily close for a range like this — Twelve
+                // Data returns HTTP 400 for a same-day range, every time — so short-circuit before
                 // spending a call: raising MaxProviderCallsPerRun would not fix a guaranteed
-                // failure, so this must never be reported as a budget skip (or a failure — it isn't
-                // one, it is simply premature). A later run, once "today" has become a past date,
-                // will pick this asset up with a normal multi-day range.
+                // failure, and this must never be reported as a budget skip or a failure — it isn't
+                // one, it is simply premature. A later run, once `cap` has advanced past `from`,
+                // picks this asset up with a normal multi-day range.
                 logger.LogInformation(
-                    "Historical price backfill deferred for asset {AssetId} ({Symbol}): earliest trade date is today, no close published yet",
+                    "Historical price backfill deferred for asset {AssetId} ({Symbol}): earliest needed date {From} is beyond {Market}'s settled cap {Cap}",
                     asset.Id,
-                    asset.Symbol);
+                    asset.Symbol,
+                    from,
+                    market,
+                    cap);
                 assetsSkippedTodayNotClosed.Add(asset.Symbol);
                 continue;
             }
@@ -453,7 +575,7 @@ public sealed class PriceBackfillService(
             try
             {
                 var provider = router.GetProvider(asset);
-                historyResult = await provider.GetHistoryAsync(asset, from, today, cancellationToken);
+                historyResult = await provider.GetHistoryAsync(asset, from, cap, cancellationToken);
                 callsUsed++;
             }
             catch (Exception ex)
@@ -494,13 +616,28 @@ public sealed class PriceBackfillService(
             }
 
             var existingDates = await db.PriceHistories
-                .Where(p => p.AssetId == asset.Id && p.Date >= historyResult.EffectiveFrom && p.Date <= today)
+                .Where(p => p.AssetId == asset.Id && p.Date >= historyResult.EffectiveFrom && p.Date <= cap)
                 .Select(p => p.Date)
                 .ToListAsync(cancellationToken);
             var existingDateSet = existingDates.ToHashSet();
 
             foreach (var point in historyResult.Points)
             {
+                // D53: never insert a point beyond this market's own settled cap. This is NOT
+                // merely defence in depth for a Twelve Data asset — TwelveDataQuoteProvider
+                // deliberately sends `end_date = cap.AddDays(1)` because Twelve Data's own end-date
+                // semantics are unconfirmed and live evidence points at exclusive (see the class
+                // remarks); under an inclusive reading, this filter is the ONLY thing stopping a
+                // legitimately-returned `cap + 1` bar (i.e. tomorrow's, or today's still-unsettled
+                // one) from reaching PriceHistory. It genuinely is defence in depth for Yahoo, whose
+                // chart endpoint has no documented guarantee that `period2` is honoured exactly —
+                // either way, a close for a session that has not finished settling must never reach
+                // PriceHistory, regardless of why the provider handed it back.
+                if (point.Date > cap)
+                {
+                    continue;
+                }
+
                 if (!existingDateSet.Add(point.Date))
                 {
                     continue;
@@ -575,8 +712,8 @@ public sealed class PriceBackfillService(
     /// <summary>Best-effort backfill has no single pass/fail flag — a skipped or truncated asset
     /// is not an error, just something worth a human noticing in the audit trail. Kept separated
     /// by reason, not merged into one bag of strings, for the same reason the summary DTO keeps
-    /// them separate: "budget", "failed", and "today, not closed yet" call for different human
-    /// responses.</summary>
+    /// them separate: "budget", "failed", and "not yet settled" (D53 — today, or a market whose
+    /// last session hasn't finished settling) call for different human responses.</summary>
     private static string? BuildRunSummary(
         IReadOnlyList<string> skippedForBudget,
         IReadOnlyList<AssetBackfillFailure> failed,
@@ -596,7 +733,7 @@ public sealed class PriceBackfillService(
 
         if (skippedTodayNotClosed.Count > 0)
         {
-            parts.Add($"{skippedTodayNotClosed.Count} deferred (today not closed yet): {string.Join(", ", skippedTodayNotClosed)}");
+            parts.Add($"{skippedTodayNotClosed.Count} deferred (not yet settled): {string.Join(", ", skippedTodayNotClosed)}");
         }
 
         if (truncated.Count > 0)

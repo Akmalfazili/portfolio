@@ -135,6 +135,24 @@ public sealed class TwelveDataFxProviderTests
     }
 
     [Fact]
+    public async Task GetHistoryAsync_SendsEndDateOneDayPastTo_NotToItself()
+    {
+        // D53 follow-up: `to` is contractually INCLUSIVE (IFxRateProvider.GetHistoryAsync), but
+        // live evidence (a scheduled run that sent `end_date=2026-09-12` and stored no 2026-09-12
+        // USD/SGD row, despite Twelve Data holding weekend FX bars either side of it) points at
+        // Twelve Data's own `end_date` being EXCLUSIVE. Sending `to.AddDays(1)` is correct under
+        // either reading — see the provider's own remarks.
+        var handler = new StubHttpMessageHandler(HttpStatusCode.OK, """{"values":[],"status":"ok"}""");
+        var sut = CreateSut(handler);
+
+        await sut.GetHistoryAsync("USD", "SGD", new DateOnly(2026, 9, 1), new DateOnly(2026, 9, 12), CancellationToken.None);
+
+        var query = Uri.UnescapeDataString(handler.LastRequest!.RequestUri!.Query);
+        query.Should().Contain("start_date=2026-09-01");
+        query.Should().Contain("end_date=2026-09-13"); // to (09-12) + 1 day, never `to` itself
+    }
+
+    [Fact]
     public async Task GetSpotRateAsync_ThrottleDenies_ReturnsNull_WithoutCallingTheProvider()
     {
         var throttle = Substitute.For<ITwelveDataCreditThrottle>();
