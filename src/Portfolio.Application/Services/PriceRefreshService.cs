@@ -122,6 +122,7 @@ public sealed class PriceRefreshService(
 
         var outcomes = new List<SourceRefreshOutcome>();
         var totalSymbolsRefreshed = 0;
+        var closedMarketScheduleChanged = false;
 
         foreach (var group in groups)
         {
@@ -132,11 +133,34 @@ public sealed class PriceRefreshService(
             // manual trigger. Crypto has no market entry here, so it is never gated.
             if (market is { } gatedMarket && !calendar.IsOpen(gatedMarket, now))
             {
-                await statusStore.RecordOutcomeAsync(
-                    new SourceRefreshOutcome(source, Attempted: false, Success: true, SymbolsRefreshed: 0, Error: null),
-                    now,
-                    now + options.Value.StockClosedInterval,
-                    cancellationToken);
+                // D54: a manual (force) press attempts nothing here, so it must not touch the
+                // schedule either — only a *scheduled* tick may move a closed market's NextDueAt,
+                // and only once the previously stored NextDueAt has actually passed. Re-stamping it
+                // on every 30-second poll tick (the pre-fix bug) meant it was never more than ~30s
+                // from "due" but the stored value itself never arrived, because it kept getting
+                // pushed another StockClosedInterval into the future before it could elapse.
+                if (!force)
+                {
+                    var closedNextDueAt = await statusStore.GetNextDueAtAsync(source, cancellationToken);
+                    if (closedNextDueAt is null || now >= closedNextDueAt)
+                    {
+                        // Cap at the market's actual next open rather than an unconditional
+                        // StockClosedInterval, so the first scheduled tick after an open lands
+                        // right at (or the poll tick after) the open instead of up to an hour late.
+                        var nextOpen = calendar.NextOpenAt(gatedMarket, now);
+                        var cappedNextDueAt = now + options.Value.StockClosedInterval < nextOpen
+                            ? now + options.Value.StockClosedInterval
+                            : nextOpen;
+
+                        await statusStore.RecordOutcomeAsync(
+                            new SourceRefreshOutcome(source, Attempted: false, Success: true, SymbolsRefreshed: 0, Error: null),
+                            now,
+                            cappedNextDueAt,
+                            cancellationToken);
+                        closedMarketScheduleChanged = true;
+                    }
+                }
+
                 continue;
             }
 
@@ -169,6 +193,22 @@ public sealed class PriceRefreshService(
             {
                 db.AddRefreshRun(BuildRun(force, outcomes, now, totalSymbolsRefreshed));
                 await db.SaveChangesAsync(cancellationToken);
+            }
+            else if (closedMarketScheduleChanged)
+            {
+                // D54: nothing was attempted — no RefreshRun row, per the existing "don't flood the
+                // audit trail with no-ops" rule above — but a closed market's NextDueAt DID just
+                // move, and the only way that reaches the UI is a broadcast: crypto's own push
+                // carries whatever NextDueAt happens to be at that moment, which could be up to
+                // CryptoInterval (2 min) away, or never at all in a crypto-free portfolio. Same
+                // enrich-then-broadcast path as the normal completed cycle below (D52), so this can
+                // never be the one transport that sends a bare/stale status.
+                var closedStatus = await statusStore.GetSnapshotAsync(
+                    calendar.IsOpen(Market.Nyse, now),
+                    calendar.IsOpen(Market.Sgx, now),
+                    cancellationToken);
+                var extendedClosedStatus = await statusEnricher.EnrichAsync(closedStatus, cancellationToken);
+                await broadcaster.BroadcastRefreshStatusAsync(extendedClosedStatus, cancellationToken);
             }
 
             return new PriceRefreshCycleResult(PriceRefreshOutcome.NothingDue, null, [], 0);

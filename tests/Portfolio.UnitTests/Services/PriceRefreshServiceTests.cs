@@ -9,6 +9,7 @@ using NSubstitute;
 using Portfolio.Application.Abstractions;
 using Portfolio.Application.Dtos;
 using Portfolio.Application.Services;
+using Portfolio.Application.Services.Calendar;
 using Portfolio.Domain.Entities;
 using Portfolio.Domain.Enums;
 using Portfolio.Infrastructure.Persistence;
@@ -539,6 +540,242 @@ public sealed class PriceRefreshServiceTests : IDisposable
         var yahooStatus = status.Sources.Single(s => s.Source == QuoteProviderKind.Yahoo);
         yahooStatus.LastRunSuccess.Should().BeTrue();
         yahooStatus.LastSuccessAt.Should().Be(_timeProvider.Now);
+    }
+
+    // ---- D54: the closed-market NextDueAt scheduling bug ----
+
+    [Fact]
+    public async Task RefreshDueAsync_ClosedMarket_RepeatedScheduledTicks_DoNotMoveNextDueAt_UntilItHasPassed()
+    {
+        // The pre-fix bug: every 30-second poll tick re-stamped NextDueAt to now + 60 minutes,
+        // so the stored value was never more than ~30s from "due" but never actually arrived.
+        _calendar.IsOpen(Market.Nyse, Arg.Any<DateTimeOffset>()).Returns(false);
+        // Far beyond StockClosedInterval, so the open-cap never engages in this test — it is
+        // purely about the "already due" gate.
+        _calendar.NextOpenAt(Market.Nyse, Arg.Any<DateTimeOffset>()).Returns(_timeProvider.Now.AddDays(5));
+
+        var twelveData = FakeProvider(QuoteProviderKind.TwelveData);
+        var router = RouterFor((_aapl, twelveData));
+        _db.Assets.RemoveRange(_z74, _eth);
+        await _db.SaveChangesAsync();
+
+        var sut = CreateSut(router);
+
+        (await sut.RefreshDueAsync(CancellationToken.None)).Outcome.Should().Be(PriceRefreshOutcome.NothingDue);
+        var firstNextDueAt = await _statusStore.GetNextDueAtAsync(QuoteProviderKind.TwelveData, CancellationToken.None);
+        firstNextDueAt.Should().Be(_timeProvider.Now + _options.StockClosedInterval);
+
+        // A second tick 30 seconds later must NOT move it again.
+        _timeProvider.Now += TimeSpan.FromSeconds(30);
+        (await sut.RefreshDueAsync(CancellationToken.None)).Outcome.Should().Be(PriceRefreshOutcome.NothingDue);
+        (await _statusStore.GetNextDueAtAsync(QuoteProviderKind.TwelveData, CancellationToken.None))
+            .Should().Be(firstNextDueAt, "a tick before the stored NextDueAt has passed must leave it untouched");
+
+        // A third tick, still short of the stored NextDueAt (StockClosedInterval - 30s from the
+        // first tick), must also leave it untouched.
+        _timeProvider.Now += _options.StockClosedInterval - TimeSpan.FromSeconds(60);
+        (await sut.RefreshDueAsync(CancellationToken.None)).Outcome.Should().Be(PriceRefreshOutcome.NothingDue);
+        (await _statusStore.GetNextDueAtAsync(QuoteProviderKind.TwelveData, CancellationToken.None))
+            .Should().Be(firstNextDueAt);
+
+        // Once the stored NextDueAt has actually passed, the next tick DOES move it again.
+        _timeProvider.Now += TimeSpan.FromSeconds(60);
+        (await sut.RefreshDueAsync(CancellationToken.None)).Outcome.Should().Be(PriceRefreshOutcome.NothingDue);
+        (await _statusStore.GetNextDueAtAsync(QuoteProviderKind.TwelveData, CancellationToken.None))
+            .Should().Be(_timeProvider.Now + _options.StockClosedInterval);
+
+        await twelveData.DidNotReceive().GetQuotesAsync(Arg.Any<IReadOnlyCollection<Asset>>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RefreshDueAsync_ClosedMarket_OpensSoon_CapsNextDueAtTheOpen_NotNowPlusSixty()
+    {
+        var nextOpen = _timeProvider.Now + TimeSpan.FromMinutes(20);
+        _calendar.IsOpen(Market.Nyse, Arg.Any<DateTimeOffset>()).Returns(false);
+        _calendar.NextOpenAt(Market.Nyse, Arg.Any<DateTimeOffset>()).Returns(nextOpen);
+
+        var twelveData = FakeProvider(QuoteProviderKind.TwelveData);
+        var router = RouterFor((_aapl, twelveData));
+        _db.Assets.RemoveRange(_z74, _eth);
+        await _db.SaveChangesAsync();
+
+        var sut = CreateSut(router);
+        await sut.RefreshDueAsync(CancellationToken.None);
+
+        var storedNextDueAt = await _statusStore.GetNextDueAtAsync(QuoteProviderKind.TwelveData, CancellationToken.None);
+        storedNextDueAt.Should().Be(nextOpen, "the open is only 20 minutes away — nearer than the 60-minute floor");
+    }
+
+    [Fact]
+    public async Task RefreshDueAsync_ClosedMarket_ForcePress_AttemptsNothing_AndNeverMovesTheSchedule()
+    {
+        // A manual click while the market is closed must not touch the stored schedule at all —
+        // not even to cap it — because it attempts nothing for this source.
+        _calendar.IsOpen(Market.Nyse, Arg.Any<DateTimeOffset>()).Returns(false);
+        _calendar.NextOpenAt(Market.Nyse, Arg.Any<DateTimeOffset>()).Returns(_timeProvider.Now.AddMinutes(20));
+
+        var twelveData = FakeProvider(QuoteProviderKind.TwelveData);
+        var router = RouterFor((_aapl, twelveData));
+        _db.Assets.RemoveRange(_z74, _eth);
+        await _db.SaveChangesAsync();
+
+        var sut = CreateSut(router);
+        await sut.RefreshNowAsync(CancellationToken.None);
+
+        (await _statusStore.GetNextDueAtAsync(QuoteProviderKind.TwelveData, CancellationToken.None)).Should().BeNull();
+        await twelveData.DidNotReceive().GetQuotesAsync(Arg.Any<IReadOnlyCollection<Asset>>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RefreshDueAsync_ClosedMarket_ScheduleChange_BroadcastsAnEnrichedStatus_ButRecordsNoRefreshRun()
+    {
+        _calendar.IsOpen(Market.Nyse, Arg.Any<DateTimeOffset>()).Returns(false);
+        _calendar.NextOpenAt(Market.Nyse, Arg.Any<DateTimeOffset>()).Returns(_timeProvider.Now.AddDays(5));
+
+        var twelveData = FakeProvider(QuoteProviderKind.TwelveData);
+        var router = RouterFor((_aapl, twelveData));
+        _db.Assets.RemoveRange(_z74, _eth);
+        await _db.SaveChangesAsync();
+
+        var sut = CreateSut(router);
+
+        var result = await sut.RefreshDueAsync(CancellationToken.None);
+
+        result.Outcome.Should().Be(PriceRefreshOutcome.NothingDue);
+        await _broadcaster.Received(1).BroadcastRefreshStatusAsync(Arg.Any<PriceRefreshStatus>(), Arg.Any<CancellationToken>());
+        (await _db.RefreshRuns.CountAsync()).Should().Be(0, "a no-op schedule change must never flood the audit trail");
+
+        // A second, immediate tick changes nothing (not yet due again) and must broadcast nothing.
+        var second = await sut.RefreshDueAsync(CancellationToken.None);
+        second.Outcome.Should().Be(PriceRefreshOutcome.NothingDue);
+        await _broadcaster.Received(1).BroadcastRefreshStatusAsync(Arg.Any<PriceRefreshStatus>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// The regression this defect is about: a scheduled tick landing right after NYSE's open must
+    /// refresh promptly, not up to an hour late. Uses the REAL <see cref="MarketCalendar"/> (not a
+    /// substitute) so the market truly transitions from closed to open mid-test, ticking every
+    /// <see cref="PriceRefreshOptions.PollInterval"/> exactly as the background service would.
+    /// </summary>
+    [Fact]
+    public async Task RefreshDueAsync_ScheduledTick_RefreshesPromptlyAfterNyseOpens()
+    {
+        // Tue 2026-08-04, 13:25 UTC = 09:25 EDT — 5 minutes before NYSE's 09:30 ET open.
+        _timeProvider.Now = new DateTimeOffset(2026, 8, 4, 13, 25, 0, TimeSpan.Zero);
+
+        var calendar = new MarketCalendar();
+        var twelveData = FakeProvider(QuoteProviderKind.TwelveData);
+        twelveData.GetQuotesAsync(Arg.Any<IReadOnlyCollection<Asset>>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult<IReadOnlyList<QuoteFetchResult>>(
+                callInfo.Arg<IReadOnlyCollection<Asset>>()!
+                    .Select(a => new QuoteFetchResult(a.Id, true, 100m, "USD", _timeProvider.Now, null))
+                    .ToList()));
+        var router = RouterFor((_aapl, twelveData));
+
+        _db.Assets.RemoveRange(_z74, _eth);
+        await _db.SaveChangesAsync();
+
+        var sut = new PriceRefreshService(
+            _db,
+            router,
+            calendar,
+            _broadcaster,
+            _statusStore,
+            new PriceRefreshStatusEnricher(_db, AlwaysFullBudgetThrottle(), Options.Create(_options)),
+            AlwaysFullBudgetThrottle(),
+            Substitute.For<IServiceScopeFactory>(),
+            new ManualRefreshInFlightGate(),
+            _timeProvider,
+            Options.Create(_options),
+            NullLogger<PriceRefreshService>.Instance);
+
+        // Simulate the background service's 30-second poll loop across the open (13:25 -> 13:32).
+        for (var i = 0; i < 14; i++)
+        {
+            await sut.RefreshDueAsync(CancellationToken.None);
+            _timeProvider.Now += TimeSpan.FromSeconds(30);
+        }
+
+        await twelveData.Received(1).GetQuotesAsync(Arg.Any<IReadOnlyCollection<Asset>>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>Same regression, for SGX's own open (09:00 SGT).</summary>
+    [Fact]
+    public async Task RefreshDueAsync_ScheduledTick_RefreshesPromptlyAfterSgxOpens()
+    {
+        // Wed 2026-07-29, 00:55 UTC = 08:55 SGT — 5 minutes before SGX's 09:00 SGT open.
+        _timeProvider.Now = new DateTimeOffset(2026, 7, 29, 0, 55, 0, TimeSpan.Zero);
+
+        var calendar = new MarketCalendar();
+        var yahoo = FakeProvider(QuoteProviderKind.Yahoo);
+        yahoo.GetQuotesAsync(Arg.Any<IReadOnlyCollection<Asset>>(), Arg.Any<CancellationToken>())
+            .Returns([new QuoteFetchResult(_z74.Id, true, 4.39m, "SGD", _timeProvider.Now, null)]);
+        var router = RouterFor((_z74, yahoo));
+
+        _db.Assets.RemoveRange(_aapl, _eth);
+        await _db.SaveChangesAsync();
+
+        var sut = new PriceRefreshService(
+            _db,
+            router,
+            calendar,
+            _broadcaster,
+            _statusStore,
+            new PriceRefreshStatusEnricher(_db, AlwaysFullBudgetThrottle(), Options.Create(_options)),
+            AlwaysFullBudgetThrottle(),
+            Substitute.For<IServiceScopeFactory>(),
+            new ManualRefreshInFlightGate(),
+            _timeProvider,
+            Options.Create(_options),
+            NullLogger<PriceRefreshService>.Instance);
+
+        for (var i = 0; i < 14; i++)
+        {
+            await sut.RefreshDueAsync(CancellationToken.None);
+            _timeProvider.Now += TimeSpan.FromSeconds(30);
+        }
+
+        await yahoo.Received(1).GetQuotesAsync(Arg.Any<IReadOnlyCollection<Asset>>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>Same regression again, for SGX's post-lunch reopen (13:00 SGT) — the one same-day
+    /// case, distinct from an overnight/weekend open.</summary>
+    [Fact]
+    public async Task RefreshDueAsync_ScheduledTick_RefreshesPromptlyAfterSgxsLunchBreakReopens()
+    {
+        // Wed 2026-07-29, 04:55 UTC = 12:55 SGT — 5 minutes before the 13:00 SGT afternoon reopen.
+        _timeProvider.Now = new DateTimeOffset(2026, 7, 29, 4, 55, 0, TimeSpan.Zero);
+
+        var calendar = new MarketCalendar();
+        var yahoo = FakeProvider(QuoteProviderKind.Yahoo);
+        yahoo.GetQuotesAsync(Arg.Any<IReadOnlyCollection<Asset>>(), Arg.Any<CancellationToken>())
+            .Returns([new QuoteFetchResult(_z74.Id, true, 4.39m, "SGD", _timeProvider.Now, null)]);
+        var router = RouterFor((_z74, yahoo));
+
+        _db.Assets.RemoveRange(_aapl, _eth);
+        await _db.SaveChangesAsync();
+
+        var sut = new PriceRefreshService(
+            _db,
+            router,
+            calendar,
+            _broadcaster,
+            _statusStore,
+            new PriceRefreshStatusEnricher(_db, AlwaysFullBudgetThrottle(), Options.Create(_options)),
+            AlwaysFullBudgetThrottle(),
+            Substitute.For<IServiceScopeFactory>(),
+            new ManualRefreshInFlightGate(),
+            _timeProvider,
+            Options.Create(_options),
+            NullLogger<PriceRefreshService>.Instance);
+
+        for (var i = 0; i < 14; i++)
+        {
+            await sut.RefreshDueAsync(CancellationToken.None);
+            _timeProvider.Now += TimeSpan.FromSeconds(30);
+        }
+
+        await yahoo.Received(1).GetQuotesAsync(Arg.Any<IReadOnlyCollection<Asset>>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]

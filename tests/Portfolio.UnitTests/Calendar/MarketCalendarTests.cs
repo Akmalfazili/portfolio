@@ -240,4 +240,96 @@ public sealed class MarketCalendarTests
         var expectedClose = new DateTimeOffset(2026, 3, 6, 21, 0, 0, TimeSpan.Zero); // Fri 16:00 EST = 21:00 UTC
         _sut.LastSessionCloseAt(Market.Nyse, instant).Should().Be(expectedClose);
     }
+
+    // ---- NextOpenAt (D54) ----
+    //
+    // Reuses IsOpen's own session/holiday data rather than a second copy of trading hours — every
+    // case below is cross-checked against an IsOpen fact already pinned above.
+
+    [Fact]
+    public void NextOpenAt_AlreadyOpen_ReturnsTheSameInstant()
+    {
+        // Documented contract: "the next instant the market is open" is trivially now when it
+        // already is. Wed 2026-07-29 15:00 UTC = 11:00 EDT, mid-session (see the SGX lunch-break
+        // theory data above, which uses the same day for its own open session facts).
+        var instant = new DateTimeOffset(2026, 7, 29, 15, 0, 0, TimeSpan.Zero);
+        _sut.IsOpen(Market.Nyse, instant).Should().BeTrue("precondition — this instant must already be open");
+        _sut.NextOpenAt(Market.Nyse, instant).Should().Be(instant);
+    }
+
+    [Fact]
+    public void NextOpenAt_Nyse_Weekend_WalksToMondaysOpen()
+    {
+        // Sat 2026-08-01 15:00 UTC (same instant as Nyse_ClosedOnSaturday) -> Mon 2026-08-03,
+        // an ordinary trading day, 09:30 EDT (UTC-4) = 13:30 UTC.
+        var instant = new DateTimeOffset(2026, 8, 1, 15, 0, 0, TimeSpan.Zero);
+        var expectedOpen = new DateTimeOffset(2026, 8, 3, 13, 30, 0, TimeSpan.Zero);
+        _sut.NextOpenAt(Market.Nyse, instant).Should().Be(expectedOpen);
+    }
+
+    [Fact]
+    public void NextOpenAt_Sgx_Weekend_WalksToMondaysOpen()
+    {
+        // Sat 2026-08-01 02:00 UTC (same instant as Sgx_ClosedOnSaturday) -> Mon 2026-08-03,
+        // 09:00 SGT (UTC+8, no DST) = 01:00 UTC.
+        var instant = new DateTimeOffset(2026, 8, 1, 2, 0, 0, TimeSpan.Zero);
+        var expectedOpen = new DateTimeOffset(2026, 8, 3, 1, 0, 0, TimeSpan.Zero);
+        _sut.NextOpenAt(Market.Sgx, instant).Should().Be(expectedOpen);
+    }
+
+    [Fact]
+    public void NextOpenAt_Nyse_Thanksgiving2026_WalksToTheNextTradingDaysOpen()
+    {
+        // Thu 2026-11-26 15:00 UTC (same instant as Nyse_ClosedOnThanksgiving2026) -> Fri
+        // 2026-11-27, an ordinary trading day per this calendar (the day-after-Thanksgiving
+        // early close is deliberately not modeled — see NyseHolidayCalendar's own remarks), 09:30
+        // EST (post fall-back, UTC-5) = 14:30 UTC.
+        var instant = new DateTimeOffset(2026, 11, 26, 15, 0, 0, TimeSpan.Zero);
+        var expectedOpen = new DateTimeOffset(2026, 11, 27, 14, 30, 0, TimeSpan.Zero);
+        _sut.NextOpenAt(Market.Nyse, instant).Should().Be(expectedOpen);
+    }
+
+    [Fact]
+    public void NextOpenAt_Sgx_ObservedNationalDay2026_WalksToTheNextTradingDaysOpen()
+    {
+        // National Day 2026 (9 Aug, a Sunday) is observed Mon 2026-08-10 (same holiday
+        // LastSessionCloseAt_Sgx_WalksBackOverAnObservedHolidayAndTheWeekendBeforeIt walks back
+        // over) -> Tue 2026-08-11, 09:00 SGT = 01:00 UTC.
+        var instant = new DateTimeOffset(2026, 8, 10, 2, 0, 0, TimeSpan.Zero); // 10:00 SGT, observed holiday
+        var expectedOpen = new DateTimeOffset(2026, 8, 11, 1, 0, 0, TimeSpan.Zero);
+        _sut.NextOpenAt(Market.Sgx, instant).Should().Be(expectedOpen);
+    }
+
+    [Fact]
+    public void NextOpenAt_Nyse_SpringForward_WalksAcrossTheWeekendIntoEdt()
+    {
+        // Fri 2026-03-06 22:00 UTC — after that day's close (21:00 UTC, still EST) — must skip the
+        // weekend AND the spring-forward transition (2026-03-08) to land on Mon 2026-03-09's open,
+        // now in EDT (UTC-4): 09:30 EDT = 13:30 UTC. A hard-coded offset would get this open time
+        // wrong by an hour, the same trap LastSessionCloseAt's own spring-forward test exists for.
+        var instant = new DateTimeOffset(2026, 3, 6, 22, 0, 0, TimeSpan.Zero);
+        var expectedOpen = new DateTimeOffset(2026, 3, 9, 13, 30, 0, TimeSpan.Zero);
+        _sut.NextOpenAt(Market.Nyse, instant).Should().Be(expectedOpen);
+    }
+
+    [Fact]
+    public void NextOpenAt_Nyse_FallBack_WalksAcrossTheWeekendIntoEst()
+    {
+        // Fri 2026-10-30 21:00 UTC = 17:00 EDT, after that day's close — must skip the weekend AND
+        // the fall-back transition (2026-11-01) to land on Mon 2026-11-02's open, now in EST
+        // (UTC-5): 09:30 EST = 14:30 UTC.
+        var instant = new DateTimeOffset(2026, 10, 30, 21, 0, 0, TimeSpan.Zero);
+        var expectedOpen = new DateTimeOffset(2026, 11, 2, 14, 30, 0, TimeSpan.Zero);
+        _sut.NextOpenAt(Market.Nyse, instant).Should().Be(expectedOpen);
+    }
+
+    [Fact]
+    public void NextOpenAt_Sgx_DuringLunchBreak_ReopensTheSameAfternoon()
+    {
+        // Wed 2026-07-29, 12:30 SGT (04:30 UTC) — inside the lunch break — must reopen the SAME
+        // day at 13:00 SGT (05:00 UTC), not walk to the next calendar day.
+        var instant = new DateTimeOffset(2026, 7, 29, 4, 30, 0, TimeSpan.Zero);
+        var expectedOpen = new DateTimeOffset(2026, 7, 29, 5, 0, 0, TimeSpan.Zero);
+        _sut.NextOpenAt(Market.Sgx, instant).Should().Be(expectedOpen);
+    }
 }

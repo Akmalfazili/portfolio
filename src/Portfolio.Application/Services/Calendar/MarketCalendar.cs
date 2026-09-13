@@ -69,6 +69,55 @@ public sealed class MarketCalendar : IMarketCalendar
         return new DateTimeOffset(closeUtc, TimeSpan.Zero);
     }
 
+    /// <summary>See <see cref="IMarketCalendar.NextOpenAt"/>.</summary>
+    public DateTimeOffset NextOpenAt(Market market, DateTimeOffset instant)
+    {
+        if (IsOpen(market, instant))
+        {
+            return instant;
+        }
+
+        var zone = ZoneFor(market);
+        var local = TimeZoneInfo.ConvertTime(instant, zone);
+        var date = DateOnly.FromDateTime(local.DateTime);
+        var timeOfDay = TimeOnly.FromDateTime(local.DateTime);
+        var firstOpenTime = market == Market.Nyse ? NyseOpen : SgxMorningOpen;
+
+        var isValidTradingDay = !IsWeekend(date.DayOfWeek) && !IsHoliday(market, date);
+
+        // SGX's midday lunch break is the one same-day reopen: the market is closed right now
+        // (the IsOpen check above already confirmed that) but reopens later the same calendar day.
+        if (isValidTradingDay && market == Market.Sgx
+            && timeOfDay >= SgxMorningClose && timeOfDay < SgxAfternoonOpen)
+        {
+            return LocalToUtc(zone, date, SgxAfternoonOpen);
+        }
+
+        // Otherwise, if today is itself a valid trading day and we're still before its first
+        // session opens (pre-market, effectively), today's own open is the answer.
+        if (isValidTradingDay && timeOfDay < firstOpenTime)
+        {
+            return LocalToUtc(zone, date, firstOpenTime);
+        }
+
+        // Every other case (already past today's last close, or today isn't a trading day at all)
+        // walks forward to the next actual trading day's first session open.
+        date = date.AddDays(1);
+        while (IsWeekend(date.DayOfWeek) || IsHoliday(market, date))
+        {
+            date = date.AddDays(1);
+        }
+
+        return LocalToUtc(zone, date, firstOpenTime);
+    }
+
+    private static DateTimeOffset LocalToUtc(TimeZoneInfo zone, DateOnly date, TimeOnly time)
+    {
+        var local = new DateTime(date.Year, date.Month, date.Day, time.Hour, time.Minute, 0, DateTimeKind.Unspecified);
+        var utc = TimeZoneInfo.ConvertTimeToUtc(local, zone);
+        return new DateTimeOffset(utc, TimeSpan.Zero);
+    }
+
     private static TimeZoneInfo ZoneFor(Market market) => market switch
     {
         Market.Nyse => NyseZone,
