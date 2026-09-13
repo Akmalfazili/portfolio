@@ -222,6 +222,56 @@ describe('RefreshIndicator', () => {
       expect(sgx.attemptedAndFailed).toBe(true);
       expect(sgx.lastAttemptedLabel).toBeNull();
     });
+
+    it('the exact 2026-09-13 live scenario: a stale SGX live failure is superseded by a later recorded close', () => {
+      // Fri 2026-09-11 08:56 UTC: Yahoo's last live poll fails in a host
+      // network outage. SGX closes at 09:00 UTC and stays closed all weekend.
+      // Sat 2026-09-12 17:01 UTC: Friday's SGX close backfills successfully.
+      // Viewed Sun 2026-09-13: the panel must show the close, not the stale
+      // live failure.
+      const nowSpy = vi
+        .spyOn(Date, 'now')
+        .mockReturnValue(new Date('2026-09-13T10:00:00Z').getTime());
+      try {
+        setup({
+          status: signal(
+            status({
+              sgxOpen: false,
+              sources: [
+                {
+                  source: 'Yahoo',
+                  lastAttemptedAt: '2026-09-11T08:56:27Z',
+                  lastSuccessAt: '2026-09-04T09:00:00Z',
+                  lastRunSuccess: false,
+                  lastError: 'Yahoo request failed.',
+                  symbolsRefreshed: 0,
+                  nextDueAt: null,
+                },
+              ],
+              closes: [
+                {
+                  market: 'Sgx',
+                  latestCloseDate: '2026-09-11',
+                  lastAttemptedAt: '2026-09-12T17:01:22Z',
+                  lastSuccessAt: '2026-09-12T17:01:22Z',
+                  lastRunSuccess: true,
+                  lastError: null,
+                },
+              ],
+            }),
+          ),
+        });
+        fixture.detectChanges();
+
+        const sgx = fixture.componentInstance.marketRows().find((r) => r.provider === 'Yahoo')!;
+        expect(sgx.attemptedAndFailed).toBe(true); // the raw fact is unchanged
+        expect(sgx.showLiveFailure).toBe(false); // but the stale line is suppressed
+        expect(sgx.closeThroughLabel).toBe('Closing prices through Fri 11 Sep · recorded 17h ago');
+        expect(sgx.closeFailedLabel).toBeNull();
+      } finally {
+        nowSpy.mockRestore();
+      }
+    });
   });
 
   describe('post-refresh outcome — moved to a snackbar, not the tooltip', () => {

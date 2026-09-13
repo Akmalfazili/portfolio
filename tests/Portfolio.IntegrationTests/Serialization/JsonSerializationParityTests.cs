@@ -124,4 +124,77 @@ public sealed class JsonSerializationParityTests(WebApplicationFactory<Program> 
         http.Converters.Should().ContainSingle(c => c is JsonStringEnumConverter);
         hub.Converters.Should().ContainSingle(c => c is JsonStringEnumConverter);
     }
+
+    /// <summary>
+    /// <see cref="PriceRefreshStatus.Closes"/> is a trailing nullable parameter for exactly this
+    /// reason: a <see cref="PriceRefreshStatus"/> serialized by a process running before this field
+    /// existed (or before D38's three Twelve Data fields existed) has no <c>"closes"</c> property —
+    /// or none of the four trailing properties — at all. Deserializing that older shape must not
+    /// throw and must leave every trailing field null rather than defaulting to a misleadingly
+    /// "attempted and failed" 0/false.
+    /// </summary>
+    [Fact]
+    public void PriceRefreshStatus_DeserializesAnOlderSnapshot_WithNoTrailingFieldsAtAll()
+    {
+        var (http, _) = ResolveBothConfigurations();
+
+        // Exactly what GET /api/prices/status returned before EffectiveTwelveDataIntervalSeconds,
+        // CreditsUsedToday, CreditBudget and Closes existed — no trace of any of the four.
+        const string legacyJson = """
+            {
+                "lastRefreshedAt": "2026-08-08T04:30:00+00:00",
+                "nyseOpen": false,
+                "sgxOpen": true,
+                "nextScheduledRunAt": "2026-08-08T04:32:00+00:00",
+                "sources": []
+            }
+            """;
+
+        var status = JsonSerializer.Deserialize<PriceRefreshStatus>(legacyJson, http);
+
+        status.Should().NotBeNull();
+        status!.EffectiveTwelveDataIntervalSeconds.Should().BeNull();
+        status.CreditsUsedToday.Should().BeNull();
+        status.CreditBudget.Should().BeNull();
+        status.Closes.Should().BeNull();
+    }
+
+    /// <summary>The round trip the other direction: a freshly enriched status, <c>Closes</c>
+    /// included, must survive serialize-then-deserialize through both wire configurations without
+    /// losing or renaming a field — the shape the frontend actually receives today.</summary>
+    [Fact]
+    public void PriceRefreshStatus_Closes_RoundTrips_ThroughBothSerializers()
+    {
+        var (http, hub) = ResolveBothConfigurations();
+
+        var status = SampleStatus() with
+        {
+            EffectiveTwelveDataIntervalSeconds = 300,
+            CreditsUsedToday = 50,
+            CreditBudget = 800,
+            Closes =
+            [
+                new MarketCloseStatus(Market.Nyse, null, null, null, null, null),
+                new MarketCloseStatus(
+                    Market.Sgx,
+                    new DateOnly(2026, 9, 11),
+                    new DateTimeOffset(2026, 9, 12, 17, 1, 2, TimeSpan.Zero),
+                    new DateTimeOffset(2026, 9, 12, 17, 1, 2, TimeSpan.Zero),
+                    true,
+                    null),
+            ],
+        };
+
+        foreach (var options in new[] { http, hub })
+        {
+            var json = JsonSerializer.Serialize(status, options);
+            var roundTripped = JsonSerializer.Deserialize<PriceRefreshStatus>(json, options);
+
+            roundTripped.Should().NotBeNull();
+            roundTripped!.Closes.Should().HaveCount(2);
+            roundTripped.Closes!.Single(c => c.Market == Market.Sgx).LatestCloseDate
+                .Should().Be(new DateOnly(2026, 9, 11));
+            roundTripped.Closes!.Single(c => c.Market == Market.Nyse).LatestCloseDate.Should().BeNull();
+        }
+    }
 }

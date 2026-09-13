@@ -94,6 +94,53 @@ public sealed record SourceRefreshStatus(
     int SymbolsRefreshed,
     DateTimeOffset? NextDueAt);
 
+/// <summary>
+/// Per-market status of the daily-close backfill (<c>PriceBackfillService</c>, <c>PriceHistory</c>)
+/// — the counterpart to <see cref="SourceRefreshStatus"/>, which only ever reports the live-quote
+/// path (<c>PriceQuote</c>). Added so the refresh panel can stop reading "last updated" purely off
+/// the live-quote source: outside market hours no live quote is even attempted, so
+/// <see cref="SourceRefreshStatus"/> alone can report a stale-looking failure from days ago while a
+/// same-day close backfill succeeded minutes earlier — see the tracker entry this shipped with.
+///
+/// <para>One entry per <see cref="Market"/> in <c>Services.Calendar.ProviderMarkets.All</c>, always
+/// both, even when a market has never run at all — a market that has never been attempted reports
+/// every field <c>null</c>, never <c>false</c>/zero, so "not attempted" can never be misread as
+/// "attempted and failed" (the project's most repeated defect family: D10/D26/D33/D35/D38/D45).</para>
+/// </summary>
+public sealed record MarketCloseStatus(
+    Market Market,
+    /// <summary>
+    /// The newest date through which <b>every</b> active <see cref="AssetClass.Stock"/> asset of
+    /// this market that has at least one transaction has a <c>PriceHistory</c> row — i.e. the MIN
+    /// over those assets of each asset's own MAX(Date). Deliberately the min, not the max: the max
+    /// would read as "closes are current through Friday" when only one asset actually got Friday's
+    /// close and another is still lagging, which is exactly the kind of healthy-looking-but-wrong
+    /// report this project keeps tripping over.
+    ///
+    /// <para>Null both when the market has no such assets at all, and when at least one of them has
+    /// never received a single <c>PriceHistory</c> row — both are "no honest floor exists yet" in
+    /// the same way, and distinguishing them would need a second field nobody asked for.</para>
+    /// </summary>
+    DateOnly? LatestCloseDate,
+    /// <summary>
+    /// <c>CompletedAt</c> of the most recent completed <see cref="Domain.Entities.RefreshRun"/> with
+    /// this <see cref="Market"/> and a <c>Trigger</c> of <c>BackfillScheduled</c>/<c>BackfillManual</c>
+    /// — pre-D47 runs have <c>Market == null</c> and are invisible here by design, same as the
+    /// due-ness gate they predate. Null means this market's close backfill has never completed, not
+    /// zero and not a failure.
+    /// </summary>
+    DateTimeOffset? LastAttemptedAt,
+    /// <summary><c>CompletedAt</c> of the most recent such run with <c>Success == true</c>, or null
+    /// if none has ever succeeded. Stays at the earlier success when a later run failed — a failed
+    /// run must never blank out the last time it genuinely worked.</summary>
+    DateTimeOffset? LastSuccessAt,
+    /// <summary><c>Success</c> of the most recent completed run (see <see cref="LastAttemptedAt"/>).
+    /// Null only when there has never been one — never <c>false</c> for "not attempted".</summary>
+    bool? LastRunSuccess,
+    /// <summary>That same most recent run's <c>ErrorMessage</c>. The frontend truncates for
+    /// display.</summary>
+    string? LastError);
+
 /// <summary>Snapshot returned by <c>GET /api/prices/status</c> and pushed to newly connected
 /// SignalR clients. Held in memory only (see <see cref="Services.PriceRefreshStatusStore"/>) — it
 /// resets on app restart, which is acceptable for a "since I last looked" UI indicator; the
@@ -128,4 +175,11 @@ public sealed record PriceRefreshStatus(
     /// <summary>Twelve Data's daily credit budget (800 on the free tier). Same "populated identically
     /// everywhere, never legitimately null after enrichment" rule as
     /// <see cref="EffectiveTwelveDataIntervalSeconds"/>.</summary>
-    int? CreditBudget = null);
+    int? CreditBudget = null,
+    /// <summary>Per-market daily-close backfill status — see <see cref="MarketCloseStatus"/>. Follows
+    /// the same "populated identically everywhere, via <see cref="Services.PriceRefreshStatusEnricher"/>"
+    /// rule as the three Twelve Data fields above, and the same trailing-nullable-parameter shape
+    /// purely for back-compat deserialization of a snapshot serialized before this field existed —
+    /// once enriched it always holds one entry per <c>Services.Calendar.ProviderMarkets.All</c>,
+    /// never null and never an empty list.</summary>
+    IReadOnlyList<MarketCloseStatus>? Closes = null);

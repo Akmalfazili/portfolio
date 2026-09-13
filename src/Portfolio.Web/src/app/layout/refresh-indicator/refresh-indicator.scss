@@ -170,7 +170,8 @@
 }
 
 .refresh-panel__row-meta,
-.refresh-panel__row-cadence {
+.refresh-panel__row-cadence,
+.refresh-panel__row-close {
   margin: 0;
   font-size: var(--ui-font-size-xs);
   color: var(--ui-color-on-surface-secondary);

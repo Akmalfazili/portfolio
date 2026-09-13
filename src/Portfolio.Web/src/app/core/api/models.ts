@@ -192,6 +192,35 @@ export interface SourceRefreshStatus {
   nextDueAt: string | null;
 }
 
+/**
+ * Closing-price (backfill) run status for one market — a SEPARATE fact from
+ * the live-quote `SourceRefreshStatus` above, because a closed market is
+ * never live-polled at all: `TwelveData` rows there ↔ `Nyse` here, `Yahoo`
+ * rows ↔ `Sgx`. Crypto has no entry — it keeps no price history (locked
+ * decision, see CLAUDE.md) — so `closes` never carries a `CoinGecko`-shaped
+ * row.
+ *
+ * Why this exists (2026-09-13, verified live): with both markets closed on a
+ * Sunday, the refresh panel read "SGX: Last attempt failed 1d ago" from a
+ * Friday-evening live-quote failure, even though Friday's SGX CLOSE had been
+ * recorded successfully hours later. A closed market's live-quote row can
+ * never be superseded by a later success, because nothing ever live-polls it
+ * again — so the panel must also know about the backfill run that actually
+ * kept that market's prices current.
+ */
+export interface MarketCloseStatus {
+  market: 'Nyse' | 'Sgx';
+  /** The newest date EVERY asset in this market has a close for. `null` if
+   *  the market has no close on file at all yet. */
+  latestCloseDate: string | null;
+  lastAttemptedAt: string | null;
+  lastSuccessAt: string | null;
+  /** `null` means "never attempted" — NOT a failure. See the `MarketCloseStatus`
+   *  header and the D10/D26/D33/D35/D38/D45 "not attempted" ≠ "failed" family. */
+  lastRunSuccess: boolean | null;
+  lastError: string | null;
+}
+
 /** SignalR "RefreshStatus" payload and the body of GET /api/prices/status. */
 export interface PriceRefreshStatus {
   lastRefreshedAt: string | null;
@@ -214,6 +243,15 @@ export interface PriceRefreshStatus {
   creditsUsedToday?: number | null;
   /** Twelve Data's daily credit budget (800 on the free tier). */
   creditBudget?: number | null;
+
+  /**
+   * Per-market closing-price (backfill) run status — see `MarketCloseStatus`.
+   * Optional/nullable for the same reason as `effectiveTwelveDataIntervalSeconds`:
+   * an older cached snapshot or a backend that predates this field simply
+   * omits it, and an absent/null `closes` must be handled by behaving exactly
+   * as if it did not exist — never treated as "no closes have ever run".
+   */
+  closes?: MarketCloseStatus[] | null;
 }
 
 export interface SourceRefreshOutcome {

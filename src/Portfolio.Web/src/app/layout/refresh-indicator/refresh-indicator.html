@@ -77,7 +77,7 @@
               <p class="refresh-panel__row-cadence">Automatic checks {{ row.cadenceLabel }}.</p>
             }
 
-            @if (row.attemptedAndFailed) {
+            @if (row.showLiveFailure) {
               <p class="refresh-panel__row-error">
                 <mat-icon aria-hidden="true">warning</mat-icon>
                 @if (row.lastAttemptedLabel) {
@@ -85,6 +85,17 @@
                 } @else {
                   Last attempt failed — {{ row.errorSummary }}
                 }
+              </p>
+            }
+
+            @if (row.closeThroughLabel) {
+              <p class="refresh-panel__row-close">{{ row.closeThroughLabel }}</p>
+            }
+
+            @if (row.closeFailedLabel) {
+              <p class="refresh-panel__row-error">
+                <mat-icon aria-hidden="true">warning</mat-icon>
+                {{ row.closeFailedLabel }}
               </p>
             }
           </li>
