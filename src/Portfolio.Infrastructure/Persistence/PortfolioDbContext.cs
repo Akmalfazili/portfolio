@@ -36,6 +36,10 @@ public class PortfolioDbContext(DbContextOptions<PortfolioDbContext> options) : 
 
     public DbSet<AssetDividendState> AssetDividendStates => Set<AssetDividendState>();
 
+    public DbSet<AssetPriceHistoryState> AssetPriceHistoryStates => Set<AssetPriceHistoryState>();
+
+    public DbSet<FxPairBackfillState> FxPairBackfillStates => Set<FxPairBackfillState>();
+
     public DbSet<ZakatPayment> ZakatPayments => Set<ZakatPayment>();
 
     public DbSet<FxSpotQuote> FxSpotQuotes => Set<FxSpotQuote>();
@@ -60,6 +64,10 @@ public class PortfolioDbContext(DbContextOptions<PortfolioDbContext> options) : 
 
     IQueryable<AssetDividendState> IPortfolioDbContext.AssetDividendStates => AssetDividendStates;
 
+    IQueryable<AssetPriceHistoryState> IPortfolioDbContext.AssetPriceHistoryStates => AssetPriceHistoryStates;
+
+    IQueryable<FxPairBackfillState> IPortfolioDbContext.FxPairBackfillStates => FxPairBackfillStates;
+
     IQueryable<ZakatPayment> IPortfolioDbContext.ZakatPayments => ZakatPayments;
 
     IQueryable<FxSpotQuote> IPortfolioDbContext.FxSpotQuotes => FxSpotQuotes;
@@ -82,11 +90,17 @@ public class PortfolioDbContext(DbContextOptions<PortfolioDbContext> options) : 
 
     public void RemoveAssetDividendStates(IEnumerable<AssetDividendState> states) => AssetDividendStates.RemoveRange(states);
 
+    public void RemoveAssetPriceHistoryStates(IEnumerable<AssetPriceHistoryState> states) => AssetPriceHistoryStates.RemoveRange(states);
+
     public void AddPriceHistory(PriceHistory priceHistory) => PriceHistories.Add(priceHistory);
 
     public void AddDividendEvent(DividendEvent dividendEvent) => DividendEvents.Add(dividendEvent);
 
     public void AddAssetDividendState(AssetDividendState state) => AssetDividendStates.Add(state);
+
+    public void AddAssetPriceHistoryState(AssetPriceHistoryState state) => AssetPriceHistoryStates.Add(state);
+
+    public void AddFxPairBackfillState(FxPairBackfillState state) => FxPairBackfillStates.Add(state);
 
     public void AddFxRate(FxRate fxRate) => FxRates.Add(fxRate);
 

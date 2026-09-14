@@ -268,8 +268,12 @@ function summarizeError(error: string | null): string | null {
  * before the first `RefreshStatus` push/poll has arrived.
  */
 export function describeIdleRefreshPreview(status: PriceRefreshStatus | null): string {
-  const footer =
-    'Daily closing prices and dividend history update on their own schedule and are not touched by this.';
+  // 2026-09-14 — no longer "not touched by this": a press now also catches up
+  // any MISSING price history and dividends in the background (a newly added
+  // stock, a back-dated transaction, a previously failed fetch). A portfolio
+  // with nothing missing makes no extra provider calls, so this stays true
+  // for the common case too, not just the catch-up one.
+  const footer = 'Missing price history and dividends are fetched in the background automatically.';
 
   if (!status) {
     return `Fetches live prices now. ${footer}`;

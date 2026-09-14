@@ -83,6 +83,18 @@
       </ul>
     }
 
+    @if (priceHistoryCatchUpLine() || dividendsCatchUpLine()) {
+      <hr class="refresh-panel__rule" />
+      <ul class="refresh-panel__catchup">
+        @if (priceHistoryCatchUpLine(); as line) {
+          <li class="refresh-panel__catchup-line">{{ line }}</li>
+        }
+        @if (dividendsCatchUpLine(); as line) {
+          <li class="refresh-panel__catchup-line">{{ line }}</li>
+        }
+      </ul>
+    }
+
     <hr class="refresh-panel__rule" />
     <p class="refresh-panel__footer">{{ refreshScopeLabel() }}</p>
   </div>

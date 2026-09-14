@@ -5,7 +5,12 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { PRICES_HUB_CONNECTION_FACTORY, PriceStore } from './price-store';
 import { FakeHubConnection } from './testing/fake-hub-connection';
 import { API_ROUTES } from '../api/api-routes';
-import { PriceRefreshStatus, QuoteUpdateNotification } from '../api/models';
+import {
+  CatchUpCompletedNotification,
+  PriceRefreshCycleResult,
+  PriceRefreshStatus,
+  QuoteUpdateNotification,
+} from '../api/models';
 
 describe('PriceStore', () => {
   let fakeConnection: FakeHubConnection;
@@ -153,6 +158,248 @@ describe('PriceStore', () => {
     // A second click while cooling down must not issue another request.
     store.refreshNow();
     httpMock.expectNone(API_ROUTES.pricesRefresh);
+  });
+
+  describe('2026-09-14 catch-up feature', () => {
+    /** Fires refreshNow(), flushes the POST with `result`, and flushes the
+     *  status GET refreshNow() also issues on success — mirrors the existing
+     *  "refreshNow() posts to /api/prices/refresh" test's shape above. */
+    function completeRefresh(result: PriceRefreshCycleResult): void {
+      store.refreshNow();
+      httpMock.expectOne(API_ROUTES.pricesRefresh).flush(result);
+      httpMock.expectOne(API_ROUTES.pricesStatus).flush({
+        lastRefreshedAt: '2026-09-14T10:00:00Z',
+        nyseOpen: true,
+        sgxOpen: true,
+        nextScheduledRunAt: null,
+        sources: [],
+      } satisfies PriceRefreshStatus);
+    }
+
+    function queuedResult(runId = 'run-1'): PriceRefreshCycleResult {
+      return {
+        outcome: 'Completed',
+        cooldownSecondsRemaining: null,
+        sources: [],
+        totalSymbolsRefreshed: 0,
+        catchUp: {
+          priceHistory: {
+            state: 'Queued',
+            fetchSymbols: ['NEWCO'],
+            fxPairs: [],
+            retryPendingSymbols: [],
+            notYetAvailableSymbols: [],
+            runId,
+          },
+          dividends: {
+            state: 'NothingToFetch',
+            fetchSymbols: [],
+            fxPairs: [],
+            retryPendingSymbols: [],
+            notYetAvailableSymbols: [],
+            runId: null,
+          },
+        },
+      };
+    }
+
+    function completion(
+      overrides: Partial<CatchUpCompletedNotification> = {},
+    ): CatchUpCompletedNotification {
+      return {
+        kind: 'PriceHistory',
+        succeededSymbols: ['NEWCO'],
+        failed: [],
+        skippedForBudgetSymbols: [],
+        rowsInserted: 12,
+        completedAt: '2026-09-14T10:00:30Z',
+        runId: 'run-1',
+        ...overrides,
+      };
+    }
+
+    it('records the catch-up plan carried on a manual refresh result', async () => {
+      setup('resolve');
+      await Promise.resolve();
+      await Promise.resolve();
+
+      completeRefresh(queuedResult());
+
+      expect(store.catchUpPlan()).toEqual(queuedResult().catchUp);
+    });
+
+    it('clears a previous catch-up plan when a later result has none (absent catchUp)', async () => {
+      setup('resolve');
+      await Promise.resolve();
+      await Promise.resolve();
+
+      completeRefresh(queuedResult());
+      expect(store.catchUpPlan()).not.toBeNull();
+
+      completeRefresh({
+        outcome: 'Completed',
+        cooldownSecondsRemaining: null,
+        sources: [],
+        totalSymbolsRefreshed: 1,
+        // no `catchUp` at all — an older server, or a shape that omits it.
+      });
+
+      expect(store.catchUpPlan()).toBeNull();
+    });
+
+    it('a Queued leg is in flight until a CatchUpCompleted with its runId arrives (plan before completion)', async () => {
+      setup('resolve');
+      await Promise.resolve();
+      await Promise.resolve();
+
+      completeRefresh(queuedResult('run-1'));
+
+      expect(store.priceHistoryCatchUpInFlight()).toBe(true);
+      // The dividends leg is NothingToFetch (runId: null) — never in flight.
+      expect(store.dividendsCatchUpInFlight()).toBe(false);
+
+      fakeConnection.emit('CatchUpCompleted', completion({ runId: 'run-1', rowsInserted: 12 }));
+
+      expect(store.priceHistoryCatchUpInFlight()).toBe(false);
+      expect(store.lastPriceHistoryCatchUpCompletion()?.rowsInserted).toBe(12);
+    });
+
+    it('THE RACE: a completion that arrives BEFORE its own plan is still matched once the plan lands, and never reads as in flight', async () => {
+      // The exact bug this fixes: the backend starts the detached catch-up
+      // task before it sends the POST response, so a fast leg (one Yahoo
+      // dividend call) can finish and push CatchUpCompleted before
+      // refreshNow()'s own `next` handler has even run.
+      setup('resolve');
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // The completion arrives first — no plan is even tracked yet.
+      fakeConnection.emit('CatchUpCompleted', completion({ runId: 'run-1', rowsInserted: 12 }));
+      expect(store.priceHistoryCatchUpInFlight()).toBe(false); // nothing queued yet, trivially not in flight
+
+      // The plan for that same run lands moments later.
+      completeRefresh(queuedResult('run-1'));
+
+      // Must NOT read "still fetching" forever — the id match was already on
+      // file from before the plan arrived.
+      expect(store.priceHistoryCatchUpInFlight()).toBe(false);
+      expect(store.lastPriceHistoryCatchUpCompletion()?.rowsInserted).toBe(12);
+    });
+
+    it('plan before completion — the leg is in flight until the same-runId completion lands', async () => {
+      setup('resolve');
+      await Promise.resolve();
+      await Promise.resolve();
+
+      completeRefresh(queuedResult('run-1'));
+      expect(store.priceHistoryCatchUpInFlight()).toBe(true);
+
+      fakeConnection.emit('CatchUpCompleted', completion({ runId: 'run-1' }));
+      expect(store.priceHistoryCatchUpInFlight()).toBe(false);
+    });
+
+    it('a completion for a DIFFERENT runId does not clear the current plan\'s in-flight state', async () => {
+      setup('resolve');
+      await Promise.resolve();
+      await Promise.resolve();
+
+      completeRefresh(queuedResult('run-2'));
+      expect(store.priceHistoryCatchUpInFlight()).toBe(true);
+
+      // A completion for some other run (an earlier click's re-queued leg,
+      // or an unrelated one) must not be mistaken for this plan's own.
+      fakeConnection.emit('CatchUpCompleted', completion({ runId: 'run-1' }));
+
+      expect(store.priceHistoryCatchUpInFlight()).toBe(true);
+      // Deliberately NOT shown — there is no "latest seen for this kind"
+      // fallback; a completion for a run this plan didn't queue is not this
+      // plan's news to report.
+      expect(store.lastPriceHistoryCatchUpCompletion()).toBeNull();
+
+      // The matching runId is what actually resolves it.
+      fakeConnection.emit('CatchUpCompleted', completion({ runId: 'run-2' }));
+      expect(store.priceHistoryCatchUpInFlight()).toBe(false);
+      expect(store.lastPriceHistoryCatchUpCompletion()?.runId).toBe('run-2');
+    });
+
+    it('a leg with runId: null (NothingToFetch/AlreadyRunning) is never in flight, regardless of any completion', async () => {
+      setup('resolve');
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // dividends leg is NothingToFetch with runId: null in queuedResult().
+      completeRefresh(queuedResult('run-1'));
+      expect(store.dividendsCatchUpInFlight()).toBe(false);
+
+      fakeConnection.emit(
+        'CatchUpCompleted',
+        completion({ kind: 'Dividends', runId: 'run-1' }),
+      );
+      expect(store.dividendsCatchUpInFlight()).toBe(false);
+    });
+
+    it('REGRESSION: click 1 queues+finishes, click 2 finds NothingToFetch — the panel signal must not keep showing click 1\'s completion', async () => {
+      // The exact live bug report: click 1 queued both legs and the panel
+      // correctly read "Fetched price history for 7 stocks."; click 2, 60s
+      // later, returned NothingToFetch for both legs (confirmed nothing was
+      // spent), but the panel kept showing click 1's "Fetched…" text as if
+      // it were click 2's outcome — a PREVIOUS click's news stated as CURRENT.
+      setup('resolve');
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Click 1: queued, then completes.
+      completeRefresh(queuedResult('click-1-run'));
+      fakeConnection.emit(
+        'CatchUpCompleted',
+        completion({ runId: 'click-1-run', succeededSymbols: ['A', 'B', 'C', 'D', 'E', 'F', 'G'] }),
+      );
+      expect(store.lastPriceHistoryCatchUpCompletion()?.runId).toBe('click-1-run');
+
+      // Click 2: nothing due for either leg this time.
+      completeRefresh({
+        outcome: 'Completed',
+        cooldownSecondsRemaining: null,
+        sources: [],
+        totalSymbolsRefreshed: 0,
+        catchUp: {
+          priceHistory: {
+            state: 'NothingToFetch',
+            fetchSymbols: [],
+            fxPairs: [],
+            retryPendingSymbols: [],
+            notYetAvailableSymbols: [],
+            runId: null,
+          },
+          dividends: {
+            state: 'NothingToFetch',
+            fetchSymbols: [],
+            fxPairs: [],
+            retryPendingSymbols: [],
+            notYetAvailableSymbols: [],
+            runId: null,
+          },
+        },
+      });
+
+      // Must be null now — click 1's completion is not click 2's news.
+      expect(store.lastPriceHistoryCatchUpCompletion()).toBeNull();
+      expect(store.lastDividendsCatchUpCompletion()).toBeNull();
+      expect(store.priceHistoryCatchUpInFlight()).toBe(false);
+      expect(store.dividendsCatchUpInFlight()).toBe(false);
+    });
+
+    it('sets the catch-up landing marker only when rowsInserted > 0', async () => {
+      setup('resolve');
+      await Promise.resolve();
+      await Promise.resolve();
+
+      fakeConnection.emit('CatchUpCompleted', completion({ rowsInserted: 0 }));
+      expect(store.catchUpLandingMarker()).toBeNull();
+
+      fakeConnection.emit('CatchUpCompleted', completion({ rowsInserted: 5 }));
+      expect(store.catchUpLandingMarker()).not.toBeNull();
+    });
   });
 
   describe('visibilitychange catch-up', () => {

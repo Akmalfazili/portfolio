@@ -6,7 +6,7 @@ import { PriceConnectionState, PricesHub, PricesHubSinks } from './prices-hub';
 import { PricesApi } from '../api/prices.api';
 import { FakeHubConnection } from './testing/fake-hub-connection';
 import { API_ROUTES } from '../api/api-routes';
-import { PriceRefreshStatus, QuoteUpdateNotification } from '../api/models';
+import { CatchUpCompletedNotification, PriceRefreshStatus, QuoteUpdateNotification } from '../api/models';
 
 /**
  * Direct tests of `PricesHub`'s own state machine — extracted from
@@ -24,6 +24,7 @@ describe('PricesHub', () => {
     onQuote: ReturnType<typeof vi.fn<(payload: QuoteUpdateNotification) => void>>;
     onStatus: ReturnType<typeof vi.fn<(status: PriceRefreshStatus) => void>>;
     onConnectionStateChange: ReturnType<typeof vi.fn<(state: PriceConnectionState) => void>>;
+    onCatchUpCompleted: ReturnType<typeof vi.fn<(notification: CatchUpCompletedNotification) => void>>;
   };
 
   function makeStatus(overrides: Partial<PriceRefreshStatus> = {}): PriceRefreshStatus {
@@ -53,6 +54,7 @@ describe('PricesHub', () => {
       onQuote: vi.fn<(payload: QuoteUpdateNotification) => void>(),
       onStatus: vi.fn<(status: PriceRefreshStatus) => void>(),
       onConnectionStateChange: vi.fn<(state: PriceConnectionState) => void>(),
+      onCatchUpCompleted: vi.fn<(notification: CatchUpCompletedNotification) => void>(),
     };
   }
 
@@ -115,6 +117,26 @@ describe('PricesHub', () => {
     fakeConnection.emit('RefreshStatus', status);
 
     expect(sinks.onStatus).toHaveBeenCalledWith(status);
+  });
+
+  it('delivers a pushed CatchUpCompleted to the catch-up sink', async () => {
+    setup('resolve');
+    hub.connect(sinks);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const notification: CatchUpCompletedNotification = {
+      kind: 'PriceHistory',
+      succeededSymbols: ['NEWCO'],
+      failed: [],
+      skippedForBudgetSymbols: [],
+      rowsInserted: 42,
+      completedAt: '2026-09-14T10:00:00Z',
+      runId: 'run-1',
+    };
+    fakeConnection.emit('CatchUpCompleted', notification);
+
+    expect(sinks.onCatchUpCompleted).toHaveBeenCalledWith(notification);
   });
 
   it('reports reconnecting then connected, and stops fallback polling on reconnect', async () => {

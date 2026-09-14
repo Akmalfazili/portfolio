@@ -31,6 +31,16 @@ public interface IPortfolioDbContext
 
     IQueryable<AssetDividendState> AssetDividendStates { get; }
 
+    /// <summary>Per-asset daily-close backfill coverage state — see
+    /// <see cref="AssetPriceHistoryState"/>. Powers the refresh-catch-up planner's "is this asset's
+    /// history missing, or just permanently gapped" question.</summary>
+    IQueryable<AssetPriceHistoryState> AssetPriceHistoryStates { get; }
+
+    /// <summary>Per-FX-pair daily-close backfill coverage state — see
+    /// <see cref="FxPairBackfillState"/>. The FX equivalent of <see cref="AssetPriceHistoryStates"/>;
+    /// deliberately hangs off no <c>Asset</c>.</summary>
+    IQueryable<FxPairBackfillState> FxPairBackfillStates { get; }
+
     /// <summary>The zakat payment ledger — deliberately hangs off no other table. See
     /// <see cref="ZakatPayment"/>'s own remarks for why deleting an asset must never touch this.</summary>
     IQueryable<ZakatPayment> ZakatPayments { get; }
@@ -72,11 +82,25 @@ public interface IPortfolioDbContext
     /// reasoning as <see cref="RemoveDividendEvents"/>.</summary>
     void RemoveAssetDividendStates(IEnumerable<AssetDividendState> states);
 
+    /// <summary>Removes an asset's price-history backfill coverage state row, if it has one. Same
+    /// explicit-delete reasoning as <see cref="RemoveAsset"/> — the Asset → AssetPriceHistoryState
+    /// foreign key is <c>DeleteBehavior.Restrict</c> on purpose.</summary>
+    void RemoveAssetPriceHistoryStates(IEnumerable<AssetPriceHistoryState> states);
+
     void AddPriceHistory(PriceHistory priceHistory);
 
     void AddDividendEvent(DividendEvent dividendEvent);
 
     void AddAssetDividendState(AssetDividendState state);
+
+    void AddAssetPriceHistoryState(AssetPriceHistoryState state);
+
+    /// <summary>Adds a new FX pair backfill state row. Follow the same upsert idiom as
+    /// <see cref="AddFxSpotQuote"/> — add when absent, mutate the tracked entity in place when a row
+    /// for the pair already exists. No corresponding remove exists — see
+    /// <see cref="FxPairBackfillState"/>'s own remarks for why it hangs off no <c>Asset</c> and is
+    /// never touched by asset deletion.</summary>
+    void AddFxPairBackfillState(FxPairBackfillState state);
 
     void AddFxRate(FxRate fxRate);
 

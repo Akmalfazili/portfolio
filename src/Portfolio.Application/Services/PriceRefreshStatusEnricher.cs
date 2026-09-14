@@ -44,9 +44,13 @@ public sealed class PriceRefreshStatusEnricher(
 {
     /// <summary>The <see cref="RefreshTrigger"/> values that record a daily-close backfill run —
     /// never the live-quote (<see cref="RefreshTrigger.Scheduled"/>/<see cref="RefreshTrigger.Manual"/>)
-    /// triggers <see cref="SourceRefreshStatus"/> already covers.</summary>
+    /// triggers <see cref="SourceRefreshStatus"/> already covers. Includes
+    /// <see cref="RefreshTrigger.BackfillCatchUp"/> alongside the two pre-existing triggers — the
+    /// refresh-catch-up feature's price-history leg is still a real backfill attempt against a real
+    /// market, and a catch-up that fails must surface in this panel exactly like a failed scheduled
+    /// or manual run would, not vanish into an audit trail nothing reads.</summary>
     private static readonly RefreshTrigger[] BackfillTriggers =
-        [RefreshTrigger.BackfillScheduled, RefreshTrigger.BackfillManual];
+        [RefreshTrigger.BackfillScheduled, RefreshTrigger.BackfillManual, RefreshTrigger.BackfillCatchUp];
 
     public async Task<PriceRefreshStatus> EnrichAsync(PriceRefreshStatus status, CancellationToken cancellationToken)
     {

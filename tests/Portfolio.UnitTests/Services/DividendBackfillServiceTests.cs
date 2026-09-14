@@ -649,4 +649,93 @@ public sealed class DividendBackfillServiceTests : IDisposable
         await provider.Received(3).GetDividendHistoryAsync(
             msft, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
     }
+
+    // --- Refresh catch-up feature: AssetDividendState.CoveredFrom and RunCatchUpAsync.
+
+    [Fact]
+    public async Task RunAsync_SuccessfulFetch_RecordsCoveredFromAsTheRequestedFrom()
+    {
+        var provider = Substitute.For<IDividendProvider>();
+        provider.GetDividendHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(DividendHistoryFetchResult.Ok([]));
+
+        var sut = CreateSut(provider);
+
+        await sut.RunAsync(RefreshTrigger.DividendBackfillManual, CancellationToken.None);
+
+        var state = await _db.AssetDividendStates.SingleAsync(s => s.AssetId == _aapl.Id);
+        state.CoveredFrom.Should().Be(new DateOnly(2026, 1, 1)); // AAPL's own earliest trade date
+    }
+
+    [Fact]
+    public async Task RunAsync_FailedFetch_LeavesCoveredFromUntouched()
+    {
+        var provider = Substitute.For<IDividendProvider>();
+        provider.GetDividendHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(DividendHistoryFetchResult.Ok([]));
+        var sut = CreateSut(provider);
+        await sut.RunAsync(RefreshTrigger.DividendBackfillManual, CancellationToken.None);
+
+        var originalCoveredFrom = (await _db.AssetDividendStates.SingleAsync(s => s.AssetId == _aapl.Id)).CoveredFrom;
+
+        provider.GetDividendHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(DividendHistoryFetchResult.Failed("Yahoo returned HTTP 500."));
+        await sut.RunAsync(RefreshTrigger.DividendBackfillManual, CancellationToken.None);
+
+        var state = await _db.AssetDividendStates.SingleAsync(s => s.AssetId == _aapl.Id);
+        state.LastRunSuccess.Should().BeFalse();
+        state.CoveredFrom.Should().Be(originalCoveredFrom, "a failed attempt must never shrink known coverage");
+    }
+
+    [Fact]
+    public async Task RunCatchUpAsync_RestrictsToTheGivenAssetIds_AndTagsTheCatchUpTrigger()
+    {
+        var msft = AddMsft();
+        await _db.SaveChangesAsync();
+
+        var provider = Substitute.For<IDividendProvider>();
+        provider.GetDividendHistoryAsync(msft, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(DividendHistoryFetchResult.Ok([]));
+
+        var sut = CreateSut(provider);
+
+        var summary = await sut.RunCatchUpAsync(new HashSet<int> { msft.Id }, CancellationToken.None);
+
+        summary.AssetsProcessed.Should().Contain("MSFT").And.NotContain("AAPL");
+        await provider.DidNotReceive().GetDividendHistoryAsync(
+            _aapl, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+
+        var run = (await _db.RefreshRuns.ToListAsync()).Should().ContainSingle().Subject;
+        run.Trigger.Should().Be(RefreshTrigger.DividendBackfillCatchUp);
+    }
+
+    [Fact]
+    public async Task RunIfDueAsync_DueNessIsUnaffectedByAPriorCatchUpRun()
+    {
+        // Pins the spec's "neither new trigger affects scheduled due-ness" requirement: a catch-up
+        // run (however productive) must never be mistaken for the scheduled full pass or its once-
+        // per-day gate, since RunIfDueAsync's queries filter on DividendBackfillScheduled only.
+        _db.RefreshRuns.Add(new RefreshRun
+        {
+            Trigger = RefreshTrigger.DividendBackfillCatchUp,
+            AssetClass = AssetClass.Stock,
+            StartedAt = _timeProvider.GetUtcNow(),
+            CompletedAt = _timeProvider.GetUtcNow(),
+            Success = true,
+            SymbolsRefreshed = 1,
+        });
+        await _db.SaveChangesAsync();
+
+        var provider = Substitute.For<IDividendProvider>();
+        provider.GetDividendHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(DividendHistoryFetchResult.Ok([]));
+
+        var sut = CreateSut(provider);
+
+        var result = await sut.RunIfDueAsync(CancellationToken.None);
+
+        result.Outcome.Should().Be(DividendBackfillOutcome.Completed, "a BackfillCatchUp row must never satisfy the DividendBackfillScheduled gate");
+        await provider.Received(1).GetDividendHistoryAsync(
+            _aapl, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+    }
 }

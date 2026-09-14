@@ -38,6 +38,21 @@ public interface IPriceBackfillService
     Task<PriceBackfillSummary> RunAsync(RefreshTrigger trigger, IReadOnlyCollection<Market> markets, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Refresh-catch-up feature: runs unconditionally for exactly <paramref name="assetIds"/> and
+    /// <paramref name="currencies"/> — narrowed BEFORE the loop by <c>IRefreshCatchUpService</c>'s
+    /// planner to only what it found actually missing coverage. <paramref name="markets"/> must be
+    /// exactly the markets in play, so the per-market <see cref="Domain.Entities.RefreshRun"/> rows
+    /// this writes land only on markets this run actually touched. Always tagged
+    /// <see cref="RefreshTrigger.BackfillCatchUp"/>, which <see cref="RunIfDueAsync"/>'s due-ness
+    /// query never looks at, so a catch-up run can never be mistaken for the scheduled full pass.
+    /// </summary>
+    Task<PriceBackfillSummary> RunCatchUpAsync(
+        IReadOnlyCollection<Market> markets,
+        IReadOnlySet<int> assetIds,
+        IReadOnlySet<string> currencies,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Evaluates due-ness independently for every market in <c>ProviderMarkets.All</c> and runs
     /// <see cref="RunAsync"/> with <see cref="RefreshTrigger.BackfillScheduled"/> for exactly the
     /// markets found due (D47). A market is due when it is currently closed (its own session, not

@@ -13,6 +13,7 @@ import { MatMenuModule } from '@angular/material/menu';
 import { MatTooltipModule } from '@angular/material/tooltip';
 
 import { NotificationService } from '../../core/notifications/notification.service';
+import { describeCatchUpStatusLine } from '../../core/prices/catch-up-outcome';
 import { PriceStore } from '../../core/prices/price-store';
 import { describeRefreshOutcome } from '../../core/prices/refresh-outcome';
 import {
@@ -131,6 +132,46 @@ export class RefreshIndicator {
   private readonly idlePreview = computed(() =>
     describeIdleRefreshPreview(this.priceStore.status()),
   );
+
+  /**
+   * 2026-09-14 catch-up feature — the panel's own per-leg line. Non-null
+   * ONLY for a `Queued` leg of the CURRENT plan: "Fetching…" while still in
+   * flight, else that leg's own `runId`-matched completion outcome (fetched
+   * / couldn't fetch / skipped) once it has arrived. `null` for
+   * `NothingToFetch`/`AlreadyRunning` and for any completion that isn't this
+   * leg's own — `PriceStore`'s `lastPriceHistoryCatchUpCompletion` /
+   * `lastDividendsCatchUpCompletion` deliberately have no "last one seen"
+   * fallback for exactly this reason: a fallback here previously let a
+   * PREVIOUS click's "Fetched…" text outlive the click it belonged to and
+   * get shown as this click's outcome. Deliberately NOT a toast — a
+   * background completion landing later is not a "just performed" action
+   * from the user's point of view (the tracker's `NotificationService`
+   * rule), so it lives here as refresh-indicator panel state instead, the
+   * same treatment the 429 cooldown gets.
+   */
+  readonly priceHistoryCatchUpLine = computed(() => {
+    const plan = this.priceStore.catchUpPlan();
+    return plan
+      ? describeCatchUpStatusLine(
+          'PriceHistory',
+          plan.priceHistory,
+          this.priceStore.priceHistoryCatchUpInFlight(),
+          this.priceStore.lastPriceHistoryCatchUpCompletion(),
+        )
+      : null;
+  });
+
+  readonly dividendsCatchUpLine = computed(() => {
+    const plan = this.priceStore.catchUpPlan();
+    return plan
+      ? describeCatchUpStatusLine(
+          'Dividends',
+          plan.dividends,
+          this.priceStore.dividendsCatchUpInFlight(),
+          this.priceStore.lastDividendsCatchUpCompletion(),
+        )
+      : null;
+  });
 
   readonly tooltip = computed(() => {
     if (this.refreshing()) {

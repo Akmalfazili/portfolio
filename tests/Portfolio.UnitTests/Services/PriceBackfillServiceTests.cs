@@ -1574,4 +1574,216 @@ public sealed class PriceBackfillServiceTests : IDisposable
         (await _db.FxRates.Where(f => f.Date == utcToday).CountAsync()).Should().Be(0);
         (await _db.FxRates.Where(f => f.Date == utcYesterday).CountAsync()).Should().Be(1);
     }
+
+    // --- Refresh catch-up feature: AssetPriceHistoryState writing (RunAsyncCore, every trigger)
+    // and RunCatchUpAsync's asset/currency narrowing.
+
+    [Fact]
+    public async Task RunAsync_SuccessfulFetch_WritesAssetPriceHistoryState_WithTheRequestedCoverage()
+    {
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(new DateOnly(2026, 7, 20), 200m, "USD")], callInfo.ArgAt<DateOnly>(1))));
+
+        var fxProvider = Substitute.For<IFxRateProvider>();
+        fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]));
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider);
+
+        await sut.RunAsync(RefreshTrigger.BackfillManual, BothMarkets, CancellationToken.None);
+
+        var state = await _db.AssetPriceHistoryStates.SingleAsync(s => s.AssetId == _aapl.Id);
+        state.LastRunSuccess.Should().BeTrue();
+        state.LastSuccessAt.Should().Be(_timeProvider.GetUtcNow());
+        state.CoveredFrom.Should().Be(new DateOnly(2026, 7, 20)); // AAPL's own earliest trade date
+        // AlwaysClosedCalendar's LocalDateOn/LastSessionCloseAt resolve the cap to the settled
+        // instant's own UTC date — _timeProvider is fixed at 2026-07-26T00:00Z, minus the default
+        // 30-minute CloseSettleDelay, still 2026-07-25.
+        state.CoveredTo.Should().Be(new DateOnly(2026, 7, 25));
+    }
+
+    [Fact]
+    public async Task RunAsync_FailedFetch_WritesAssetPriceHistoryState_ButLeavesCoveredFromCoveredToUntouched()
+    {
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(new DateOnly(2026, 7, 20), 200m, "USD")], callInfo.ArgAt<DateOnly>(1))));
+        var fxProvider = Substitute.For<IFxRateProvider>();
+        fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]));
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider);
+        await sut.RunAsync(RefreshTrigger.BackfillManual, BothMarkets, CancellationToken.None);
+
+        var covered = await _db.AssetPriceHistoryStates.SingleAsync(s => s.AssetId == _aapl.Id);
+        var (originalFrom, originalTo) = (covered.CoveredFrom, covered.CoveredTo);
+
+        var failingProvider = Substitute.For<IQuoteProvider>();
+        failingProvider.GetHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(new HistoryFetchResult([], new DateOnly(2026, 7, 20), new DateOnly(2026, 7, 20), Truncated: false, Success: false, Error: "Twelve Data returned HTTP 400."));
+        var sut2 = CreateSut(RouterAlwaysReturning(failingProvider), fxProvider);
+        await sut2.RunAsync(RefreshTrigger.BackfillManual, BothMarkets, CancellationToken.None);
+
+        var state = await _db.AssetPriceHistoryStates.SingleAsync(s => s.AssetId == _aapl.Id);
+        state.LastRunSuccess.Should().BeFalse();
+        state.LastError.Should().Be("Twelve Data returned HTTP 400.");
+        state.CoveredFrom.Should().Be(originalFrom, "a failed attempt must never shrink known coverage");
+        state.CoveredTo.Should().Be(originalTo);
+    }
+
+    [Fact]
+    public async Task RunAsync_TruncatedFetch_RecordsCoveredFromAsTheRequestedFrom_NotTheEffectiveFrom()
+    {
+        // AAPL's own earliest trade date (the REQUESTED `from`) is 2026-07-20 per the fixture — the
+        // provider truncating its response to a later effective start must not change what
+        // CoveredFrom records: re-asking for 2026-07-20 will never return more, by provider policy.
+        var effectiveFrom = new DateOnly(2026, 7, 22);
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(_aapl, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(new HistoryFetchResult(
+                [new PriceHistoryPoint(effectiveFrom, 200m, "USD")],
+                new DateOnly(2026, 7, 20),
+                effectiveFrom,
+                Truncated: true,
+                Success: true,
+                Error: null));
+        stockProvider.GetHistoryAsync(_z74, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(new DateOnly(2026, 7, 20), 4m, "SGD")], callInfo.ArgAt<DateOnly>(1))));
+
+        var fxProvider = Substitute.For<IFxRateProvider>();
+        fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]));
+
+        var router = Substitute.For<IQuoteProviderRouter>();
+        router.GetProvider(_aapl).Returns(stockProvider);
+        router.GetProvider(_z74).Returns(stockProvider);
+
+        var sut = CreateSut(router, fxProvider);
+
+        await sut.RunAsync(RefreshTrigger.BackfillManual, BothMarkets, CancellationToken.None);
+
+        var state = await _db.AssetPriceHistoryStates.SingleAsync(s => s.AssetId == _aapl.Id);
+        state.LastRunSuccess.Should().BeTrue();
+        state.CoveredFrom.Should().Be(new DateOnly(2026, 7, 20), "the REQUESTED from, not the provider's truncated effective start");
+    }
+
+    [Fact]
+    public async Task RunCatchUpAsync_RestrictsToTheGivenAssetIdsAndCurrencies_AndTagsTheCatchUpTrigger()
+    {
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(new DateOnly(2026, 7, 20), 4m, "SGD")], callInfo.ArgAt<DateOnly>(1))));
+
+        var fxProvider = Substitute.For<IFxRateProvider>();
+        fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]));
+
+        var router = Substitute.For<IQuoteProviderRouter>();
+        router.GetProvider(Arg.Any<Asset>()).Returns(stockProvider);
+
+        var sut = CreateSut(router, fxProvider);
+
+        var summary = await sut.RunCatchUpAsync(
+            [Market.Sgx], new HashSet<int> { _z74.Id }, new HashSet<string> { "SGD" }, CancellationToken.None);
+
+        summary.AssetsProcessed.Should().Contain("Z74").And.NotContain("AAPL");
+        router.DidNotReceive().GetProvider(_aapl);
+        summary.FxRatePointsInserted.Should().Be(1);
+
+        var run = (await _db.RefreshRuns.ToListAsync()).Should().ContainSingle().Subject;
+        run.Trigger.Should().Be(RefreshTrigger.BackfillCatchUp);
+        run.Market.Should().Be(Market.Sgx);
+    }
+
+    [Fact]
+    public async Task RunIfDueAsync_DueNessIsUnaffectedByAPriorCatchUpRun()
+    {
+        // Pins the spec's "neither new trigger affects scheduled due-ness" requirement: a
+        // BackfillCatchUp row (however productive) must never satisfy RunIfDueAsync's
+        // BackfillScheduled-only query — both markets must still read as due.
+        var now = _timeProvider.GetUtcNow();
+        _db.RefreshRuns.Add(new RefreshRun
+        {
+            Trigger = RefreshTrigger.BackfillCatchUp, AssetClass = AssetClass.Stock, Market = Market.Nyse,
+            StartedAt = now, CompletedAt = now, Success = true, SymbolsRefreshed = 1,
+        });
+        _db.RefreshRuns.Add(new RefreshRun
+        {
+            Trigger = RefreshTrigger.BackfillCatchUp, AssetClass = AssetClass.Stock, Market = Market.Sgx,
+            StartedAt = now, CompletedAt = now, Success = true, SymbolsRefreshed = 1,
+        });
+        await _db.SaveChangesAsync();
+
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(new DateOnly(2026, 7, 20), 200m, "USD")], callInfo.ArgAt<DateOnly>(1))));
+        var fxProvider = Substitute.For<IFxRateProvider>();
+        fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]));
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider);
+
+        var result = await sut.RunIfDueAsync(CancellationToken.None);
+
+        result.MarketsRun.Should().Contain([Market.Nyse, Market.Sgx]);
+    }
+
+    [Fact]
+    public async Task RunAsync_SuccessfulFxFetch_WritesFxPairBackfillState_WithTheRequestedCoverage()
+    {
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(new DateOnly(2026, 7, 20), 200m, "USD")], callInfo.ArgAt<DateOnly>(1))));
+
+        var fxProvider = Substitute.For<IFxRateProvider>();
+        fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]));
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider);
+
+        await sut.RunAsync(RefreshTrigger.BackfillManual, BothMarkets, CancellationToken.None);
+
+        var state = await _db.FxPairBackfillStates.SingleAsync(s => s.Base == "USD" && s.Quote == "SGD");
+        state.LastRunSuccess.Should().BeTrue();
+        state.CoveredFrom.Should().Be(new DateOnly(2026, 7, 20)); // Z74's own earliest trade date
+        // PriceBackfillCapCalculator.ComputeFxCap(now): _timeProvider is fixed at 2026-07-26T00:00Z
+        // UTC, one day behind is 2026-07-25 — never a market's own settled cap.
+        state.CoveredTo.Should().Be(new DateOnly(2026, 7, 25));
+    }
+
+    [Fact]
+    public async Task RunAsync_FailedFxFetch_WritesFxPairBackfillState_ButLeavesCoveredFromCoveredToUntouched()
+    {
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(new DateOnly(2026, 7, 20), 200m, "USD")], callInfo.ArgAt<DateOnly>(1))));
+        var fxProvider = Substitute.For<IFxRateProvider>();
+        fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]));
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider);
+        await sut.RunAsync(RefreshTrigger.BackfillManual, BothMarkets, CancellationToken.None);
+
+        var covered = await _db.FxPairBackfillStates.SingleAsync(s => s.Base == "USD" && s.Quote == "SGD");
+        var (originalFrom, originalTo) = (covered.CoveredFrom, covered.CoveredTo);
+
+        var failingFxProvider = Substitute.For<IFxRateProvider>();
+        failingFxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(FxHistoryFetchResult.Failed("Twelve Data returned HTTP 429."));
+        var sut2 = CreateSut(RouterAlwaysReturning(stockProvider), failingFxProvider);
+        await sut2.RunAsync(RefreshTrigger.BackfillManual, BothMarkets, CancellationToken.None);
+
+        var state = await _db.FxPairBackfillStates.SingleAsync(s => s.Base == "USD" && s.Quote == "SGD");
+        state.LastRunSuccess.Should().BeFalse();
+        state.LastError.Should().Be("Twelve Data returned HTTP 429.");
+        state.CoveredFrom.Should().Be(originalFrom, "a failed attempt must never shrink known coverage");
+        state.CoveredTo.Should().Be(originalTo);
+    }
 }

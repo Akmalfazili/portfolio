@@ -170,6 +170,10 @@ public sealed class PriceBackfillBackgroundServiceTests
 
         public Task<PriceBackfillSummary> RunAsync(RefreshTrigger trigger, IReadOnlyCollection<Market> markets, CancellationToken cancellationToken) =>
             throw new NotSupportedException("The background loop must only ever call RunIfDueAsync, never RunAsync directly.");
+
+        public Task<PriceBackfillSummary> RunCatchUpAsync(
+            IReadOnlyCollection<Market> markets, IReadOnlySet<int> assetIds, IReadOnlySet<string> currencies, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("The background loop must only ever call RunIfDueAsync, never RunCatchUpAsync directly.");
     }
 
     private sealed class CapturingLogger<T> : ILogger<T>

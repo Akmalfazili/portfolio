@@ -6,6 +6,17 @@
     <ProjectReference Include="..\Portfolio.Application\Portfolio.Application.csproj" />
   </ItemGroup>
 
+  <!-- Refresh-catch-up feature: exposes PricesEndpoints' internal, side-effect-free decision
+       helpers (ShouldRunCatchUp, HasPriceHistoryWorkToDo, etc.) to Portfolio.UnitTests so the
+       endpoint's NothingToFetch/AlreadyRunning/cooldown wiring can be pinned directly, without a
+       WebApplicationFactory HTTP round trip or a real provider call (see tracker.md's
+       refresh-catch-up entry and RefreshCatchUpWiringTests). Portfolio.UnitTests already
+       ProjectReferences this assembly for Program (WebApplicationFactory<Program> elsewhere), so
+       this only widens what it can see, not what it can reference. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Portfolio.UnitTests" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.10">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

@@ -1,4 +1,5 @@
 import { PriceRefreshCycleResult, PriceRefreshStatus, QuoteProviderKind } from '../api/models';
+import { describeCatchUpPlan } from './catch-up-outcome';
 
 /**
  * Drawback D5 (tracker.md, Phase 5): a manual refresh bypasses the poll
@@ -74,7 +75,25 @@ export const SOURCE_MARKET_TITLE: Record<QuoteProviderKind, string> = {
   CoinGecko: 'Crypto',
 };
 
+/**
+ * The public entry point — the live-quote outcome message from
+ * `describeQuoteOutcome` below, plus (2026-09-14) the catch-up plan sentence
+ * from `describeCatchUpPlan`, appended uniformly regardless of which branch
+ * produced the base message. Split into two functions rather than
+ * interleaving the catch-up append into every `return` in the switch below,
+ * so `describeQuoteOutcome`'s exhaustiveness discipline over `RefreshOutcome`
+ * stays exactly as it was.
+ */
 export function describeRefreshOutcome(
+  result: PriceRefreshCycleResult,
+  status: PriceRefreshStatus | null,
+): string {
+  const message = describeQuoteOutcome(result, status);
+  const catchUpNote = describeCatchUpPlan(result.catchUp);
+  return catchUpNote ? `${message} ${catchUpNote}` : message;
+}
+
+function describeQuoteOutcome(
   result: PriceRefreshCycleResult,
   status: PriceRefreshStatus | null,
 ): string {

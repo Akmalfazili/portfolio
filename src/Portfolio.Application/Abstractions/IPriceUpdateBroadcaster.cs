@@ -16,4 +16,10 @@ public interface IPriceUpdateBroadcaster
 
     /// <summary>The refresh status snapshot changed — fired once per completed cycle.</summary>
     Task BroadcastRefreshStatusAsync(PriceRefreshStatus status, CancellationToken cancellationToken);
+
+    /// <summary>Refresh-catch-up feature: fired once a detached catch-up leg (price history or
+    /// dividends, queued from <c>POST /api/prices/refresh</c>) finishes — success or failure, so a
+    /// connected client never waits forever on a leg that died. See
+    /// <see cref="Dtos.CatchUpCompletedNotification"/>.</summary>
+    Task BroadcastCatchUpCompletedAsync(CatchUpCompletedNotification notification, CancellationToken cancellationToken);
 }

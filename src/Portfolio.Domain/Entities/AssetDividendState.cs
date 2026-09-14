@@ -36,4 +36,15 @@ public class AssetDividendState
     public bool LastRunSuccess { get; set; }
 
     public string? LastError { get; set; }
+
+    /// <summary>
+    /// Refresh catch-up feature: the <c>from</c> the most recent SUCCESSFUL fetch requested — i.e.
+    /// how far back this asset's dividend history has actually been asked for, mirroring
+    /// <see cref="Entities.AssetPriceHistoryState.CoveredFrom"/>'s reasoning for price history. Set
+    /// by <c>DividendBackfillService.RecordState</c> only on success (a failure must never shrink
+    /// it). Null on every row written before this column existed, which the catch-up planner reads
+    /// as "missing" — the first catch-up click after deploy re-fetches every stock's dividends from
+    /// Yahoo once (free), after which this stops being null and stops tripping the planner.
+    /// </summary>
+    public DateOnly? CoveredFrom { get; set; }
 }

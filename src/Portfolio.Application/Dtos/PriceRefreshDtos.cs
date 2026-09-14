@@ -63,7 +63,20 @@ public sealed record PriceRefreshCycleResult(
     /// <summary>Only set when <see cref="Outcome"/> is <see cref="PriceRefreshOutcome.CooldownActive"/>.</summary>
     int? CooldownSecondsRemaining,
     IReadOnlyList<SourceRefreshOutcome> Sources,
-    int TotalSymbolsRefreshed);
+    int TotalSymbolsRefreshed,
+    /// <summary>
+    /// Refresh-catch-up feature: what <c>POST /api/prices/refresh</c>'s planner (<c>IRefreshCatchUpService</c>)
+    /// found missing for price history/dividends and, when something was missing, whether this
+    /// click queued it. Null on every SCHEDULED cycle (<c>PriceRefreshBackgroundService</c> never
+    /// runs the catch-up planner — this is a manual-click-only feature) and whenever the manual
+    /// refresh itself did not run (<see cref="PriceRefreshOutcome.CooldownActive"/>, from either
+    /// branch that can produce it). Populated by <c>PricesEndpoints</c>, not by
+    /// <c>PriceRefreshService</c> itself — the planner and the two catch-up backfills are DB/provider
+    /// concerns one layer removed from live-quote refreshing, kept out of this type's own producer
+    /// so a unit test against <c>PriceRefreshService</c> alone never has to stand up the catch-up
+    /// machinery just to construct this record.
+    /// </summary>
+    RefreshCatchUpPlan? CatchUp = null);
 
 /// <summary>
 /// One asset's freshly fetched quote, broadcast to connected clients over SignalR.

@@ -183,12 +183,16 @@ public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvid
         var priceQuotes = await db.PriceQuotes.Where(q => q.AssetId == id).ToListAsync(cancellationToken);
         var dividendEvents = await db.DividendEvents.Where(d => d.AssetId == id).ToListAsync(cancellationToken);
         var dividendStates = await db.AssetDividendStates.Where(s => s.AssetId == id).ToListAsync(cancellationToken);
+        // Refresh-catch-up feature: same explicit-delete reasoning as dividendStates above — see
+        // AssetDeleteCascadeTests, which this new child table extends rather than gets its own test.
+        var priceHistoryStates = await db.AssetPriceHistoryStates.Where(s => s.AssetId == id).ToListAsync(cancellationToken);
 
         db.RemoveTransactions(transactions);
         db.RemovePriceHistories(priceHistories);
         db.RemovePriceQuotes(priceQuotes);
         db.RemoveDividendEvents(dividendEvents);
         db.RemoveAssetDividendStates(dividendStates);
+        db.RemoveAssetPriceHistoryStates(priceHistoryStates);
         db.RemoveAsset(asset);
 
         await db.SaveChangesAsync(cancellationToken);

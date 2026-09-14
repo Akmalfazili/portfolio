@@ -4,7 +4,12 @@ import { signal } from '@angular/core';
 import { RefreshIndicator } from './refresh-indicator';
 import { PriceStore } from '../../core/prices/price-store';
 import { NotificationService } from '../../core/notifications/notification.service';
-import { PriceRefreshCycleResult, PriceRefreshStatus } from '../../core/api/models';
+import {
+  CatchUpCompletedNotification,
+  PriceRefreshCycleResult,
+  PriceRefreshStatus,
+  RefreshCatchUpPlan,
+} from '../../core/api/models';
 
 function makeFakeStore(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -17,6 +22,14 @@ function makeFakeStore(overrides: Partial<Record<string, unknown>> = {}) {
     lastRefreshResult: signal<PriceRefreshCycleResult | null>(null),
     lastError: signal<string | null>(null),
     refreshNow: () => undefined,
+    // 2026-09-14 catch-up feature — defaults describe "no plan yet" so every
+    // pre-existing test above (none of which touches these) keeps rendering
+    // no catch-up lines at all.
+    catchUpPlan: signal<RefreshCatchUpPlan | null>(null),
+    priceHistoryCatchUpInFlight: signal(false),
+    dividendsCatchUpInFlight: signal(false),
+    lastPriceHistoryCatchUpCompletion: signal<CatchUpCompletedNotification | null>(null),
+    lastDividendsCatchUpCompletion: signal<CatchUpCompletedNotification | null>(null),
     ...overrides,
   };
 }
@@ -316,6 +329,130 @@ describe('RefreshIndicator', () => {
     });
   });
 
+  describe('details panel — catch-up lines (2026-09-14)', () => {
+    it('renders nothing when there is no catch-up plan at all', () => {
+      setup();
+      expect(fixture.componentInstance.priceHistoryCatchUpLine()).toBeNull();
+      expect(fixture.componentInstance.dividendsCatchUpLine()).toBeNull();
+    });
+
+    it('reads "Fetching…" while a leg is in flight', () => {
+      const plan: RefreshCatchUpPlan = {
+        priceHistory: {
+          state: 'Queued',
+          fetchSymbols: ['NEWCO'],
+          fxPairs: [],
+          retryPendingSymbols: [],
+          notYetAvailableSymbols: [],
+          runId: 'run-1',
+        },
+        dividends: {
+          state: 'NothingToFetch',
+          fetchSymbols: [],
+          fxPairs: [],
+          retryPendingSymbols: [],
+          notYetAvailableSymbols: [],
+          runId: null,
+        },
+      };
+      setup({
+        catchUpPlan: signal<RefreshCatchUpPlan | null>(plan),
+        priceHistoryCatchUpInFlight: signal(true),
+      });
+
+      // `<mat-menu>` content only renders into the CDK overlay once opened —
+      // see this spec file's own note above `describe('details panel — row
+      // state text', ...)` — so this asserts against the component's signal,
+      // the same convention the rest of this file already uses.
+      expect(fixture.componentInstance.priceHistoryCatchUpLine()).toBe(
+        'Fetching price history for NEWCO…',
+      );
+      expect(fixture.componentInstance.dividendsCatchUpLine()).toBeNull();
+    });
+
+    it('reads the completion outcome once no longer in flight', () => {
+      const plan: RefreshCatchUpPlan = {
+        priceHistory: {
+          state: 'Queued',
+          fetchSymbols: ['NEWCO'],
+          fxPairs: [],
+          retryPendingSymbols: [],
+          notYetAvailableSymbols: [],
+          runId: 'run-1',
+        },
+        dividends: {
+          state: 'NothingToFetch',
+          fetchSymbols: [],
+          fxPairs: [],
+          retryPendingSymbols: [],
+          notYetAvailableSymbols: [],
+          runId: null,
+        },
+      };
+      setup({
+        catchUpPlan: signal<RefreshCatchUpPlan | null>(plan),
+        priceHistoryCatchUpInFlight: signal(false),
+        lastPriceHistoryCatchUpCompletion: signal<CatchUpCompletedNotification | null>({
+          kind: 'PriceHistory',
+          succeededSymbols: ['NEWCO'],
+          failed: [],
+          skippedForBudgetSymbols: [],
+          rowsInserted: 12,
+          completedAt: '2026-07-31T12:00:00Z',
+          runId: 'run-1',
+        }),
+      });
+
+      expect(fixture.componentInstance.priceHistoryCatchUpLine()).toBe(
+        'Fetched price history for NEWCO.',
+      );
+    });
+
+    it('REGRESSION: a NothingToFetch plan (click 2) renders nothing, even if a stale completion from an earlier click is still on the store', () => {
+      // The exact live bug: click 1 queued both legs and finished; click 2
+      // found nothing due for either leg. The panel must not keep showing
+      // click 1's "Fetched…" text as click 2's outcome.
+      const plan: RefreshCatchUpPlan = {
+        priceHistory: {
+          state: 'NothingToFetch',
+          fetchSymbols: [],
+          fxPairs: [],
+          retryPendingSymbols: [],
+          notYetAvailableSymbols: [],
+          runId: null,
+        },
+        dividends: {
+          state: 'NothingToFetch',
+          fetchSymbols: [],
+          fxPairs: [],
+          retryPendingSymbols: [],
+          notYetAvailableSymbols: [],
+          runId: null,
+        },
+      };
+      setup({
+        catchUpPlan: signal<RefreshCatchUpPlan | null>(plan),
+        priceHistoryCatchUpInFlight: signal(false),
+        dividendsCatchUpInFlight: signal(false),
+        // A store that (incorrectly) still carried click 1's completion —
+        // the component-level guard in `describeCatchUpStatusLine` must
+        // refuse to show it regardless of what this signal holds.
+        lastPriceHistoryCatchUpCompletion: signal<CatchUpCompletedNotification | null>({
+          kind: 'PriceHistory',
+          succeededSymbols: ['NEWCO', 'A', 'B', 'C', 'D', 'E', 'F'],
+          failed: [],
+          skippedForBudgetSymbols: [],
+          rowsInserted: 7,
+          completedAt: '2026-07-31T12:00:00Z',
+          runId: 'click-1-run',
+        }),
+      });
+
+      expect(fixture.componentInstance.priceHistoryCatchUpLine()).toBeNull();
+      expect(fixture.componentInstance.dividendsCatchUpLine()).toBeNull();
+    });
+  });
+
   describe('details panel — footer scope statement', () => {
     it('renders what the button will do right now, keyed off the live status', () => {
       setup({ status: signal(status({ nyseOpen: false, sgxOpen: true })) });
@@ -394,6 +531,25 @@ describe('RefreshIndicator', () => {
       (fakeStore.lastRefreshResult as ReturnType<typeof signal>).set(result);
       fixture.detectChanges();
 
+      expect(fakeNotifications.info).not.toHaveBeenCalled();
+      expect(fakeNotifications.error).not.toHaveBeenCalled();
+    });
+
+    it('does not toast the completion of a background catch-up fetch — it is panel state, not a toast', () => {
+      setup();
+      const notification: CatchUpCompletedNotification = {
+        kind: 'PriceHistory',
+        succeededSymbols: ['NEWCO'],
+        failed: [],
+        skippedForBudgetSymbols: [],
+        rowsInserted: 12,
+        completedAt: '2026-07-31T12:00:00Z',
+        runId: 'run-1',
+      };
+      (fakeStore.lastPriceHistoryCatchUpCompletion as ReturnType<typeof signal>).set(notification);
+      fixture.detectChanges();
+
+      expect(fakeNotifications.success).not.toHaveBeenCalled();
       expect(fakeNotifications.info).not.toHaveBeenCalled();
       expect(fakeNotifications.error).not.toHaveBeenCalled();
     });

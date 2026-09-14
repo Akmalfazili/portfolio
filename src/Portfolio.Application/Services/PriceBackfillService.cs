@@ -209,7 +209,8 @@ public sealed class PriceBackfillService(
             return new PriceBackfillRunResult([], skipped, null);
         }
 
-        var summary = await RunAsyncCore(RefreshTrigger.BackfillScheduled, dueMarkets, retryMarkets, cancellationToken);
+        var summary = await RunAsyncCore(
+            RefreshTrigger.BackfillScheduled, dueMarkets, retryMarkets, restrictToAssetIds: null, restrictToCurrencies: null, cancellationToken);
         return new PriceBackfillRunResult(dueMarkets, skipped, summary);
     }
 
@@ -219,7 +220,25 @@ public sealed class PriceBackfillService(
     /// manual endpoint must stay a full pass, unchanged).</summary>
     public Task<PriceBackfillSummary> RunAsync(
         RefreshTrigger trigger, IReadOnlyCollection<Market> markets, CancellationToken cancellationToken) =>
-        RunAsyncCore(trigger, markets, retryOnlyMarkets: [], cancellationToken);
+        RunAsyncCore(trigger, markets, retryOnlyMarkets: [], restrictToAssetIds: null, restrictToCurrencies: null, cancellationToken);
+
+    /// <summary>
+    /// Refresh-catch-up feature: runs unconditionally for exactly <paramref name="assetIds"/> and
+    /// <paramref name="currencies"/> — narrowed BEFORE the loop, the same shape D51's
+    /// <c>retryOnlyMarkets</c> narrowing established, but decided by <c>IRefreshCatchUpService</c>'s
+    /// planner rather than by "still missing the latest close". <paramref name="markets"/> must be
+    /// exactly the markets in play (every asset's own market, plus every market requiring one of
+    /// <paramref name="currencies"/> — see <c>RefreshCatchUpService</c>'s <c>MarketsInPlay</c>), so
+    /// the per-market <see cref="Domain.Entities.RefreshRun"/> rows this writes land only on markets
+    /// this run actually touched. Always tagged <see cref="RefreshTrigger.BackfillCatchUp"/>, which
+    /// <see cref="RunIfDueAsync"/>'s due-ness query never looks at.
+    /// </summary>
+    public Task<PriceBackfillSummary> RunCatchUpAsync(
+        IReadOnlyCollection<Market> markets,
+        IReadOnlySet<int> assetIds,
+        IReadOnlySet<string> currencies,
+        CancellationToken cancellationToken) =>
+        RunAsyncCore(RefreshTrigger.BackfillCatchUp, markets, retryOnlyMarkets: [], assetIds, currencies, cancellationToken);
 
     /// <summary>
     /// D51: <paramref name="retryOnlyMarkets"/> (a subset of <paramref name="markets"/>) narrows
@@ -231,11 +250,21 @@ public sealed class PriceBackfillService(
     /// empty <paramref name="retryOnlyMarkets"/>) unchanged: a full pass is also what fills history
     /// for a newly recorded back-dated transaction on an asset whose latest close is already on
     /// file, which a "missing the latest close" filter alone would never pick up.
+    ///
+    /// <para>Refresh-catch-up: <paramref name="restrictToAssetIds"/>/<paramref name="restrictToCurrencies"/>,
+    /// when non-null, narrow independently of <paramref name="retryOnlyMarkets"/> — see
+    /// <see cref="RunCatchUpAsync"/>. The two narrowing mechanisms never combine in practice
+    /// (<see cref="RunCatchUpAsync"/> always passes an empty <paramref name="retryOnlyMarkets"/>,
+    /// and D51's own retry path always passes null for both), but nothing stops them from composing
+    /// safely if that ever changed: both are applied as extra <c>Where</c> filters on top of
+    /// whatever <paramref name="retryOnlyMarkets"/> already produced.</para>
     /// </summary>
     private async Task<PriceBackfillSummary> RunAsyncCore(
         RefreshTrigger trigger,
         IReadOnlyCollection<Market> markets,
         IReadOnlyCollection<Market> retryOnlyMarkets,
+        IReadOnlySet<int>? restrictToAssetIds,
+        IReadOnlySet<string>? restrictToCurrencies,
         CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
@@ -243,38 +272,31 @@ public sealed class PriceBackfillService(
         var marketSet = markets.ToHashSet();
         var retryOnlyMarketSet = retryOnlyMarkets.ToHashSet();
 
-        // D53: the settled instant every per-market "cap" below is computed from — see the class
-        // remarks. Applies to EVERY run, not just RunIfDueAsync's scheduled/retry paths: the manual
-        // endpoint bypasses due-ness entirely but must never bypass "is this close even finished
-        // settling," which is exactly the mid-session / lunch-break / closing-auction defect.
-        var settledInstant = now - options.Value.CloseSettleDelay;
-
         // D53: per-market cap — the latest date this run will ever request from a provider or
         // accept from one, for a given market. Computed once for every market in `markets` (a
         // superset of `retryOnlyMarkets`), since a FULL pass needs this exactly as much as a
         // narrowed retry does; see the per-asset loop and the FX loop below, both of which replace
         // the old blanket `to: today` with this. Subtracting CloseSettleDelay from `now` before
-        // walking LastSessionCloseAt back is what handles SGX's lunch break and closing-auction
-        // window for free — see the class remarks for why.
+        // walking LastSessionCloseAt back (inside PriceBackfillCapCalculator.ComputeCap) is what
+        // handles SGX's lunch break and closing-auction window for free — see the class remarks for
+        // why. Applies to EVERY run, not just RunIfDueAsync's scheduled/retry paths: the manual
+        // endpoint bypasses due-ness entirely but must never bypass "is this close even finished
+        // settling," which is exactly the mid-session / lunch-break / closing-auction defect.
+        //
+        // Extracted to PriceBackfillCapCalculator so the refresh-catch-up planner
+        // (RefreshCatchUpService) computes this identically — two independently-maintained copies of
+        // "the latest date this run will ever request from a provider or accept from one" is exactly
+        // the D7 drift trap; see PriceBackfillCapCalculator's own remarks.
         var capByMarket = markets.ToDictionary(
-            m => m, m => calendar.LocalDateOn(m, calendar.LastSessionCloseAt(m, settledInstant)));
+            m => m, m => PriceBackfillCapCalculator.ComputeCap(calendar, m, now, options.Value.CloseSettleDelay));
 
-        // D53: FX has no market session to key a settle cap off — Twelve Data's /time_series is
-        // the exact same endpoint, with the exact same query construction (see
-        // TwelveDataFxProvider.GetHistoryAsync next to TwelveDataQuoteProvider.GetHistoryAsync),
-        // for a currency pair as for an equity, so whether it withholds a still-updating "today"
-        // forex bar the way it apparently does for equities (see this class's D53 remarks, and
-        // tracker.md — verified true for every US PriceHistory row checked, never verified for FX)
-        // cannot be established from the client code alone: forex trades continuously five days a
-        // week with no discrete session close for a "the day is over" check to key off, unlike
-        // NYSE/SGX. Capping to one UTC calendar day behind `now` is the conservative choice either
-        // way — it can never write today's still-updating rate as a "close" (see CLAUDE.md's
-        // live-spot-into-FxRates rule), at the cost of an FX row landing up to a day later than it
-        // might safely have been able to. Deliberately UTC, not the SGT `today` above: Twelve
-        // Data's own daily ledger already keys off UTC midnight for the same reason (see
-        // ReportingClock's remarks on why that one field stays off this codebase's usual SGT
-        // "today"), and there is no SGT-based session boundary here to justify departing from it.
-        var fxCap = DateOnly.FromDateTime(now.UtcDateTime).AddDays(-1);
+        // D53: FX has no market session to key a settle cap off — extracted to
+        // PriceBackfillCapCalculator.ComputeFxCap alongside ComputeCap above, for the identical D7
+        // reason: the refresh-catch-up planner must derive the exact same boundary, or it can queue
+        // a catch-up that spends a credit and inserts nothing (see FxPairBackfillState's remarks for
+        // the live-measured defect this closed). See ComputeFxCap's own doc comment for the full
+        // "why UTC, why one day behind now" reasoning.
+        var fxCap = PriceBackfillCapCalculator.ComputeFxCap(now);
 
         // D37: the budget is derived from what Twelve Data's persisted daily ledger says is
         // actually left today, not a hardcoded constant — a fixed budget smaller than one full
@@ -368,6 +390,15 @@ public sealed class PriceBackfillService(
                 .ToList();
         }
 
+        // Refresh-catch-up: narrowed independently of retryOnlyMarketSet above (see RunAsyncCore's
+        // class remarks) — IRefreshCatchUpService's planner has already decided exactly which
+        // assets are missing coverage, so this run touches only those, never every in-scope asset
+        // the way an ordinary full pass or D51 retry does.
+        if (restrictToAssetIds is not null)
+        {
+            assets = assets.Where(a => restrictToAssetIds.Contains(a.Id)).ToList();
+        }
+
         assets = assets
             .OrderBy(a => lastBackfilledByAsset.TryGetValue(a.Id, out var lastDate) ? lastDate : DateOnly.MinValue)
             .ThenBy(a => a.Id) // stable, deterministic tie-break for assets backfilled on the same date
@@ -377,6 +408,12 @@ public sealed class PriceBackfillService(
             .GroupBy(t => t.AssetId)
             .Select(g => new { AssetId = g.Key, Earliest = g.Min(t => t.TradeDate) })
             .ToDictionaryAsync(x => x.AssetId, x => x.Earliest, cancellationToken);
+
+        // Refresh-catch-up: every asset's coverage state, upserted in the per-asset loop below for
+        // EVERY attempt this run makes (whatever the trigger — see AssetPriceHistoryState's own
+        // remarks), so IRefreshCatchUpService's planner can tell a permanent gap (the provider was
+        // successfully asked, nothing more will ever come back) apart from genuinely missing data.
+        var priceHistoryStatesByAsset = await db.AssetPriceHistoryStates.ToDictionaryAsync(s => s.AssetId, cancellationToken);
 
         // Derived up front, before either loop spends a call, so the FX loop below can run first
         // without waiting on the asset loop to discover which currencies are in play. Derived from
@@ -388,6 +425,15 @@ public sealed class PriceBackfillService(
             .Where(a => earliestTradeDateByAsset.ContainsKey(a.Id) && a.Currency != ReportingCurrency)
             .Select(a => a.Currency)
             .ToHashSet();
+
+        // Refresh-catch-up: narrows to exactly the currencies the planner decided are missing —
+        // independent of restrictToAssetIds above, since a currency can be in scope here purely on
+        // the FX upper-bound rule with no asset of that currency actually being fetched this run
+        // (see IRefreshCatchUpService's remarks on the deliberate no-lower-bound-alone FX check).
+        if (restrictToCurrencies is not null)
+        {
+            currenciesNeedingFx = currenciesNeedingFx.Where(restrictToCurrencies.Contains).ToHashSet();
+        }
 
         // Which market(s) need each non-USD currency — used both for D51's per-market Success
         // attribution below (a market's RefreshRun row must fail if an FX pair only IT needs
@@ -425,6 +471,15 @@ public sealed class PriceBackfillService(
                 }
             }
         }
+
+        // Refresh-catch-up: every FX pair's coverage state, upserted in the loop below for EVERY
+        // attempt (whatever the trigger) — mirrors priceHistoryStatesByAsset below exactly, but
+        // keyed by currency rather than asset id. See FxPairBackfillState's own remarks for why FX
+        // needs this in addition to the asset leg's own state (Twelve Data's incomplete Sunday
+        // coverage, and the SGX-evening cap mismatch).
+        var fxPairStatesByCurrency = await db.FxPairBackfillStates
+            .Where(s => s.Base == ReportingCurrency)
+            .ToDictionaryAsync(s => s.Quote, cancellationToken);
 
         // FX runs before the per-asset price-history loop, and gets first claim on the shared
         // call budget, even though it appears second in PriceBackfillSummary's field order. This
@@ -474,6 +529,7 @@ public sealed class PriceBackfillService(
                     "Historical FX backfill failed for {Base}/{Quote}",
                     ReportingCurrency,
                     currency);
+                RecordFxPairState(fxPairStatesByCurrency, currency, now, success: false, ex.Message);
                 assetsFailed.Add(new AssetBackfillFailure($"FX:{ReportingCurrency}/{currency}", ex.Message));
                 failedFxCurrencies.Add(currency);
                 continue;
@@ -490,8 +546,9 @@ public sealed class PriceBackfillService(
                     ReportingCurrency,
                     currency,
                     fxResult.Error);
-                assetsFailed.Add(new AssetBackfillFailure(
-                    $"FX:{ReportingCurrency}/{currency}", fxResult.Error ?? "Provider reported failure without a message."));
+                var fxError = fxResult.Error ?? "Provider reported failure without a message.";
+                RecordFxPairState(fxPairStatesByCurrency, currency, now, success: false, fxError);
+                assetsFailed.Add(new AssetBackfillFailure($"FX:{ReportingCurrency}/{currency}", fxError));
                 failedFxCurrencies.Add(currency);
                 continue;
             }
@@ -529,6 +586,10 @@ public sealed class PriceBackfillService(
                 });
                 fxRateInserted++;
             }
+
+            // Refresh-catch-up: CoveredFrom/CoveredTo are the REQUESTED from/fxCap, not derived
+            // from fxResult.Points — mirrors RecordPriceHistoryState's identical reasoning below.
+            RecordFxPairState(fxPairStatesByCurrency, currency, now, success: true, error: null, coveredFrom: from, coveredTo: fxCap);
         }
 
         foreach (var asset in assets)
@@ -585,6 +646,7 @@ public sealed class PriceBackfillService(
                     "Historical price backfill failed for asset {AssetId} ({Symbol})",
                     asset.Id,
                     asset.Symbol);
+                RecordPriceHistoryState(priceHistoryStatesByAsset, asset.Id, now, success: false, ex.Message);
                 assetsFailed.Add(new AssetBackfillFailure(asset.Symbol, ex.Message));
                 continue;
             }
@@ -596,7 +658,9 @@ public sealed class PriceBackfillService(
                     asset.Id,
                     asset.Symbol,
                     historyResult.Error);
-                assetsFailed.Add(new AssetBackfillFailure(asset.Symbol, historyResult.Error ?? "Provider reported failure without a message."));
+                var error = historyResult.Error ?? "Provider reported failure without a message.";
+                RecordPriceHistoryState(priceHistoryStatesByAsset, asset.Id, now, success: false, error);
+                assetsFailed.Add(new AssetBackfillFailure(asset.Symbol, error));
                 continue;
             }
 
@@ -653,6 +717,14 @@ public sealed class PriceBackfillService(
                 priceHistoryInserted++;
             }
 
+            // Refresh-catch-up: CoveredFrom records the REQUESTED `from`, not
+            // historyResult.EffectiveFrom — even when Truncated, re-asking for the same `from`
+            // will never return more (truncation is provider policy, see AssetPriceHistoryState's
+            // own remarks), so the planner must not keep treating this as missing forever.
+            // CoveredTo is this market's own requested cap, not the last point actually returned —
+            // a provider that legitimately has no bar for a particular date (a market holiday it
+            // knows about but this calendar doesn't model) must not read as "still missing" either.
+            RecordPriceHistoryState(priceHistoryStatesByAsset, asset.Id, now, success: true, error: null, coveredFrom: from, coveredTo: cap);
             assetsProcessed.Add(asset.Symbol);
         }
 
@@ -707,6 +779,79 @@ public sealed class PriceBackfillService(
             fxRateInserted,
             callsUsed,
             assetsTruncated);
+    }
+
+    /// <summary>
+    /// Refresh-catch-up feature: upserts <see cref="Domain.Entities.AssetPriceHistoryState"/> for
+    /// ONE asset's attempt this run — called for every asset actually attempted (never for one
+    /// skipped for budget or deferred by <c>capByMarket</c>, which are not attempts at all).
+    /// <paramref name="coveredFrom"/>/<paramref name="coveredTo"/> are supplied only on success and
+    /// are the range THIS attempt requested, not what came back — see the call site's own remarks.
+    /// A failure updates <see cref="Domain.Entities.AssetPriceHistoryState.LastAttemptedAt"/>/
+    /// <c>LastRunSuccess</c>/<c>LastError</c> but must never touch <c>CoveredFrom</c>/<c>CoveredTo</c>:
+    /// shrinking known coverage on a failed retry would make the catch-up planner re-fetch an asset
+    /// it has already, successfully, asked about.
+    /// </summary>
+    private void RecordPriceHistoryState(
+        Dictionary<int, AssetPriceHistoryState> statesByAsset,
+        int assetId,
+        DateTimeOffset now,
+        bool success,
+        string? error,
+        DateOnly? coveredFrom = null,
+        DateOnly? coveredTo = null)
+    {
+        if (!statesByAsset.TryGetValue(assetId, out var state))
+        {
+            state = new AssetPriceHistoryState { AssetId = assetId };
+            db.AddAssetPriceHistoryState(state);
+            statesByAsset[assetId] = state;
+        }
+
+        state.LastAttemptedAt = now;
+        state.LastRunSuccess = success;
+        state.LastError = error is { Length: > 2000 } ? error[..2000] : error;
+
+        if (success)
+        {
+            state.LastSuccessAt = now;
+            state.CoveredFrom = coveredFrom;
+            state.CoveredTo = coveredTo;
+        }
+    }
+
+    /// <summary>
+    /// Refresh-catch-up feature: upserts <see cref="Domain.Entities.FxPairBackfillState"/> for ONE
+    /// currency pair's attempt this run — the FX mirror of <see cref="RecordPriceHistoryState"/>,
+    /// same rules: <paramref name="coveredFrom"/>/<paramref name="coveredTo"/> supplied only on
+    /// success, and a failure must never touch them.
+    /// </summary>
+    private void RecordFxPairState(
+        Dictionary<string, FxPairBackfillState> statesByCurrency,
+        string currency,
+        DateTimeOffset now,
+        bool success,
+        string? error,
+        DateOnly? coveredFrom = null,
+        DateOnly? coveredTo = null)
+    {
+        if (!statesByCurrency.TryGetValue(currency, out var state))
+        {
+            state = new FxPairBackfillState { Base = ReportingCurrency, Quote = currency };
+            db.AddFxPairBackfillState(state);
+            statesByCurrency[currency] = state;
+        }
+
+        state.LastAttemptedAt = now;
+        state.LastRunSuccess = success;
+        state.LastError = error is { Length: > 2000 } ? error[..2000] : error;
+
+        if (success)
+        {
+            state.LastSuccessAt = now;
+            state.CoveredFrom = coveredFrom;
+            state.CoveredTo = coveredTo;
+        }
     }
 
     /// <summary>Best-effort backfill has no single pass/fail flag — a skipped or truncated asset

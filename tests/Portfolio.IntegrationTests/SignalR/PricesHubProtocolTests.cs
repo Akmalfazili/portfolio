@@ -65,4 +65,41 @@ public sealed class PricesHubProtocolTests(WebApplicationFactory<Program> factor
         wireJson.Should().NotContain("\"source\":1");
         wireJson.Should().NotContain("\"source\":2");
     }
+
+    /// <summary>
+    /// Refresh-catch-up feature: <c>CatchUpCompleted</c> is a new SignalR event, added after the
+    /// regression above was fixed — pinned here from day one rather than waiting for its own live
+    /// defect, since the underlying trap (SignalR's own protocol serializer, entirely separate from
+    /// <c>ConfigureHttpJsonOptions</c>) applies to every event this hub ever adds, not just the one
+    /// that first exposed it.
+    /// </summary>
+    [Fact]
+    public void JsonHubProtocol_SerializesCatchUpKind_AsNames_NotRawInts()
+    {
+        using var scope = factory.Services.CreateScope();
+
+        var protocol = scope.ServiceProvider
+            .GetServices<IHubProtocol>()
+            .Single(p => p.Name == "json");
+
+        var notification = new CatchUpCompletedNotification(
+            CatchUpKind.PriceHistory,
+            SucceededSymbols: ["AAPL"],
+            Failed: [new CatchUpFailure("FX:USD/SGD", "Twelve Data returned HTTP 429.")],
+            SkippedForBudgetSymbols: [],
+            RowsInserted: 2,
+            CompletedAt: DateTimeOffset.UtcNow,
+            RunId: Guid.NewGuid());
+
+        var message = new InvocationMessage("CatchUpCompleted", [notification]);
+
+        var buffer = new ArrayBufferWriter<byte>();
+        protocol.WriteMessage(message, buffer);
+        var wireJson = Encoding.UTF8.GetString(buffer.WrittenSpan);
+
+        wireJson.Should().Contain("\"PriceHistory\"");
+        // The int-encoded regression this mirrors: CatchUpKind.PriceHistory=0, Dividends=1.
+        wireJson.Should().NotContain("\"kind\":0");
+        wireJson.Should().NotContain("\"kind\":1");
+    }
 }

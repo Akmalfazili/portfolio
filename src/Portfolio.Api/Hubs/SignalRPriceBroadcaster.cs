@@ -17,4 +17,7 @@ public sealed class SignalRPriceBroadcaster(IHubContext<PricesHub> hubContext) :
 
     public Task BroadcastRefreshStatusAsync(PriceRefreshStatus status, CancellationToken cancellationToken) =>
         hubContext.Clients.All.SendAsync("RefreshStatus", status, cancellationToken);
+
+    public Task BroadcastCatchUpCompletedAsync(CatchUpCompletedNotification notification, CancellationToken cancellationToken) =>
+        hubContext.Clients.All.SendAsync("CatchUpCompleted", notification, cancellationToken);
 }

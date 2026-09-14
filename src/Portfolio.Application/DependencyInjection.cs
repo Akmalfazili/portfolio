@@ -16,6 +16,10 @@ public static class DependencyInjection
         services.AddHostedService<PriceBackfillBackgroundService>();
         services.AddScoped<IDividendBackfillService, DividendBackfillService>();
         services.AddHostedService<DividendBackfillBackgroundService>();
+        // Refresh-catch-up feature: DB-only planner behind POST /api/prices/refresh — see
+        // IRefreshCatchUpService's own remarks. Scoped, like the two backfill services it reads
+        // state for.
+        services.AddScoped<IRefreshCatchUpService, RefreshCatchUpService>();
 
         // Pure, stateless calculators — no DB dependency, so singletons rather than scoped.
         services.AddSingleton<ICostBasisCalculator, AverageCostCalculator>();

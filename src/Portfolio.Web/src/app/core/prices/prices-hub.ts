@@ -3,7 +3,7 @@ import * as signalR from '@microsoft/signalr';
 
 import { PRICES_HUB_URL } from '../api/api-routes';
 import { PricesApi } from '../api/prices.api';
-import { PriceRefreshStatus, QuoteUpdateNotification } from '../api/models';
+import { CatchUpCompletedNotification, PriceRefreshStatus, QuoteUpdateNotification } from '../api/models';
 
 export type PriceConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'polling-fallback';
 
@@ -49,6 +49,9 @@ export interface PricesHubSinks {
   onQuote(payload: QuoteUpdateNotification): void;
   onStatus(status: PriceRefreshStatus): void;
   onConnectionStateChange(state: PriceConnectionState): void;
+  /** 2026-09-14 catch-up feature — one push per leg (price history /
+   *  dividends), some time after the `RefreshCatchUpPlan` that queued it. */
+  onCatchUpCompleted(notification: CatchUpCompletedNotification): void;
 }
 
 /**
@@ -135,6 +138,9 @@ export class PricesHub {
     );
     this.hubConnection.on('RefreshStatus', (...args: unknown[]) =>
       this.sinks?.onStatus(args[0] as PriceRefreshStatus),
+    );
+    this.hubConnection.on('CatchUpCompleted', (...args: unknown[]) =>
+      this.sinks?.onCatchUpCompleted(args[0] as CatchUpCompletedNotification),
     );
 
     this.hubConnection.onreconnecting(() => this.setState('reconnecting'));

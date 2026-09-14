@@ -160,6 +160,18 @@ public sealed class DividendBackfillService(
         RunAsyncCore(trigger, restrictToAssetIds: null, cancellationToken);
 
     /// <summary>
+    /// Refresh-catch-up feature: runs unconditionally for exactly <paramref name="assetIds"/> —
+    /// narrowed by <c>IRefreshCatchUpService</c>'s planner to only the stock assets whose dividend
+    /// history is actually missing coverage (never attempted, last attempt failed, or a back-dated
+    /// transaction moved the asset's earliest trade date before <see cref="AssetDividendState.CoveredFrom"/>).
+    /// Always tagged <see cref="RefreshTrigger.DividendBackfillCatchUp"/>, which
+    /// <see cref="RunIfDueAsync"/>'s due-ness queries never look at — a catch-up run can never be
+    /// mistaken for the scheduled full pass or count toward its once-per-day gate.
+    /// </summary>
+    public Task<DividendBackfillSummary> RunCatchUpAsync(IReadOnlySet<int> assetIds, CancellationToken cancellationToken) =>
+        RunAsyncCore(RefreshTrigger.DividendBackfillCatchUp, assetIds, cancellationToken);
+
+    /// <summary>
     /// D51: <paramref name="restrictToAssetIds"/>, when non-null, narrows the run to exactly those
     /// asset ids (a retry) — <c>null</c> means every in-scope stock asset (a full run, the only
     /// behaviour that existed before D51). An empty-but-non-null set is a caller error (the
@@ -233,7 +245,7 @@ public sealed class DividendBackfillService(
                     "Dividend backfill failed for asset {AssetId} ({Symbol})",
                     asset.Id,
                     asset.Symbol);
-                RecordState(statesByAsset, asset.Id, now, success: false, ex.Message);
+                RecordState(statesByAsset, asset.Id, now, success: false, ex.Message, from);
                 assetsFailed.Add(new DividendAssetBackfillFailure(asset.Symbol, ex.Message));
                 continue;
             }
@@ -246,7 +258,7 @@ public sealed class DividendBackfillService(
                     asset.Symbol,
                     result.Error);
                 var error = result.Error ?? "Provider reported failure without a message.";
-                RecordState(statesByAsset, asset.Id, now, success: false, error);
+                RecordState(statesByAsset, asset.Id, now, success: false, error, from);
                 assetsFailed.Add(new DividendAssetBackfillFailure(asset.Symbol, error));
                 continue;
             }
@@ -274,7 +286,7 @@ public sealed class DividendBackfillService(
                 dividendEventsInserted++;
             }
 
-            RecordState(statesByAsset, asset.Id, now, success: true, error: null);
+            RecordState(statesByAsset, asset.Id, now, success: true, error: null, from);
             assetsProcessed.Add(asset.Symbol);
         }
 
@@ -295,8 +307,16 @@ public sealed class DividendBackfillService(
             assetsProcessed, assetsSkippedForBudget, assetsFailed, dividendEventsInserted, callsUsed);
     }
 
+    /// <summary>
+    /// <paramref name="from"/> is the date THIS attempt requested from Yahoo (the asset's own
+    /// earliest trade date at the time of the call) — recorded into
+    /// <see cref="AssetDividendState.CoveredFrom"/> only on success, refresh-catch-up's mirror of
+    /// <see cref="Domain.Entities.AssetPriceHistoryState.CoveredFrom"/>. A failure must never touch
+    /// it: shrinking known coverage on a failed retry would make the catch-up planner re-fetch an
+    /// asset it has already, successfully, asked about.
+    /// </summary>
     private void RecordState(
-        Dictionary<int, AssetDividendState> statesByAsset, int assetId, DateTimeOffset now, bool success, string? error)
+        Dictionary<int, AssetDividendState> statesByAsset, int assetId, DateTimeOffset now, bool success, string? error, DateOnly from)
     {
         if (!statesByAsset.TryGetValue(assetId, out var state))
         {
@@ -312,6 +332,7 @@ public sealed class DividendBackfillService(
         if (success)
         {
             state.LastSuccessAt = now;
+            state.CoveredFrom = from;
         }
     }
 

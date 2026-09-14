@@ -560,14 +560,14 @@ describe('describeIdleRefreshPreview', () => {
   it('names every market when all are open', () => {
     const message = describeIdleRefreshPreview(status({ nyseOpen: true, sgxOpen: true }));
     expect(message).toBe(
-      'Fetches live prices now for US market, SGX and crypto. Daily closing prices and dividend history update on their own schedule and are not touched by this.',
+      'Fetches live prices now for US market, SGX and crypto. Missing price history and dividends are fetched in the background automatically.',
     );
   });
 
   it('separates what will and will not refresh when one market is closed', () => {
     const message = describeIdleRefreshPreview(status({ nyseOpen: false, sgxOpen: true }));
     expect(message).toBe(
-      "Fetches live prices now for SGX and crypto — US market is closed and won't be refreshed. Daily closing prices and dividend history update on their own schedule and are not touched by this.",
+      "Fetches live prices now for SGX and crypto — US market is closed and won't be refreshed. Missing price history and dividends are fetched in the background automatically.",
     );
   });
 

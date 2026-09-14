@@ -262,12 +262,131 @@ export interface SourceRefreshOutcome {
   error: string | null;
 }
 
-/** 200 body of POST /api/prices/refresh. */
+/**
+ * 2026-09-14 catch-up feature — `POST /api/prices/refresh` now ALSO fetches
+ * missing price history and missing dividends (only what is actually
+ * missing: a newly added stock, a back-dated transaction, a previously
+ * failed fetch), detached onto a background task so the endpoint still
+ * returns immediately. `RefreshCatchUpPlan` is what it queued (or found
+ * already queued/failing/not-yet-fetchable); the outcome of that background
+ * work arrives later as a "CatchUpCompleted" push — see
+ * `CatchUpCompletedNotification` below. Stocks only, same as every other
+ * price-history/dividend feature — crypto keeps no price history at all
+ * (locked decision, CLAUDE.md), so both legs are always empty for crypto.
+ */
+export type CatchUpState = 'NothingToFetch' | 'Queued' | 'AlreadyRunning';
+
+export type CatchUpKind = 'PriceHistory' | 'Dividends';
+
+/**
+ * One leg (price history OR dividends) of a `RefreshCatchUpPlan`. `state`
+ * describes `fetchSymbols` specifically — Queued/AlreadyRunning/NothingToFetch
+ * all key off whether anything missing-and-eligible was found this click.
+ * `retryPendingSymbols` and `notYetAvailableSymbols` are independent facts
+ * that can be non-empty regardless of `state` (e.g. `state: 'NothingToFetch'`
+ * with a non-empty `retryPendingSymbols` — nothing new to queue, but a
+ * previous failure is still waiting on its own retry schedule). Never
+ * collapse these into `fetchSymbols` or into each other — this is the
+ * D10/D26/D33/D35/D38/D45 "not attempted" vs "attempted and failed" family
+ * applied to a background catch-up: `retryPendingSymbols` is "not attempted
+ * this click, a prior attempt failed recently", `notYetAvailableSymbols` is
+ * "not attempted, there is nothing to fetch yet", and NEITHER is the same as
+ * `fetchSymbols` under `AlreadyRunning`, which WAS eligible and simply lost a
+ * race with an already-running job of the same kind.
+ */
+export interface CatchUpLeg {
+  state: CatchUpState;
+  /** Missing & eligible: queued by THIS click (`state: 'Queued'`), or would
+   *  have been had a same-kind backfill not already been running
+   *  (`state: 'AlreadyRunning'`) — read `state` to tell those apart. `[]` for
+   *  `NothingToFetch`. */
+  fetchSymbols: string[];
+  /** e.g. `"USD/SGD"`. Price-history leg only — always `[]` for dividends. */
+  fxPairs: string[];
+  /** Missing, but the last attempt failed recently — NOT attempted this
+   *  click; the backend retries these on its own schedule. Independent of
+   *  `state` — see this interface's header comment. */
+  retryPendingSymbols: string[];
+  /** Price history only, always `[]` for dividends: the stock's first trade
+   *  is after its market's latest settled close, so no close exists to fetch
+   *  yet — not a failure, not a retry candidate, nothing to attempt. */
+  notYetAvailableSymbols: string[];
+  /**
+   * Non-null only when `state === 'Queued'` — identifies THIS queued run.
+   * `PriceStore` matches it against the `runId` on a later `CatchUpCompleted`
+   * push to know when this specific leg has finished, rather than comparing
+   * timestamps: the backend starts the detached catch-up task BEFORE it
+   * sends this POST response, so a fast leg (one Yahoo dividend call) can
+   * finish and push its completion over SignalR before this plan even
+   * arrives client-side. An id match works regardless of which one arrives
+   * first; a clock comparison does not. Treat an absent field exactly like
+   * `null`.
+   */
+  runId: string | null;
+}
+
+export interface RefreshCatchUpPlan {
+  priceHistory: CatchUpLeg;
+  dividends: CatchUpLeg;
+}
+
+/**
+ * SignalR "CatchUpCompleted" push — arrives once per leg (`kind`), whenever
+ * the background fetch a `Queued` `CatchUpLeg` started finishes. Can arrive
+ * EITHER before or after the `RefreshCatchUpPlan` that queued it reaches the
+ * client — the backend starts the detached catch-up task before it sends the
+ * `POST /api/prices/refresh` response, so a fast leg can finish and push
+ * this before that response's `next` handler even runs. `PriceStore` is the
+ * only listener; see its header comment for how `runId` — not a timestamp —
+ * is what lets it match this to the right plan regardless of arrival order.
+ *
+ * `succeededSymbols`, `failed` and `skippedForBudgetSymbols` are three
+ * separate buckets, never collapsed — a symbol that was attempted and failed
+ * must never render the same as one that was never attempted because the
+ * daily Twelve Data credit budget ran out (same defect family as
+ * `CatchUpLeg`'s header comment). `failed` carries a `symbol`/`error` PAIR
+ * per entry, deliberately not two parallel arrays, because different symbols
+ * in the same completion can fail for different reasons and must keep their
+ * own error text. An FX-rate failure (price-history leg only) appears in
+ * `failed` with `symbol: "FX:USD/SGD"` rather than a real stock symbol.
+ */
+export interface CatchUpCompletedNotification {
+  kind: CatchUpKind;
+  succeededSymbols: string[];
+  failed: { symbol: string; error: string }[];
+  /** Not attempted — the daily Twelve Data credit budget was already spent.
+   *  Distinct from `failed` (attempted and failed) — never collapse the two. */
+  skippedForBudgetSymbols: string[];
+  /** New `PriceHistory`+`FxRates` rows (price-history leg) or new
+   *  `DividendEvent` rows (dividends leg). `0` means nothing new landed even
+   *  though the fetch ran (e.g. everything in `succeededSymbols` already had
+   *  every row it needed) — a page showing this data only needs to reload
+   *  when this is `> 0`. */
+  rowsInserted: number;
+  /** ISO instant. Used only to pick the more recent of two completions for
+   *  the same `kind` (out-of-order redelivery) — NOT for matching a
+   *  completion to its plan; see `runId` for that. */
+  completedAt: string;
+  /** The same id the `CatchUpLeg` that queued this run carried
+   *  (`CatchUpLeg.runId`) — always present on a completion, never `null`. */
+  runId: string;
+}
+
+/**
+ * 200 body of POST /api/prices/refresh.
+ *
+ * `catchUp` — `null`/absent on a scheduled (non-manual) cycle and on any
+ * server older than the 2026-09-14 catch-up feature; treat an absent field
+ * EXACTLY like an explicit `null` (say nothing about catch-up), never as
+ * "nothing was missing" — those are different facts and only the latter is
+ * `NothingToFetch` on both legs.
+ */
 export interface PriceRefreshCycleResult {
   outcome: RefreshOutcome;
   cooldownSecondsRemaining: number | null;
   sources: SourceRefreshOutcome[];
   totalSymbolsRefreshed: number;
+  catchUp?: RefreshCatchUpPlan | null;
 }
 
 /** The `secondsRemaining` extension on the 429 ProblemDetails body. */

@@ -48,5 +48,13 @@ public class AssetConfiguration : IEntityTypeConfiguration<Asset>
             .WithOne(s => s.Asset)
             .HasForeignKey<AssetDividendState>(s => s.AssetId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        // Refresh-catch-up feature: same Restrict-and-explicit-delete reasoning as DividendState
+        // above — the delete is written out in AssetService.DeleteAsync, never delegated to the
+        // database.
+        builder.HasOne(a => a.PriceHistoryState)
+            .WithOne(s => s.Asset)
+            .HasForeignKey<AssetPriceHistoryState>(s => s.AssetId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

@@ -82,6 +82,15 @@ public interface IDividendBackfillService
     /// <paramref name="trigger"/> must be one of the two <c>DividendBackfill*</c> values.</summary>
     Task<DividendBackfillSummary> RunAsync(RefreshTrigger trigger, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Refresh-catch-up feature: runs unconditionally for exactly <paramref name="assetIds"/>,
+    /// always tagged <see cref="RefreshTrigger.DividendBackfillCatchUp"/> — a trigger
+    /// <see cref="RunIfDueAsync"/>'s due-ness queries never look at, so a catch-up run can never be
+    /// mistaken for the scheduled full pass. See <c>IRefreshCatchUpService</c> for how
+    /// <paramref name="assetIds"/> is decided.
+    /// </summary>
+    Task<DividendBackfillSummary> RunCatchUpAsync(IReadOnlySet<int> assetIds, CancellationToken cancellationToken);
+
     /// <summary>Runs <see cref="RunAsync"/> with <see cref="RefreshTrigger.DividendBackfillScheduled"/>,
     /// but only once per calendar day for a FULL run — dividends move quarterly, so a background
     /// poll re-checking every asset on every tick would just waste Yahoo calls for no benefit.

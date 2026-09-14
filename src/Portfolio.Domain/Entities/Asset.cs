@@ -88,4 +88,8 @@ public class Asset
 
     /// <summary>Dividend backfill state — stocks only, never populated for crypto.</summary>
     public AssetDividendState? DividendState { get; set; }
+
+    /// <summary>Daily-close backfill coverage state — stocks only, never populated for crypto. See
+    /// <see cref="AssetPriceHistoryState"/>.</summary>
+    public AssetPriceHistoryState? PriceHistoryState { get; set; }
 }

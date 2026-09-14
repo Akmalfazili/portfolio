@@ -157,6 +157,18 @@ public sealed class AssetDeleteCascadeTests : IAsyncLifetime
                 LastAttemptedAt = Now,
                 LastSuccessAt = Now,
                 LastRunSuccess = true,
+                CoveredFrom = new DateOnly(2026, 1, 5),
+            });
+            // Refresh-catch-up feature: the tripwire this class exists for — extend it whenever a
+            // new child table hangs off Asset (CLAUDE.md's asset-deletion decision).
+            seed.AssetPriceHistoryStates.Add(new AssetPriceHistoryState
+            {
+                AssetId = assetId,
+                LastAttemptedAt = Now,
+                LastSuccessAt = Now,
+                LastRunSuccess = true,
+                CoveredFrom = new DateOnly(2026, 1, 5),
+                CoveredTo = new DateOnly(2026, 1, 5),
             });
             await seed.SaveChangesAsync();
         }
@@ -175,5 +187,6 @@ public sealed class AssetDeleteCascadeTests : IAsyncLifetime
         (await verify.PriceQuotes.AnyAsync(q => q.AssetId == assetId)).Should().BeFalse();
         (await verify.DividendEvents.AnyAsync(d => d.AssetId == assetId)).Should().BeFalse();
         (await verify.AssetDividendStates.AnyAsync(s => s.AssetId == assetId)).Should().BeFalse();
+        (await verify.AssetPriceHistoryStates.AnyAsync(s => s.AssetId == assetId)).Should().BeFalse();
     }
 }

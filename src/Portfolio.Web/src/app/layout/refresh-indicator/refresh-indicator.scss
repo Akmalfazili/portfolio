@@ -203,3 +203,21 @@
   font-size: var(--ui-font-size-xs);
   color: var(--ui-color-on-surface-muted);
 }
+
+// 2026-09-14 catch-up feature — the panel's own "Fetching…" / outcome line
+// per leg (price history, dividends). Same typography as `__row-freshness`
+// but without that rule's dot/title indent, since this list isn't paired
+// with a status dot.
+.refresh-panel__catchup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.refresh-panel__catchup-line {
+  font-size: var(--ui-font-size-xs);
+  color: var(--ui-color-on-surface-secondary);
+}
