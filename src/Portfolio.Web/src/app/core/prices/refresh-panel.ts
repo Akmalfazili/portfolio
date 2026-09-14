@@ -272,8 +272,10 @@ export function describeIdleRefreshPreview(status: PriceRefreshStatus | null): s
   // any MISSING price history and dividends in the background (a newly added
   // stock, a back-dated transaction, a previously failed fetch). A portfolio
   // with nothing missing makes no extra provider calls, so this stays true
-  // for the common case too, not just the catch-up one.
-  const footer = 'Missing price history and dividends are fetched in the background automatically.';
+  // for the common case too, not just the catch-up one. The click is the
+  // subject of that sentence — "automatically" was read as "not caused by
+  // this button", the opposite of what's meant, so it's gone.
+  const footer = 'Also fills in any missing price history and dividends in the background.';
 
   if (!status) {
     return `Fetches live prices now. ${footer}`;
@@ -290,7 +292,8 @@ export function describeIdleRefreshPreview(status: PriceRefreshStatus | null): s
   }
 
   const verb = closed.length === 1 ? 'is' : 'are';
-  return `Fetches live prices now for ${joinWithAnd(open)} — ${joinWithAnd(closed)} ${verb} closed and won't be refreshed. ${footer}`;
+  const pronoun = closed.length === 1 ? 'its' : 'their';
+  return `Fetches live prices now for ${joinWithAnd(open)} — ${joinWithAnd(closed)} ${verb} closed, so ${pronoun} prices won't be refreshed. ${footer}`;
 }
 
 /**
