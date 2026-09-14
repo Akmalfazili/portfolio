@@ -36,8 +36,6 @@
 
 <mat-menu #detailsMenu="matMenu" class="refresh-panel" xPosition="before">
   <div class="refresh-panel__content">
-    <p class="refresh-panel__lead">Pressing refresh fetches live prices right now.</p>
-
     @if (status() === null) {
       <p class="refresh-panel__waiting">Waiting for the first status update from the server…</p>
     } @else {
@@ -45,51 +43,33 @@
         @for (row of marketRows(); track row.provider) {
           <li class="refresh-panel__row">
             <div class="refresh-panel__row-header">
-              <span class="refresh-panel__row-label">{{ row.label }}</span>
+              <span class="refresh-panel__row-title">
+                <span
+                  class="refresh-panel__row-dot"
+                  [class.refresh-panel__row-dot--good]="row.alwaysOpen || row.isOpen"
+                  aria-hidden="true"
+                ></span>
+                {{ row.label }}
+              </span>
               <span
-                class="refresh-panel__row-chip"
-                [class.refresh-panel__row-chip--open]="row.isOpen"
+                class="refresh-panel__row-state"
+                [class.refresh-panel__row-state--good]="row.alwaysOpen || row.isOpen"
               >
-                {{ row.alwaysOpen ? 'Always on' : row.isOpen ? 'Open' : 'Closed' }}
+                {{ row.alwaysOpen ? '24/7' : row.isOpen ? 'Open' : 'Closed' }}
               </span>
             </div>
 
-            <p
-              class="refresh-panel__row-action"
-              [class.refresh-panel__row-action--will]="row.willRefresh"
-            >
-              <mat-icon aria-hidden="true">{{
-                row.willRefresh ? 'check_circle' : 'block'
-              }}</mat-icon>
-              {{ row.willRefresh ? 'Will refresh now' : "Won't refresh — market is closed" }}
-            </p>
-
-            <p class="refresh-panel__row-meta">
-              @if (row.hasData) {
-                Last updated {{ row.lastSuccessLabel }} · next automatic check
-                {{ row.nextDueLabel }}.
-              } @else {
-                No refresh recorded yet.
-              }
-            </p>
-
-            @if (row.hasData && row.cadenceLabel) {
-              <p class="refresh-panel__row-cadence">Automatic checks {{ row.cadenceLabel }}.</p>
-            }
+            <p class="refresh-panel__row-freshness">{{ row.freshnessLabel }}</p>
 
             @if (row.showLiveFailure) {
               <p class="refresh-panel__row-error">
                 <mat-icon aria-hidden="true">warning</mat-icon>
                 @if (row.lastAttemptedLabel) {
-                  Last attempt failed {{ row.lastAttemptedLabel }} — {{ row.errorSummary }}
+                  Update failed {{ row.lastAttemptedLabel }} · {{ row.errorSummary }}
                 } @else {
-                  Last attempt failed — {{ row.errorSummary }}
+                  Update failed · {{ row.errorSummary }}
                 }
               </p>
-            }
-
-            @if (row.closeThroughLabel) {
-              <p class="refresh-panel__row-close">{{ row.closeThroughLabel }}</p>
             }
 
             @if (row.closeFailedLabel) {
@@ -104,9 +84,6 @@
     }
 
     <hr class="refresh-panel__rule" />
-    <p class="refresh-panel__footer">
-      Daily closing prices and dividend history update on their own schedule. This button only
-      fetches live prices — it never touches those.
-    </p>
+    <p class="refresh-panel__footer">{{ refreshScopeLabel() }}</p>
   </div>
 </mat-menu>

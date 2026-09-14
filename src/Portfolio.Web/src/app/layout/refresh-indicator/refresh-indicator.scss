@@ -84,12 +84,11 @@
   // rather than the inherited menu-item pointer.
   cursor: default;
   white-space: normal;
-}
-
-.refresh-panel__lead {
-  margin: 0;
-  font-weight: var(--ui-font-weight-semibold);
-  color: var(--ui-color-on-surface);
+  // mat-menu's own item typography is 500 by default, which this content
+  // inherits — without resetting it here, every line in the panel (not just
+  // the title/state text meant to stand out) renders semi-bold and the
+  // hierarchy flattens.
+  font-weight: var(--ui-font-weight-regular);
 }
 
 .refresh-panel__waiting {
@@ -101,6 +100,9 @@
 .refresh-panel__rows {
   display: flex;
   flex-direction: column;
+  // Spacing carries the row separation instead of a border between rows —
+  // each row is only two or three short lines now, so a hairline reads as
+  // visual noise rather than a needed divider.
   gap: var(--ui-space-3);
   margin: 0;
   padding: 0;
@@ -111,13 +113,11 @@
   display: flex;
   flex-direction: column;
   gap: var(--ui-space-1);
-  padding-bottom: var(--ui-space-2);
-  border-bottom: 1px solid var(--ui-color-border);
-
-  &:last-child {
-    padding-bottom: 0;
-    border-bottom: 0;
-  }
+  // Shared by the dot's own size and the title's dot-to-text gap below, so
+  // the freshness/error lines' indent is computed FROM those two values
+  // rather than a separately-typed copy that could silently drift from them.
+  --row-dot-size: var(--ui-space-2);
+  --row-title-gap: var(--ui-space-2);
 }
 
 .refresh-panel__row-header {
@@ -127,63 +127,55 @@
   gap: var(--ui-space-2);
 }
 
-.refresh-panel__row-label {
+.refresh-panel__row-title {
+  display: flex;
+  align-items: center;
+  gap: var(--row-title-gap);
   font-weight: var(--ui-font-weight-semibold);
   color: var(--ui-color-on-surface);
 }
 
-.refresh-panel__row-chip {
+// Small status dot ahead of the title — sized from the existing spacing-token
+// scale rather than a raw px, per CLAUDE.md's token rule.
+.refresh-panel__row-dot {
+  width: var(--row-dot-size);
+  height: var(--row-dot-size);
+  border-radius: var(--ui-radius-circle);
+  background: var(--ui-color-on-surface-muted);
+  flex: none;
+}
+
+.refresh-panel__row-dot--good {
+  background: var(--ui-color-status-good);
+}
+
+.refresh-panel__row-state {
   font-size: var(--ui-font-size-xs);
   font-weight: var(--ui-font-weight-medium);
   color: var(--ui-color-on-surface-muted);
 }
 
-.refresh-panel__row-chip--open {
+.refresh-panel__row-state--good {
   color: var(--ui-color-status-good);
 }
 
-// The one thing in this panel that must be the most legible — what a press
-// will actually do to this market, right now.
-.refresh-panel__row-action {
-  display: flex;
-  align-items: center;
-  gap: var(--ui-space-1);
-  margin: 0;
-  font-weight: var(--ui-font-weight-semibold);
-  color: var(--ui-color-on-surface-secondary);
-
-  mat-icon {
-    width: var(--ui-size-icon-sm);
-    height: var(--ui-size-icon-sm);
-    font-size: var(--ui-size-icon-sm);
-    flex: none;
-    color: var(--ui-color-on-surface-muted);
-  }
-}
-
-.refresh-panel__row-action--will {
-  color: var(--ui-color-status-good);
-
-  mat-icon {
-    color: var(--ui-color-status-good);
-  }
-}
-
-.refresh-panel__row-meta,
-.refresh-panel__row-cadence,
-.refresh-panel__row-close {
-  margin: 0;
+// Indented to align with the title TEXT, not the dot — the dot, title and
+// this line would otherwise all start at the same x, which measured false
+// alignment in Chrome (dot/title/freshness all at the same left edge).
+.refresh-panel__row-freshness {
+  margin: 0 0 0 calc(var(--row-dot-size) + var(--row-title-gap));
   font-size: var(--ui-font-size-xs);
   color: var(--ui-color-on-surface-secondary);
 }
 
 // Same amber-warning-banner convention as portfolio-overview's `__caveat` and
 // transactions' `__warning` — a failed attempt is a real caveat, not decor.
+// Indented like `__row-freshness` above, for the same reason.
 .refresh-panel__row-error {
   display: flex;
   align-items: center;
   gap: var(--ui-space-2);
-  margin: 0;
+  margin: 0 0 0 calc(var(--row-dot-size) + var(--row-title-gap));
   padding: var(--ui-space-2) var(--ui-space-3);
   background: color-mix(in srgb, var(--ui-color-status-warning) 14%, transparent);
   color: var(--ui-color-on-surface);

@@ -1,12 +1,24 @@
-import { MarketCloseStatus, PriceRefreshStatus, QuoteProviderKind } from '../api/models';
+import {
+  MarketCloseStatus,
+  PriceRefreshStatus,
+  QuoteProviderKind,
+  SourceRefreshStatus,
+} from '../api/models';
 import { joinWithAnd, SOURCE_MARKET_LABEL, SOURCE_MARKET_TITLE } from './refresh-outcome';
-import { formatDueIn, formatRelativeTime } from '../../shared/time/relative-time';
+import { formatRelativeTime } from '../../shared/time/relative-time';
 import { formatDateOnly } from '../../shared/util/local-date';
 
 /**
  * Backs the refresh-details panel opened from the toolbar's "Updated N ago"
- * trigger — the D5 messaging that used to be discoverable only on hover,
- * after the click, moved to something readable *before* pressing refresh.
+ * trigger.
+ *
+ * The panel answers one question per market, in two lines: is it trading,
+ * and how current is the price the user is actually looking at right now. A
+ * third line appears only when something is wrong. Everything this used to
+ * show beyond that — "Will refresh now"/"Won't refresh", the next
+ * automatic-check countdown, the Twelve Data cadence line, and the
+ * " · recorded …" clause on the close line — was cut as noise; see the
+ * 2026-09-14 tracker.md entry for the before/after.
  *
  * Pure and unit-testable on its own, same shape as `refresh-outcome.ts`.
  *
@@ -14,39 +26,63 @@ import { formatDateOnly } from '../../shared/util/local-date';
  * defect family — "not attempted" must never collapse into "zero" or
  * "failed"):
  *  - A provider absent from `status.sources` (a brand-new install, before its
- *    first ever cycle) renders as "no data yet" — never a confident zero and
- *    never presented as a failure.
- *  - `willRefresh` reflects ONLY the market gate (D5) — crypto is always on;
- *    US/SGX depend on `nyseOpen`/`sgxOpen`. It says nothing about the
- *    cooldown/in-flight state, which the button itself already disables for.
+ *    first ever cycle) renders as "Waiting for first update" — never a
+ *    confident zero and never presented as a failure.
+ *  - A source that HAS run but has never once succeeded renders "No
+ *    successful update yet" — distinct from both "waiting" (never ran at
+ *    all) and a genuine last-known-good timestamp.
  *  - A failed last attempt (`lastRunSuccess: false` with a `lastError`) is
  *    surfaced distinctly from "market closed, not attempted" — never the same
  *    row state.
  *
- * Closing-price (backfill) status — `PriceRefreshStatus.closes` (2026-09-13,
- * see that field's own header comment for the live incident this fixes):
+ * Freshness line (`MarketRefreshRow.freshnessLabel`) — the fix for a real
+ * live symptom (2026-09-14): a stack that wasn't running during NYSE hours
+ * for several days read "Last updated 5d ago" for US stocks while the market
+ * was closed, which is the wrong thing to lead with — the price on screen is
+ * Friday's close, not a 5-day-old live quote. So a CLOSED market with an
+ * honest close on file leads with the close date instead of the live
+ * timestamp, mirroring the backend's own D48 read-time fallback:
+ *  - `!hasData` → "Waiting for first update".
+ *  - Source present but never successfully run (`lastSuccessAt` null) → "No
+ *    successful update yet" — UNLESS a closed market's paired close entry
+ *    covers it (see below), in which case the close line wins instead of
+ *    reporting on the live leg at all.
+ *  - An OPEN market, or crypto (always open) → always the live
+ *    "Updated N ago" reading. Live data is what matters while a market
+ *    trades, so a close entry is never consulted here at all.
+ *  - A CLOSED market (TwelveData/Yahoo) with a paired close entry that has a
+ *    `latestCloseDate`, where the live leg is either never-succeeded or its
+ *    UTC calendar date is NO LATER than `latestCloseDate` → the close label.
+ *    Mirrors `PortfolioSummaryService`'s D48 strict-`>` tie-break (a same-UTC-
+ *    date tie goes to the close, not the live quote), so a live success
+ *    recorded on the same calendar day as the close does not spuriously win.
+ *  - Otherwise (closed market, live leg strictly newer than the close, or no
+ *    usable close entry at all) → falls back to the live "Updated N ago" /
+ *    "No successful update yet" reading, covering the honest gap between a
+ *    session ending and that evening's backfill landing.
+ *  - `closes` absent/null, or no matching entry, or `latestCloseDate` null —
+ *    all behave EXACTLY as if `closes` did not exist: the live reading is
+ *    used, unchanged.
+ *
+ * Closing-price (backfill) failure line — `PriceRefreshStatus.closes`
+ * (2026-09-13, see that field's own header comment for the live incident this
+ * fixes):
  *  - `TwelveData` rows pair with the `Nyse` close entry, `Yahoo` rows with
  *    `Sgx`. `CoinGecko` has no close entry at all — crypto keeps no price
  *    history — and must never gain one here.
- *  - `closes` absent/null (an older cached snapshot, or a backend that
- *    predates the field) must behave EXACTLY as if it did not exist — no
- *    close line, and the live-failure line renders exactly as it did before
- *    this field existed.
  *  - `lastRunSuccess: null` on a close entry means "never attempted" — it
  *    must never render as a failure (same D10/D26/D33/D35/D38/D45 family as
  *    everywhere else in this file). Only `lastRunSuccess === false` renders
  *    the close-failed line.
- *  - `latestCloseDate: null` means there is no honest floor to report yet, so
- *    no "closing prices through <date>" claim is made even if a run has
- *    otherwise succeeded.
  *  - THE SUPERSEDE RULE this field exists for: while a market is CLOSED, a
  *    live-quote failure that is *older* than a close entry's `lastSuccessAt`
  *    has been overtaken by events — the backfill that ran afterwards is what
  *    actually kept that market's price current, so the stale live-failure
- *    line is suppressed (`showLiveFailure` false) in favour of the close
- *    line. While the market is OPEN, the live failure is always shown
- *    regardless of any close entry — live data is what matters when the
- *    market is trading, so it must never be hidden behind a backfill fact.
+ *    line is suppressed (`showLiveFailure` false) in favour of the freshness
+ *    line's close reading. While the market is OPEN, the live failure is
+ *    always shown regardless of any close entry — live data is what matters
+ *    when the market is trading, so it must never be hidden behind a
+ *    backfill fact.
  */
 const MARKET_ORDER: readonly QuoteProviderKind[] = ['TwelveData', 'Yahoo', 'CoinGecko'];
 
@@ -68,28 +104,28 @@ export interface MarketRefreshRow {
    * comment in `refresh-outcome.ts` for why the two must not be merged.
    */
   readonly label: string;
-  /** Crypto only — there is no market-hours concept for it at all. */
+  /** Crypto only — there is no market-hours concept for it at all. Renders "24/7". */
   readonly alwaysOpen: boolean;
   readonly isOpen: boolean;
-  /** What pressing refresh right now will do to this market — the whole point of this row. */
-  readonly willRefresh: boolean;
   /** False when this provider has never once been recorded — "no data yet", not a zero. */
   readonly hasData: boolean;
-  readonly lastSuccessLabel: string;
-  readonly nextDueLabel: string;
-  /** Twelve Data's own automatic cadence, when the backend has reported it. Null otherwise. */
-  readonly cadenceLabel: string | null;
+  /**
+   * The line-2 freshness reading — see this file's header comment for the
+   * full rule. One of "Waiting for first update", "No successful update
+   * yet", "Updated N ago", or "Closing prices · Fri 11 Sep".
+   */
+  readonly freshnessLabel: string;
   /** True only when the source WAS attempted and failed — never true for "not attempted". */
   readonly attemptedAndFailed: boolean;
   /** Short, truncated summary — never the raw provider error string. */
   readonly errorSummary: string | null;
   /**
    * When the failed attempt happened, in the same "N ago" wording as
-   * `lastSuccessLabel` (via `formatRelativeTime`) so a failure from a market
-   * that has since closed — and therefore hasn't been retried — cannot read
-   * as having "just" happened. Null only when there is no failure to time
-   * (`attemptedAndFailed` false) or the backend somehow sent no
-   * `lastAttemptedAt` on a failed row; the template falls back to the
+   * `freshnessLabel`'s "Updated N ago" (via `formatRelativeTime`) so a
+   * failure from a market that has since closed — and therefore hasn't been
+   * retried — cannot read as having "just" happened. Null only when there is
+   * no failure to time (`attemptedAndFailed` false) or the backend somehow
+   * sent no `lastAttemptedAt` on a failed row; the template falls back to the
    * un-timestamped wording in that case rather than rendering "Invalid Date".
    */
   readonly lastAttemptedLabel: string | null;
@@ -103,23 +139,10 @@ export interface MarketRefreshRow {
    */
   readonly showLiveFailure: boolean;
   /**
-   * "Closing prices through Fri 11 Sep · recorded 17h ago" — null for
-   * `CoinGecko` always, and null whenever there is nothing honest to claim
-   * (`closes` absent, no matching entry, or `latestCloseDate` null).
-   *
-   * The " · recorded …" clause itself is dropped (rendering just "Closing
-   * prices through Fri 11 Sep") when `lastSuccessAt` is null — a pre-D47
-   * successful backfill run recorded with no dated success at all. Pairing
-   * a real date with "recorded never" would read as self-contradicting, so
-   * the clause is omitted rather than lying with `formatRelativeTime`'s
-   * "never" fallback.
-   */
-  readonly closeThroughLabel: string | null;
-  /**
-   * "Last closing-price update failed 2h ago — {truncated error}" (or without
-   * the "N ago" clause if the close entry has no `lastAttemptedAt`). Null
-   * unless the close entry's `lastRunSuccess` is literally `false` —
-   * `null` (never attempted) renders neither this nor a failure of any kind.
+   * "Closing-price update failed 2h ago · {truncated error}" (or without the
+   * "N ago" clause if the close entry has no `lastAttemptedAt`). Null unless
+   * the close entry's `lastRunSuccess` is literally `false` — `null` (never
+   * attempted) renders neither this nor a failure of any kind.
    */
   readonly closeFailedLabel: string | null;
 }
@@ -138,7 +161,6 @@ function buildRow(
 ): MarketRefreshRow {
   const alwaysOpen = provider === 'CoinGecko';
   const isOpen = alwaysOpen ? true : provider === 'TwelveData' ? status.nyseOpen : status.sgxOpen;
-  const willRefresh = alwaysOpen || isOpen;
 
   const source = status.sources.find((s) => s.source === provider);
   const hasData = source !== undefined;
@@ -164,14 +186,8 @@ function buildRow(
     label: SOURCE_MARKET_TITLE[provider],
     alwaysOpen,
     isOpen,
-    willRefresh,
     hasData,
-    lastSuccessLabel: hasData ? formatRelativeTime(source.lastSuccessAt, nowMs) : 'no data yet',
-    nextDueLabel: hasData ? formatDueIn(source.nextDueAt, nowMs) : 'not yet scheduled',
-    cadenceLabel:
-      provider === 'TwelveData' && status.effectiveTwelveDataIntervalSeconds != null
-        ? formatIntervalLabel(status.effectiveTwelveDataIntervalSeconds)
-        : null,
+    freshnessLabel: computeFreshnessLabel(hasData, source, alwaysOpen, isOpen, close, nowMs),
     attemptedAndFailed,
     errorSummary: attemptedAndFailed ? summarizeError(source.lastError) : null,
     lastAttemptedLabel:
@@ -179,36 +195,60 @@ function buildRow(
         ? formatRelativeTime(source.lastAttemptedAt, nowMs)
         : null,
     showLiveFailure: attemptedAndFailed && !liveFailureSuperseded,
-    closeThroughLabel:
-      close && close.latestCloseDate ? formatCloseThroughLabel(close, nowMs) : null,
     closeFailedLabel:
       close && close.lastRunSuccess === false ? formatCloseFailedLabel(close, nowMs) : null,
   };
 }
 
-function formatCloseThroughLabel(close: MarketCloseStatus, nowMs: number): string {
-  const throughDate = `Closing prices through ${formatDateOnly(close.latestCloseDate!)}`;
-  // A pre-D47 success with no dated `lastSuccessAt` at all — omit the
-  // "recorded …" clause rather than render the self-contradicting
-  // "recorded never" that `formatRelativeTime`'s null fallback would produce.
-  return close.lastSuccessAt
-    ? `${throughDate} · recorded ${formatRelativeTime(close.lastSuccessAt, nowMs)}`
-    : throughDate;
+/** See this file's header comment for the full rule this implements. */
+function computeFreshnessLabel(
+  hasData: boolean,
+  source: SourceRefreshStatus | undefined,
+  alwaysOpen: boolean,
+  isOpen: boolean,
+  close: MarketCloseStatus | null,
+  nowMs: number,
+): string {
+  if (!hasData) {
+    return 'Waiting for first update';
+  }
+
+  // Live data is what matters while a market trades (or always, for
+  // crypto) — a close entry is never consulted here, even if one exists.
+  if (alwaysOpen || isOpen) {
+    return liveReading(source!, nowMs);
+  }
+
+  // Closed market: an honest close on file that is at least as new as the
+  // live leg (or the live leg never succeeded at all) is the more current,
+  // more honest thing to lead with. Same-UTC-date tie goes to the close,
+  // mirroring the backend's D48 strict-`>` rule.
+  if (close?.latestCloseDate) {
+    const liveDateUtc = source!.lastSuccessAt ? utcDateOnly(source!.lastSuccessAt) : null;
+    if (liveDateUtc === null || liveDateUtc <= close.latestCloseDate) {
+      return `Closing prices · ${formatDateOnly(close.latestCloseDate)}`;
+    }
+  }
+
+  return liveReading(source!, nowMs);
+}
+
+function liveReading(source: SourceRefreshStatus, nowMs: number): string {
+  return source.lastSuccessAt == null
+    ? 'No successful update yet'
+    : `Updated ${formatRelativeTime(source.lastSuccessAt, nowMs)}`;
+}
+
+/** The UTC calendar date ("YYYY-MM-DD") of an ISO instant. */
+function utcDateOnly(iso: string): string {
+  return new Date(iso).toISOString().slice(0, 10);
 }
 
 function formatCloseFailedLabel(close: MarketCloseStatus, nowMs: number): string {
   const summary = summarizeError(close.lastError) ?? 'unknown error';
   return close.lastAttemptedAt
-    ? `Last closing-price update failed ${formatRelativeTime(close.lastAttemptedAt, nowMs)} — ${summary}`
-    : `Last closing-price update failed — ${summary}`;
-}
-
-function formatIntervalLabel(seconds: number): string {
-  if (seconds < 60) {
-    return `every ~${seconds}s while open`;
-  }
-  const minutes = Math.round(seconds / 60);
-  return `every ~${minutes} min while open`;
+    ? `Closing-price update failed ${formatRelativeTime(close.lastAttemptedAt, nowMs)} · ${summary}`
+    : `Closing-price update failed · ${summary}`;
 }
 
 function summarizeError(error: string | null): string | null {
@@ -247,4 +287,31 @@ export function describeIdleRefreshPreview(status: PriceRefreshStatus | null): s
 
   const verb = closed.length === 1 ? 'is' : 'are';
   return `Fetches live prices now for ${joinWithAnd(open)} — ${joinWithAnd(closed)} ${verb} closed and won't be refreshed. ${footer}`;
+}
+
+/**
+ * The panel FOOTER's one-line scope statement — a terser descendant of
+ * `describeIdleRefreshPreview` above, written for a panel that already shows
+ * each market's Open/Closed state on its own row, so closed markets need no
+ * further mention here. `status: null` covers a fresh tab before the first
+ * status snapshot has arrived.
+ */
+export function describeRefreshScope(status: PriceRefreshStatus | null): string {
+  if (!status) {
+    return 'Refresh fetches live prices now.';
+  }
+
+  const openLabels: string[] = [];
+  if (status.nyseOpen) {
+    openLabels.push(SOURCE_MARKET_LABEL.TwelveData);
+  }
+  if (status.sgxOpen) {
+    openLabels.push(SOURCE_MARKET_LABEL.Yahoo);
+  }
+  openLabels.push(SOURCE_MARKET_LABEL.CoinGecko); // crypto is always open
+
+  if (status.nyseOpen && status.sgxOpen) {
+    return 'Refresh updates all markets now.';
+  }
+  return `Refresh updates ${joinWithAnd(openLabels)} now.`;
 }

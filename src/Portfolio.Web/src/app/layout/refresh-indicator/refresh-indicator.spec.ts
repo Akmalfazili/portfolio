@@ -137,15 +137,15 @@ describe('RefreshIndicator', () => {
       const rows = fixture.componentInstance.marketRows();
       const us = rows.find((r) => r.provider === 'TwelveData')!;
       const sgx = rows.find((r) => r.provider === 'Yahoo')!;
-      expect(us.willRefresh).toBe(false);
-      expect(sgx.willRefresh).toBe(true);
+      expect(us.isOpen).toBe(false);
+      expect(sgx.isOpen).toBe(true);
     });
 
-    it('a source missing from `sources` reads as "no data yet", not zero or failed', () => {
+    it('a source missing from `sources` reads as "waiting for first update", not zero or failed', () => {
       setup({ status: signal(status({ sources: [] })) });
       const rows = fixture.componentInstance.marketRows();
       expect(rows.every((r) => !r.hasData)).toBe(true);
-      expect(rows.every((r) => r.lastSuccessLabel === 'no data yet')).toBe(true);
+      expect(rows.every((r) => r.freshnessLabel === 'Waiting for first update')).toBe(true);
       expect(rows.every((r) => !r.attemptedAndFailed)).toBe(true);
     });
 
@@ -266,11 +266,72 @@ describe('RefreshIndicator', () => {
         const sgx = fixture.componentInstance.marketRows().find((r) => r.provider === 'Yahoo')!;
         expect(sgx.attemptedAndFailed).toBe(true); // the raw fact is unchanged
         expect(sgx.showLiveFailure).toBe(false); // but the stale line is suppressed
-        expect(sgx.closeThroughLabel).toBe('Closing prices through Fri 11 Sep · recorded 17h ago');
+        expect(sgx.freshnessLabel).toBe('Closing prices · Fri 11 Sep');
         expect(sgx.closeFailedLabel).toBeNull();
       } finally {
         nowSpy.mockRestore();
       }
+    });
+  });
+
+  // `<mat-menu>` content is rendered into a CDK overlay only once the menu is
+  // actually opened — it is not present in `fixture.nativeElement` just
+  // because the host component was created — so these assert against the
+  // component's own signals, the same convention the rest of this spec file
+  // already uses for the (identical, pre-existing) `marketRows()` tests
+  // above rather than querying menu DOM that was never instantiated.
+  describe('details panel — row state text', () => {
+    it('reports Open/Closed/24-7 per row, never the old "Always on" wording', () => {
+      setup({ status: signal(status({ nyseOpen: false, sgxOpen: true })) });
+      const rows = fixture.componentInstance.marketRows();
+      const us = rows.find((r) => r.provider === 'TwelveData')!;
+      const sgx = rows.find((r) => r.provider === 'Yahoo')!;
+      const crypto = rows.find((r) => r.provider === 'CoinGecko')!;
+      expect(us.isOpen).toBe(false);
+      expect(sgx.isOpen).toBe(true);
+      expect(crypto.alwaysOpen).toBe(true);
+    });
+
+    it('exposes a freshness line for each row', () => {
+      setup({
+        status: signal(
+          status({
+            nyseOpen: true,
+            sources: [
+              {
+                source: 'TwelveData',
+                lastAttemptedAt: '2026-07-31T11:55:00Z',
+                lastSuccessAt: '2026-07-31T11:55:00Z',
+                lastRunSuccess: true,
+                lastError: null,
+                symbolsRefreshed: 4,
+                nextDueAt: null,
+              },
+            ],
+          }),
+        ),
+      });
+      const us = fixture.componentInstance.marketRows().find((r) => r.provider === 'TwelveData')!;
+      expect(us.freshnessLabel).toContain('Updated');
+    });
+  });
+
+  describe('details panel — footer scope statement', () => {
+    it('renders what the button will do right now, keyed off the live status', () => {
+      setup({ status: signal(status({ nyseOpen: false, sgxOpen: true })) });
+      expect(fixture.componentInstance.refreshScopeLabel()).toBe(
+        'Refresh updates SGX and crypto now.',
+      );
+    });
+
+    it('says "all markets" when nothing is closed', () => {
+      setup({ status: signal(status({ nyseOpen: true, sgxOpen: true })) });
+      expect(fixture.componentInstance.refreshScopeLabel()).toBe('Refresh updates all markets now.');
+    });
+
+    it('falls back to a generic message before the first status snapshot arrives', () => {
+      setup({ status: signal(null) });
+      expect(fixture.componentInstance.refreshScopeLabel()).toBe('Refresh fetches live prices now.');
     });
   });
 

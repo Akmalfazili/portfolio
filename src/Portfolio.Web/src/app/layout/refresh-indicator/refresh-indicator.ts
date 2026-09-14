@@ -18,6 +18,7 @@ import { describeRefreshOutcome } from '../../core/prices/refresh-outcome';
 import {
   buildMarketRefreshRows,
   describeIdleRefreshPreview,
+  describeRefreshScope,
 } from '../../core/prices/refresh-panel';
 import { formatRelativeTime, isRefreshStale } from '../../shared/time/relative-time';
 
@@ -28,6 +29,14 @@ const TICK_INTERVAL_MS = 15_000;
  * `mat-menu` trigger opening a details panel — one row per market/provider),
  * a manual refresh button, a 429-cooldown countdown, and an amber stale
  * warning.
+ *
+ * The details panel (2026-09-14 redesign — see `refresh-panel.ts`'s header
+ * comment for the full rule) deliberately shows very little per row: a
+ * status dot + title with Open/Closed/24-7 state, one freshness line, and a
+ * warning line that appears only when something is actually wrong. Everything
+ * else that used to live there (the "Will refresh"/"Won't refresh" line, the
+ * next-automatic-check countdown, the Twelve Data cadence line) was cut —
+ * `marketRows()` and `refreshScopeLabel()` below are what's left.
  *
  * The D5 "why nothing moved" message no longer lives in a hover-only tooltip
  * discoverable only AFTER a click — see:
@@ -108,6 +117,15 @@ export class RefreshIndicator {
   });
 
   readonly panelTriggerLabel = computed(() => `Refresh details. ${this.relativeLabel()}.`);
+
+  /**
+   * The details-panel footer's terse "what will pressing refresh do" line —
+   * see `describeRefreshScope`'s own header comment for why it's a separate,
+   * shorter descendant of `idlePreview` below rather than reusing it: the
+   * panel already shows each market's Open/Closed state on its own row, so
+   * this needs to name only what's open, never repeat which markets are shut.
+   */
+  readonly refreshScopeLabel = computed(() => describeRefreshScope(this.priceStore.status()));
 
   /** Pre-click preview of what a press will do RIGHT NOW — the point of this whole feature. */
   private readonly idlePreview = computed(() =>

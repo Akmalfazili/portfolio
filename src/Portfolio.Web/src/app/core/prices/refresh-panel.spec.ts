@@ -1,5 +1,9 @@
 import { PriceRefreshStatus } from '../api/models';
-import { buildMarketRefreshRows, describeIdleRefreshPreview } from './refresh-panel';
+import {
+  buildMarketRefreshRows,
+  describeIdleRefreshPreview,
+  describeRefreshScope,
+} from './refresh-panel';
 
 function status(overrides: Partial<PriceRefreshStatus> = {}): PriceRefreshStatus {
   return {
@@ -15,15 +19,14 @@ function status(overrides: Partial<PriceRefreshStatus> = {}): PriceRefreshStatus
 describe('buildMarketRefreshRows', () => {
   const now = new Date('2026-07-31T12:10:00Z').getTime();
 
-  it('marks crypto always-open and willRefresh regardless of the other markets', () => {
+  it('marks crypto always-open regardless of the other markets', () => {
     const rows = buildMarketRefreshRows(status({ nyseOpen: false, sgxOpen: false }), now);
     const crypto = rows.find((r) => r.provider === 'CoinGecko')!;
     expect(crypto.alwaysOpen).toBe(true);
     expect(crypto.isOpen).toBe(true);
-    expect(crypto.willRefresh).toBe(true);
   });
 
-  it('a closed market reports isOpen/willRefresh false, not attempted-and-failed', () => {
+  it('a closed market reports isOpen false, not attempted-and-failed', () => {
     const rows = buildMarketRefreshRows(
       status({
         nyseOpen: false,
@@ -43,7 +46,6 @@ describe('buildMarketRefreshRows', () => {
     );
     const us = rows.find((r) => r.provider === 'TwelveData')!;
     expect(us.isOpen).toBe(false);
-    expect(us.willRefresh).toBe(false);
     expect(us.attemptedAndFailed).toBe(false);
   });
 
@@ -51,8 +53,7 @@ describe('buildMarketRefreshRows', () => {
     const rows = buildMarketRefreshRows(status({ sources: [] }), now);
     const sgx = rows.find((r) => r.provider === 'Yahoo')!;
     expect(sgx.hasData).toBe(false);
-    expect(sgx.lastSuccessLabel).toBe('no data yet');
-    expect(sgx.nextDueLabel).toBe('not yet scheduled');
+    expect(sgx.freshnessLabel).toBe('Waiting for first update');
     expect(sgx.attemptedAndFailed).toBe(false);
   });
 
@@ -82,7 +83,7 @@ describe('buildMarketRefreshRows', () => {
     expect(us.errorSummary!.endsWith('…')).toBe(true);
   });
 
-  it('times a failed attempt with the same "N ago" wording as lastSuccessLabel, so a stale failure cannot read as current', () => {
+  it('times a failed attempt with the same "N ago" wording as the freshness line, so a stale failure cannot read as current', () => {
     // A frozen SGX status from a Friday-evening outage, read on a Sunday
     // while the market is closed (D-style staleness bug): the failure
     // shouldn't read as if it "just" happened just because nothing has
@@ -164,6 +165,215 @@ describe('buildMarketRefreshRows', () => {
     expect(rows.find((r) => r.provider === 'Yahoo')!.label).toBe('SGX');
   });
 
+  describe('freshness line', () => {
+    it('an open market reads the live "Updated N ago" line', () => {
+      const rows = buildMarketRefreshRows(
+        status({
+          nyseOpen: true,
+          sources: [
+            {
+              source: 'TwelveData',
+              lastAttemptedAt: '2026-07-31T12:08:00Z',
+              lastSuccessAt: '2026-07-31T12:08:00Z',
+              lastRunSuccess: true,
+              lastError: null,
+              symbolsRefreshed: 4,
+              nextDueAt: null,
+            },
+          ],
+        }),
+        now,
+      );
+      expect(rows.find((r) => r.provider === 'TwelveData')!.freshnessLabel).toBe(
+        'Updated 2 min ago',
+      );
+    });
+
+    it('crypto (always open) reads the live "Updated N ago" line', () => {
+      const rows = buildMarketRefreshRows(
+        status({
+          sources: [
+            {
+              source: 'CoinGecko',
+              lastAttemptedAt: '2026-07-31T12:09:00Z',
+              lastSuccessAt: '2026-07-31T12:09:00Z',
+              lastRunSuccess: true,
+              lastError: null,
+              symbolsRefreshed: 3,
+              nextDueAt: null,
+            },
+          ],
+        }),
+        now,
+      );
+      expect(rows.find((r) => r.provider === 'CoinGecko')!.freshnessLabel).toBe('Updated 1 min ago');
+    });
+
+    it('no data at all reads "Waiting for first update"', () => {
+      const rows = buildMarketRefreshRows(status({ sources: [] }), now);
+      expect(rows.find((r) => r.provider === 'CoinGecko')!.freshnessLabel).toBe(
+        'Waiting for first update',
+      );
+    });
+
+    it('a source present but never successfully run reads "No successful update yet"', () => {
+      const rows = buildMarketRefreshRows(
+        status({
+          nyseOpen: true,
+          sources: [
+            {
+              source: 'TwelveData',
+              lastAttemptedAt: '2026-07-31T12:08:00Z',
+              lastSuccessAt: null,
+              lastRunSuccess: false,
+              lastError: 'boom',
+              symbolsRefreshed: 0,
+              nextDueAt: null,
+            },
+          ],
+        }),
+        now,
+      );
+      expect(rows.find((r) => r.provider === 'TwelveData')!.freshnessLabel).toBe(
+        'No successful update yet',
+      );
+    });
+
+    const closedSgxStatus = (
+      overrides: Partial<{
+        lastSuccessAt: string | null;
+        closes: PriceRefreshStatus['closes'];
+        sgxOpen: boolean;
+      }> = {},
+    ) =>
+      status({
+        sgxOpen: overrides.sgxOpen ?? false,
+        sources: [
+          {
+            source: 'Yahoo',
+            lastAttemptedAt: overrides.lastSuccessAt ?? '2026-07-30T09:00:00Z',
+            lastSuccessAt: overrides.lastSuccessAt === undefined ? '2026-07-30T09:00:00Z' : overrides.lastSuccessAt,
+            lastRunSuccess: true,
+            lastError: null,
+            symbolsRefreshed: 1,
+            nextDueAt: null,
+          },
+        ],
+        closes: overrides.closes,
+      });
+
+    it('closed market, live success on an EARLIER UTC date than the close, reads the close label', () => {
+      const rows = buildMarketRefreshRows(
+        closedSgxStatus({
+          lastSuccessAt: '2026-07-29T09:00:00Z',
+          closes: [
+            {
+              market: 'Sgx',
+              latestCloseDate: '2026-07-31',
+              lastAttemptedAt: '2026-07-31T10:00:00Z',
+              lastSuccessAt: '2026-07-31T10:00:00Z',
+              lastRunSuccess: true,
+              lastError: null,
+            },
+          ],
+        }),
+        now,
+      );
+      expect(rows.find((r) => r.provider === 'Yahoo')!.freshnessLabel).toBe(
+        'Closing prices · Fri 31 Jul',
+      );
+    });
+
+    it('closed market, live success on the SAME UTC date as the close (a tie), reads the close label', () => {
+      const rows = buildMarketRefreshRows(
+        closedSgxStatus({
+          lastSuccessAt: '2026-07-31T02:00:00Z', // same UTC date as the close below
+          closes: [
+            {
+              market: 'Sgx',
+              latestCloseDate: '2026-07-31',
+              lastAttemptedAt: '2026-07-31T10:00:00Z',
+              lastSuccessAt: '2026-07-31T10:00:00Z',
+              lastRunSuccess: true,
+              lastError: null,
+            },
+          ],
+        }),
+        now,
+      );
+      expect(rows.find((r) => r.provider === 'Yahoo')!.freshnessLabel).toBe(
+        'Closing prices · Fri 31 Jul',
+      );
+    });
+
+    it('closed market, live success STRICTLY NEWER than the close, reads the live "Updated N ago" line', () => {
+      const rows = buildMarketRefreshRows(
+        closedSgxStatus({
+          lastSuccessAt: '2026-07-31T12:05:00Z', // UTC date 07-31, after the close's 07-30
+          closes: [
+            {
+              market: 'Sgx',
+              latestCloseDate: '2026-07-30',
+              lastAttemptedAt: '2026-07-30T10:00:00Z',
+              lastSuccessAt: '2026-07-30T10:00:00Z',
+              lastRunSuccess: true,
+              lastError: null,
+            },
+          ],
+        }),
+        now,
+      );
+      expect(rows.find((r) => r.provider === 'Yahoo')!.freshnessLabel).toBe('Updated 5 min ago');
+    });
+
+    it('closed market with `closes` null behaves exactly as if it did not exist — the live reading', () => {
+      const rows = buildMarketRefreshRows(closedSgxStatus({ closes: null }), now);
+      expect(rows.find((r) => r.provider === 'Yahoo')!.freshnessLabel).toBe('Updated 1d ago');
+    });
+
+    it('closed market with a close entry whose latestCloseDate is null falls back to the live reading', () => {
+      const rows = buildMarketRefreshRows(
+        closedSgxStatus({
+          closes: [
+            {
+              market: 'Sgx',
+              latestCloseDate: null,
+              lastAttemptedAt: null,
+              lastSuccessAt: null,
+              lastRunSuccess: null,
+              lastError: null,
+            },
+          ],
+        }),
+        now,
+      );
+      expect(rows.find((r) => r.provider === 'Yahoo')!.freshnessLabel).toBe('Updated 1d ago');
+    });
+
+    it('an OPEN market never reads the close label, even with a matching close entry on file', () => {
+      const rows = buildMarketRefreshRows(
+        closedSgxStatus({
+          sgxOpen: true,
+          lastSuccessAt: '2026-07-25T09:00:00Z', // well before the close below
+          closes: [
+            {
+              market: 'Sgx',
+              latestCloseDate: '2026-07-31',
+              lastAttemptedAt: '2026-07-31T10:00:00Z',
+              lastSuccessAt: '2026-07-31T10:00:00Z',
+              lastRunSuccess: true,
+              lastError: null,
+            },
+          ],
+        }),
+        now,
+      );
+      const sgx = rows.find((r) => r.provider === 'Yahoo')!;
+      expect(sgx.freshnessLabel).not.toContain('Closing prices');
+      expect(sgx.freshnessLabel).toContain('Updated');
+    });
+  });
+
   describe('closing-price (backfill) status and the live-failure supersede rule', () => {
     // The exact 2026-09-13 live incident: SGX closed all weekend, Yahoo's last
     // live poll (Friday evening, before the close) failed in a host network
@@ -205,7 +415,7 @@ describe('buildMarketRefreshRows', () => {
       const sgx = rows.find((r) => r.provider === 'Yahoo')!;
       expect(sgx.attemptedAndFailed).toBe(true); // the raw fact is unchanged
       expect(sgx.showLiveFailure).toBe(false); // but display suppresses it
-      expect(sgx.closeThroughLabel).toBe('Closing prices through Fri 11 Sep · recorded 17h ago');
+      expect(sgx.freshnessLabel).toBe('Closing prices · Fri 11 Sep');
       expect(sgx.closeFailedLabel).toBeNull();
     });
 
@@ -261,7 +471,6 @@ describe('buildMarketRefreshRows', () => {
       const rows = buildMarketRefreshRows(sgxStatus(undefined), sgxNow);
       const sgx = rows.find((r) => r.provider === 'Yahoo')!;
       expect(sgx.showLiveFailure).toBe(true);
-      expect(sgx.closeThroughLabel).toBeNull();
       expect(sgx.closeFailedLabel).toBeNull();
     });
 
@@ -269,30 +478,7 @@ describe('buildMarketRefreshRows', () => {
       const rows = buildMarketRefreshRows(sgxStatus(null), sgxNow);
       const sgx = rows.find((r) => r.provider === 'Yahoo')!;
       expect(sgx.showLiveFailure).toBe(true);
-      expect(sgx.closeThroughLabel).toBeNull();
       expect(sgx.closeFailedLabel).toBeNull();
-    });
-
-    it('drops the "recorded …" clause, never "recorded never", when latestCloseDate is set but lastSuccessAt is null', () => {
-      // A pre-D47 successful backfill run recorded with Market == null, so
-      // the backend has a real closing date on file but no dated success to
-      // attribute it to. "Closing prices through Fri 11 Sep · recorded
-      // never" would contradict itself — the clause must be dropped entirely.
-      const rows = buildMarketRefreshRows(
-        sgxStatus([
-          {
-            market: 'Sgx',
-            latestCloseDate: '2026-09-11',
-            lastAttemptedAt: null,
-            lastSuccessAt: null,
-            lastRunSuccess: true,
-            lastError: null,
-          },
-        ]),
-        sgxNow,
-      );
-      const sgx = rows.find((r) => r.provider === 'Yahoo')!;
-      expect(sgx.closeThroughLabel).toBe('Closing prices through Fri 11 Sep');
     });
 
     it('a close entry with lastRunSuccess: null ("never attempted") shows neither a failure nor a supersede', () => {
@@ -311,7 +497,6 @@ describe('buildMarketRefreshRows', () => {
       );
       const sgx = rows.find((r) => r.provider === 'Yahoo')!;
       expect(sgx.closeFailedLabel).toBeNull();
-      expect(sgx.closeThroughLabel).toBeNull();
       expect(sgx.showLiveFailure).toBe(true); // nothing to supersede with
     });
 
@@ -331,10 +516,8 @@ describe('buildMarketRefreshRows', () => {
       );
       const sgx = rows.find((r) => r.provider === 'Yahoo')!;
       expect(sgx.closeFailedLabel).toBe(
-        'Last closing-price update failed 17h ago — Yahoo chart endpoint returned HTTP 500',
+        'Closing-price update failed 17h ago · Yahoo chart endpoint returned HTTP 500',
       );
-      // A failed backfill run can still have an honest floor from an earlier success.
-      expect(sgx.closeThroughLabel).toBe('Closing prices through Fri 4 Sep · recorded 9d ago');
     });
 
     it('never attaches a close entry to CoinGecko — crypto keeps no price history', () => {
@@ -362,22 +545,8 @@ describe('buildMarketRefreshRows', () => {
         now,
       );
       const crypto = rows.find((r) => r.provider === 'CoinGecko')!;
-      expect(crypto.closeThroughLabel).toBeNull();
       expect(crypto.closeFailedLabel).toBeNull();
     });
-  });
-
-  it('includes a Twelve Data cadence label only when the backend reports the interval', () => {
-    const withInterval = buildMarketRefreshRows(
-      status({ effectiveTwelveDataIntervalSeconds: 300 }),
-      now,
-    );
-    expect(withInterval.find((r) => r.provider === 'TwelveData')!.cadenceLabel).toBe(
-      'every ~5 min while open',
-    );
-
-    const withoutInterval = buildMarketRefreshRows(status(), now);
-    expect(withoutInterval.find((r) => r.provider === 'TwelveData')!.cadenceLabel).toBeNull();
   });
 });
 
@@ -406,5 +575,29 @@ describe('describeIdleRefreshPreview', () => {
     const message = describeIdleRefreshPreview(status({ nyseOpen: false, sgxOpen: false }));
     expect(message).toContain('for crypto —');
     expect(message).toContain('US market and SGX are closed');
+  });
+});
+
+describe('describeRefreshScope', () => {
+  it('renders a generic message when status has not loaded yet', () => {
+    expect(describeRefreshScope(null)).toBe('Refresh fetches live prices now.');
+  });
+
+  it('says "all markets" when every market is open', () => {
+    expect(describeRefreshScope(status({ nyseOpen: true, sgxOpen: true }))).toBe(
+      'Refresh updates all markets now.',
+    );
+  });
+
+  it('names only the open markets (plus crypto) when one market is closed', () => {
+    expect(describeRefreshScope(status({ nyseOpen: false, sgxOpen: true }))).toBe(
+      'Refresh updates SGX and crypto now.',
+    );
+  });
+
+  it('names only crypto when both other markets are closed', () => {
+    expect(describeRefreshScope(status({ nyseOpen: false, sgxOpen: false }))).toBe(
+      'Refresh updates crypto now.',
+    );
   });
 });
