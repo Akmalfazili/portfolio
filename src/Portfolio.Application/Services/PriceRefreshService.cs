@@ -197,12 +197,18 @@ public sealed class PriceRefreshService(
             else if (closedMarketScheduleChanged)
             {
                 // D54: nothing was attempted — no RefreshRun row, per the existing "don't flood the
-                // audit trail with no-ops" rule above — but a closed market's NextDueAt DID just
-                // move, and the only way that reaches the UI is a broadcast: crypto's own push
-                // carries whatever NextDueAt happens to be at that moment, which could be up to
-                // CryptoInterval (2 min) away, or never at all in a crypto-free portfolio. Same
-                // enrich-then-broadcast path as the normal completed cycle below (D52), so this can
-                // never be the one transport that sends a bare/stale status.
+                // audit trail with no-ops" rule above — but the snapshot carries NyseOpen/SgxOpen,
+                // and a connected client never polls GET /api/prices/status (that's only the
+                // degraded fallback in prices-hub.ts) — so in a crypto-free portfolio the first such
+                // firing after a market closes, when NyseOpen/SgxOpen actually flips, is the only
+                // push that ever tells the UI a market has CLOSED; every later firing while it stays
+                // closed re-sends the same unchanged state, which is harmless. The refresh-details
+                // popup depends on that flip landing — it drives "Closing prices · {date}" vs
+                // "Updated N ago" per row and the footer's "Refresh updates … now" text. With crypto
+                // held, crypto's own 2-min push usually delivers the flip first, which makes this the
+                // guaranteed path rather than the usual one. Same enrich-then-broadcast path as the
+                // normal completed cycle below (D52), so this can never be the one transport that
+                // sends a bare/stale status.
                 var closedStatus = await statusStore.GetSnapshotAsync(
                     calendar.IsOpen(Market.Nyse, now),
                     calendar.IsOpen(Market.Sgx, now),
