@@ -5,7 +5,7 @@
     <div class="transactions__toolbar-actions">
       <mat-button-toggle-group
         class="transactions__filter"
-        [value]="filter()"
+        [value]="assetClassFilter()"
         (change)="setFilter($event.value)"
         aria-label="Filter by asset class"
       >
@@ -35,6 +35,80 @@
     </p>
   }
 
+  @if (showFilterRow()) {
+    <!--
+      Kept visible in the filtered-empty branch below (so the user can loosen
+      whatever narrowed the list to nothing) but hidden while loading, errored,
+      or genuinely empty — see `showFilterRow`.
+    -->
+    <div class="transactions__filters">
+      <mat-form-field
+        class="transactions__filter-field transactions__filter-field--symbol"
+        appearance="outline"
+        subscriptSizing="dynamic"
+      >
+        <mat-label>Symbol</mat-label>
+        <mat-icon matIconPrefix aria-hidden="true">search</mat-icon>
+        <input
+          matInput
+          [value]="symbolFilter()"
+          (input)="setSymbolFilter($any($event.target).value)"
+        />
+        @if (symbolFilter()) {
+          <button
+            mat-icon-button
+            matIconSuffix
+            type="button"
+            aria-label="Clear symbol search"
+            (click)="clearSymbolFilter()"
+          >
+            <mat-icon aria-hidden="true">close</mat-icon>
+          </button>
+        }
+      </mat-form-field>
+
+      <mat-button-toggle-group
+        class="transactions__filter-type"
+        [value]="typeFilter()"
+        (change)="setTypeFilter($event.value)"
+        aria-label="Filter by transaction type"
+      >
+        <mat-button-toggle value="All">All</mat-button-toggle>
+        <mat-button-toggle value="Buy">Buy</mat-button-toggle>
+        <mat-button-toggle value="Sell">Sell</mat-button-toggle>
+      </mat-button-toggle-group>
+
+      <mat-form-field
+        class="transactions__filter-field transactions__filter-field--date-range"
+        appearance="outline"
+        subscriptSizing="dynamic"
+      >
+        <mat-label>Trade date</mat-label>
+        <mat-date-range-input [rangePicker]="tradeDatePicker">
+          <input matStartDate [formControl]="startDateControl" placeholder="Start" />
+          <input matEndDate [formControl]="endDateControl" placeholder="End" />
+        </mat-date-range-input>
+        <mat-datepicker-toggle matIconSuffix [for]="tradeDatePicker" />
+        <mat-date-range-picker #tradeDatePicker />
+      </mat-form-field>
+
+      @if (isFilterActive()) {
+        <button
+          mat-button
+          type="button"
+          class="transactions__filter-clear"
+          (click)="clearFilters()"
+        >
+          Clear filters
+        </button>
+      }
+
+      @if (resultCountLabel(); as label) {
+        <span class="transactions__filter-count">{{ label }}</span>
+      }
+    </div>
+  }
+
   @if (isLoading()) {
     <app-state-message variant="loading" title="Loading transactions…" />
   } @else if (hasError()) {
@@ -57,9 +131,9 @@
     <app-state-message
       variant="empty"
       title="No matching transactions"
-      description="Nothing in this asset class yet. Try a different filter."
-      actionLabel="Clear filter"
-      (action)="clearFilter()"
+      description="No transactions match these filters."
+      actionLabel="Clear filters"
+      (action)="clearFilters()"
     />
   } @else {
     <div

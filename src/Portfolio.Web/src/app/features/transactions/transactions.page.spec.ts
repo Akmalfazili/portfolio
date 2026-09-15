@@ -38,6 +38,20 @@ const AAPL_BUY: TransactionDto = {
   notes: null,
 };
 
+const AMP_SELL: TransactionDto = {
+  id: 3,
+  assetId: 3,
+  assetSymbol: 'AMP',
+  assetClass: 'Crypto',
+  type: 'Sell',
+  tradeDate: '2026-08-05',
+  quantity: 500,
+  pricePerUnit: 0.004,
+  fees: 0.1,
+  currency: 'USD',
+  notes: null,
+};
+
 describe('TransactionsPage', () => {
   let fixture: ComponentFixture<TransactionsPage>;
   let httpMock: HttpTestingController;
@@ -453,5 +467,248 @@ describe('TransactionsPage', () => {
       },
       15000,
     );
+  });
+
+  describe('search/filter controls', () => {
+    async function loadAll(): Promise<void> {
+      fixture.detectChanges();
+      httpMock.expectOne(API_ROUTES.transactions).flush([ANVL_BUY, AAPL_BUY, AMP_SELL]);
+      flushAssets();
+      await fixture.whenStable();
+      fixture.detectChanges();
+    }
+
+    it('matches the symbol search as a case-insensitive substring, not an exact/prefix match', async () => {
+      await loadAll();
+
+      // "an" is a substring of ANVL ("anvl") but not of AAPL or AMP.
+      fixture.componentInstance.setSymbolFilter('an');
+      fixture.detectChanges();
+
+      const text = fixture.nativeElement.textContent as string;
+      expect(text).toContain('ANVL');
+      expect(text).not.toContain('AAPL');
+      expect(text).not.toContain('AMP');
+    });
+
+    it('filters by transaction type', async () => {
+      await loadAll();
+
+      fixture.componentInstance.setTypeFilter('Sell');
+      fixture.detectChanges();
+
+      const text = fixture.nativeElement.textContent as string;
+      expect(text).toContain('AMP');
+      expect(text).not.toContain('ANVL');
+      expect(text).not.toContain('AAPL');
+    });
+
+    it('applies an inclusive date range at both ends', async () => {
+      await loadAll();
+
+      // AAPL is 2026-07-20, ANVL is 2026-07-30, AMP is 2026-08-05.
+      fixture.componentInstance.startDateControl.setValue(new Date(2026, 6, 20));
+      fixture.componentInstance.endDateControl.setValue(new Date(2026, 6, 30));
+      fixture.detectChanges();
+
+      let text = fixture.nativeElement.textContent as string;
+      expect(text).toContain('AAPL'); // on the start bound
+      expect(text).toContain('ANVL'); // on the end bound
+      expect(text).not.toContain('AMP'); // after the end bound
+
+      // Narrowed to a single day should still match that exact day.
+      fixture.componentInstance.endDateControl.setValue(new Date(2026, 6, 20));
+      fixture.detectChanges();
+
+      text = fixture.nativeElement.textContent as string;
+      expect(text).toContain('AAPL');
+      expect(text).not.toContain('ANVL');
+    });
+
+    it('leaves the range open-ended when only one bound is set', async () => {
+      await loadAll();
+
+      fixture.componentInstance.startDateControl.setValue(new Date(2026, 6, 25));
+      fixture.detectChanges();
+
+      let text = fixture.nativeElement.textContent as string;
+      expect(text).not.toContain('AAPL'); // 07-20, before the start bound
+      expect(text).toContain('ANVL'); // 07-30
+      expect(text).toContain('AMP'); // 08-05
+
+      fixture.componentInstance.startDateControl.setValue(null);
+      fixture.componentInstance.endDateControl.setValue(new Date(2026, 6, 25));
+      fixture.detectChanges();
+
+      text = fixture.nativeElement.textContent as string;
+      expect(text).toContain('AAPL'); // 07-20, before the end bound
+      expect(text).not.toContain('ANVL'); // 07-30, after the end bound
+      expect(text).not.toContain('AMP');
+    });
+
+    it('does not apply a broken bound when the range is inverted (start after end)', async () => {
+      await loadAll();
+
+      fixture.componentInstance.startDateControl.setValue(new Date(2026, 6, 30));
+      fixture.componentInstance.endDateControl.setValue(new Date(2026, 6, 20)); // before start
+      fixture.detectChanges();
+
+      // The end bound is dropped (treated as open) rather than clamped to a
+      // value that would hide every row — ANVL (07-30) and AMP (08-05) are
+      // both on/after the start bound and neither is wrongly excluded.
+      const text = fixture.nativeElement.textContent as string;
+      expect(text).toContain('ANVL');
+      expect(text).toContain('AMP');
+      expect(text).not.toContain('AAPL'); // 07-20, before the (still-applied) start bound
+    });
+
+    it(
+      'is immune to the toISOString wire-contract bug at this app\'s own positive UTC offset (SGT)',
+      async () => {
+        await loadAll();
+
+        // 23:30 local time on the same calendar day as AAPL_BUY.tradeDate
+        // ("2026-07-20"). toDateOnlyString reads this Date's own local
+        // year/month/day, so it stays "2026-07-20". A toISOString()-based
+        // implementation would convert to UTC first, crossing into
+        // "2026-07-21" at this machine's SGT (UTC+8) offset, and would
+        // wrongly exclude AAPL from a same-day range.
+        const lateEveningSameDay = new Date(2026, 6, 20, 23, 30);
+        fixture.componentInstance.startDateControl.setValue(lateEveningSameDay);
+        fixture.componentInstance.endDateControl.setValue(lateEveningSameDay);
+        fixture.detectChanges();
+
+        expect(fixture.nativeElement.textContent).toContain('AAPL');
+      },
+    );
+
+    it('composes the new filters with the pre-existing asset-class filter', async () => {
+      await loadAll();
+
+      fixture.componentInstance.setFilter('Crypto');
+      fixture.componentInstance.setTypeFilter('Buy');
+      fixture.detectChanges();
+
+      // ANVL is Crypto+Buy; AMP is Crypto+Sell; AAPL is Stock+Buy — only ANVL
+      // satisfies both filters at once.
+      const text = fixture.nativeElement.textContent as string;
+      expect(text).toContain('ANVL');
+      expect(text).not.toContain('AAPL');
+      expect(text).not.toContain('AMP');
+    });
+
+    it('resets to page 0 on a symbol search change', async () => {
+      const many: TransactionDto[] = Array.from({ length: 30 }, (_, i) => ({
+        ...ANVL_BUY,
+        id: i + 1,
+        tradeDate: `2026-07-${String(i + 1).padStart(2, '0')}`,
+      }));
+      fixture.detectChanges();
+      httpMock.expectOne(API_ROUTES.transactions).flush(many);
+      flushAssets();
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      fixture.componentInstance.tableState.setPageIndex(1);
+      expect(fixture.componentInstance.tableState.pageIndex()).toBe(1);
+
+      fixture.componentInstance.setSymbolFilter('anvl');
+      expect(fixture.componentInstance.tableState.pageIndex()).toBe(0);
+    });
+
+    it('resets to page 0 on a type filter change', async () => {
+      const many: TransactionDto[] = Array.from({ length: 30 }, (_, i) => ({
+        ...ANVL_BUY,
+        id: i + 1,
+        tradeDate: `2026-07-${String(i + 1).padStart(2, '0')}`,
+      }));
+      fixture.detectChanges();
+      httpMock.expectOne(API_ROUTES.transactions).flush(many);
+      flushAssets();
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      fixture.componentInstance.tableState.setPageIndex(1);
+      expect(fixture.componentInstance.tableState.pageIndex()).toBe(1);
+
+      fixture.componentInstance.setTypeFilter('Sell');
+      expect(fixture.componentInstance.tableState.pageIndex()).toBe(0);
+    });
+
+    it('resets to page 0 when either date-range bound changes', async () => {
+      const many: TransactionDto[] = Array.from({ length: 30 }, (_, i) => ({
+        ...ANVL_BUY,
+        id: i + 1,
+        tradeDate: `2026-07-${String(i + 1).padStart(2, '0')}`,
+      }));
+      fixture.detectChanges();
+      httpMock.expectOne(API_ROUTES.transactions).flush(many);
+      flushAssets();
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      fixture.componentInstance.tableState.setPageIndex(1);
+      expect(fixture.componentInstance.tableState.pageIndex()).toBe(1);
+
+      fixture.componentInstance.startDateControl.setValue(new Date(2026, 6, 10));
+      expect(fixture.componentInstance.tableState.pageIndex()).toBe(0);
+
+      fixture.componentInstance.tableState.setPageIndex(1);
+      fixture.componentInstance.endDateControl.setValue(new Date(2026, 6, 20));
+      expect(fixture.componentInstance.tableState.pageIndex()).toBe(0);
+    });
+
+    it('clears every filter (asset class, type, symbol, date range) at once via clearFilters()', async () => {
+      await loadAll();
+
+      fixture.componentInstance.setFilter('Crypto');
+      fixture.componentInstance.setTypeFilter('Buy');
+      fixture.componentInstance.setSymbolFilter('anvl');
+      fixture.componentInstance.startDateControl.setValue(new Date(2026, 6, 1));
+      fixture.componentInstance.endDateControl.setValue(new Date(2026, 6, 31));
+      fixture.detectChanges();
+
+      expect(fixture.componentInstance.isFilterActive()).toBe(true);
+      expect(fixture.nativeElement.textContent).not.toContain('AAPL');
+
+      fixture.componentInstance.clearFilters();
+      fixture.detectChanges();
+
+      expect(fixture.componentInstance.isFilterActive()).toBe(false);
+      expect(fixture.componentInstance.assetClassFilter()).toBe('All');
+      expect(fixture.componentInstance.typeFilter()).toBe('All');
+      expect(fixture.componentInstance.symbolFilter()).toBe('');
+      expect(fixture.componentInstance.startDateControl.value).toBeNull();
+      expect(fixture.componentInstance.endDateControl.value).toBeNull();
+
+      const text = fixture.nativeElement.textContent as string;
+      expect(text).toContain('AAPL');
+      expect(text).toContain('ANVL');
+      expect(text).toContain('AMP');
+    });
+
+    it('shows a generic filtered-empty message and clears every filter from its action', async () => {
+      await loadAll();
+
+      fixture.componentInstance.setSymbolFilter('nonexistent-symbol');
+      fixture.detectChanges();
+
+      let text = fixture.nativeElement.textContent as string;
+      expect(text).toContain('No transactions match these filters.');
+      expect(text).not.toContain('Nothing in this asset class yet');
+
+      const clearButton = Array.from(
+        fixture.nativeElement.querySelectorAll('button') as NodeListOf<HTMLButtonElement>,
+      ).find((button) => button.textContent?.trim() === 'Clear filters');
+      expect(clearButton).toBeTruthy();
+      clearButton!.click();
+      fixture.detectChanges();
+
+      expect(fixture.componentInstance.symbolFilter()).toBe('');
+      text = fixture.nativeElement.textContent as string;
+      expect(text).toContain('AAPL');
+      expect(text).toContain('ANVL');
+      expect(text).toContain('AMP');
+    });
   });
 });

@@ -48,6 +48,78 @@
   }
 }
 
+// -----------------------------------------------------------------------------
+// Filter row — symbol search, type toggle, trade-date range, clear-all and
+// the result-count hint. Sits between the assets warning and the
+// loading/error/empty/table branches; `showFilterRow()` in the component
+// hides the whole thing while loading, errored, or genuinely empty, but
+// keeps it up in the filtered-empty branch so the user can loosen a filter
+// that matched nothing.
+// -----------------------------------------------------------------------------
+.transactions__filters {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--ui-space-3);
+  margin-bottom: var(--ui-space-4);
+}
+
+.transactions__filter-field {
+  // mat-form-field's own subscript row is turned off (subscriptSizing on the
+  // template side) so an empty hint/error area never leaves a gap in this
+  // dense a bar — but the field itself still needs a fixed measure or it
+  // shrinks to its placeholder width.
+  width: 12rem;
+}
+
+.transactions__filter-field--date-range {
+  width: 16rem;
+}
+
+.transactions__filter-type {
+  // Match the height mat-form-field's outline appearance settles at, so the
+  // whole row's controls read as one line rather than the toggle looking
+  // short next to the fields either side of it.
+  align-self: center;
+}
+
+.transactions__filter-clear {
+  align-self: center;
+}
+
+.transactions__filter-count {
+  align-self: center;
+  margin-left: auto;
+  font-size: var(--ui-font-size-sm);
+  color: var(--ui-color-on-surface-muted);
+  white-space: nowrap;
+}
+
+@include ui.ui-breakpoint-down(sm) {
+  .transactions__filters {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .transactions__filter-field,
+  .transactions__filter-field--date-range {
+    width: 100%;
+  }
+
+  // Natural width, left-aligned — the same treatment the asset-class toggle
+  // gets in the stacked toolbar above. Stretching the toggle group leaves its
+  // three buttons huddled left with dead space to their right.
+  .transactions__filter-type,
+  .transactions__filter-clear,
+  .transactions__filter-count {
+    align-self: flex-start;
+  }
+
+  .transactions__filter-count {
+    margin-left: 0;
+  }
+}
+
 .transactions__caption {
   @include ui.ui-visually-hidden;
 }
