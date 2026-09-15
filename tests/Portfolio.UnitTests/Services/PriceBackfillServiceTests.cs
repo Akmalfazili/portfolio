@@ -1786,4 +1786,539 @@ public sealed class PriceBackfillServiceTests : IDisposable
         state.CoveredFrom.Should().Be(originalFrom, "a failed attempt must never shrink known coverage");
         state.CoveredTo.Should().Be(originalTo);
     }
+
+    // --- 2026-09-15: BackfillCatchUp and a D51 narrowed retry request only the tail coverage
+    // state proves is missing, not the full range from the asset's/currency's earliest trade
+    // date. See PriceBackfillService's class remarks for the live evidence (a catch-up requesting
+    // six years of USD/SGD history for one missing day) and the coverage-merge trap this closed.
+
+    [Fact]
+    public async Task RunCatchUpAsync_AssetWithCoveringState_RequestsOnlyFromCoveredToPlusOne()
+    {
+        _db.AssetPriceHistoryStates.Add(new AssetPriceHistoryState
+        {
+            AssetId = _aapl.Id,
+            LastAttemptedAt = _timeProvider.GetUtcNow(),
+            LastSuccessAt = _timeProvider.GetUtcNow(),
+            LastRunSuccess = true,
+            CoveredFrom = new DateOnly(2026, 7, 20), // AAPL's own earliest trade date
+            CoveredTo = new DateOnly(2026, 7, 22),
+        });
+        // Narrowing requires the newest STORED row to corroborate the state (see the class
+        // remarks) — a prior successful fetch actually returned this bar, so both agree here.
+        _db.PriceHistories.Add(new PriceHistory { AssetId = _aapl.Id, Date = new DateOnly(2026, 7, 22), Close = 200m, Currency = "USD" });
+        await _db.SaveChangesAsync();
+
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(new DateOnly(2026, 7, 23), 201m, "USD")], callInfo.ArgAt<DateOnly>(1))));
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), Substitute.For<IFxRateProvider>());
+
+        await sut.RunCatchUpAsync([Market.Nyse], new HashSet<int> { _aapl.Id }, new HashSet<string>(), CancellationToken.None);
+
+        // AlwaysClosedCalendar's cap resolves to _timeProvider's fixed "now" (2026-07-26T00:00Z)
+        // minus the default 30-minute CloseSettleDelay, still 2026-07-25 — well past the narrowed
+        // `from` below, so this is an ordinary narrowed fetch, not the already-covered case.
+        await stockProvider.Received(1).GetHistoryAsync(
+            _aapl, new DateOnly(2026, 7, 23), new DateOnly(2026, 7, 25), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunCatchUpAsync_BackDatedTradeBeforeCoveredFrom_FallsBackToTheFullRange()
+    {
+        // Simulates a back-dated transaction recorded AFTER the state above was written: AAPL's
+        // own earliest trade is now BEFORE CoveredFrom, so the state does not prove this newly
+        // relevant early history was ever asked for — narrowing must not apply.
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = _aapl.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 7, 15),
+            Quantity = 1m, PricePerUnit = 190m, Fees = 0m, Currency = "USD",
+        });
+        _db.AssetPriceHistoryStates.Add(new AssetPriceHistoryState
+        {
+            AssetId = _aapl.Id, LastAttemptedAt = _timeProvider.GetUtcNow(), LastSuccessAt = _timeProvider.GetUtcNow(),
+            LastRunSuccess = true, CoveredFrom = new DateOnly(2026, 7, 20), CoveredTo = new DateOnly(2026, 7, 22),
+        });
+        await _db.SaveChangesAsync();
+
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(new DateOnly(2026, 7, 15), 190m, "USD")], callInfo.ArgAt<DateOnly>(1))));
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), Substitute.For<IFxRateProvider>());
+
+        await sut.RunCatchUpAsync([Market.Nyse], new HashSet<int> { _aapl.Id }, new HashSet<string>(), CancellationToken.None);
+
+        await stockProvider.Received(1).GetHistoryAsync(
+            _aapl, new DateOnly(2026, 7, 15), new DateOnly(2026, 7, 25), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunCatchUpAsync_NoState_RequestsTheFullRange()
+    {
+        // No AssetPriceHistoryState at all (a genuinely never-attempted asset) — narrowing has
+        // nothing to narrow against, so this must behave exactly as before: the full range from
+        // the asset's own earliest trade date.
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(new DateOnly(2026, 7, 20), 200m, "USD")], callInfo.ArgAt<DateOnly>(1))));
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), Substitute.For<IFxRateProvider>());
+
+        await sut.RunCatchUpAsync([Market.Nyse], new HashSet<int> { _aapl.Id }, new HashSet<string>(), CancellationToken.None);
+
+        await stockProvider.Received(1).GetHistoryAsync(
+            _aapl, new DateOnly(2026, 7, 20), new DateOnly(2026, 7, 25), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunCatchUpAsync_FxWithCoveringState_RequestsOnlyFromCoveredToPlusOne()
+    {
+        _db.FxPairBackfillStates.Add(new FxPairBackfillState
+        {
+            Base = "USD", Quote = "SGD",
+            LastAttemptedAt = _timeProvider.GetUtcNow(), LastSuccessAt = _timeProvider.GetUtcNow(), LastRunSuccess = true,
+            CoveredFrom = new DateOnly(2026, 7, 20), // Z74's own earliest trade date
+            CoveredTo = new DateOnly(2026, 7, 22),
+        });
+        // Narrowing requires the newest STORED FxRate to corroborate the state (see the class
+        // remarks) — a prior successful fetch actually returned this rate, so both agree here.
+        _db.FxRates.Add(new FxRate { Date = new DateOnly(2026, 7, 22), Base = "USD", Quote = "SGD", Rate = 1.295m });
+        await _db.SaveChangesAsync();
+
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(new DateOnly(2026, 7, 23), 4.01m, "SGD")], callInfo.ArgAt<DateOnly>(1))));
+
+        var fxProvider = Substitute.For<IFxRateProvider>();
+        fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(new DateOnly(2026, 7, 23), 1.30m)]));
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider);
+
+        // Z74 itself is NOT in the fetch set here — this is the planner's "FX missing on its own
+        // upper-bound criterion, no asset of that currency actually being fetched" case (see
+        // IRefreshCatchUpService's remarks) — narrowing must still apply, driven by
+        // RefreshTrigger.BackfillCatchUp alone.
+        await sut.RunCatchUpAsync([Market.Sgx], new HashSet<int>(), new HashSet<string> { "SGD" }, CancellationToken.None);
+
+        // ComputeFxCap(now): _timeProvider fixed at 2026-07-26T00:00Z UTC, one day behind is 2026-07-25.
+        await fxProvider.Received(1).GetHistoryAsync(
+            "USD", "SGD", new DateOnly(2026, 7, 23), new DateOnly(2026, 7, 25), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunCatchUpAsync_FxForcedByBackDatedAsset_FallsBackToTheFullRange()
+    {
+        // Z74's own earliest trade is back-dated BEFORE the FX state's CoveredFrom — the state
+        // does not prove that newly-relevant early history was ever asked for, so even though this
+        // is the "hard requirement" case (Z74 itself is being fetched), FX narrowing must not apply.
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = _z74.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 7, 15),
+            Quantity = 10m, PricePerUnit = 3.9m, Fees = 0m, Currency = "SGD",
+        });
+        _db.FxPairBackfillStates.Add(new FxPairBackfillState
+        {
+            Base = "USD", Quote = "SGD",
+            LastAttemptedAt = _timeProvider.GetUtcNow(), LastSuccessAt = _timeProvider.GetUtcNow(), LastRunSuccess = true,
+            CoveredFrom = new DateOnly(2026, 7, 20), CoveredTo = new DateOnly(2026, 7, 22),
+        });
+        await _db.SaveChangesAsync();
+
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(new DateOnly(2026, 7, 15), 3.9m, "SGD")], callInfo.ArgAt<DateOnly>(1))));
+
+        var fxProvider = Substitute.For<IFxRateProvider>();
+        fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(new DateOnly(2026, 7, 15), 1.29m)]));
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider);
+
+        await sut.RunCatchUpAsync([Market.Sgx], new HashSet<int> { _z74.Id }, new HashSet<string> { "SGD" }, CancellationToken.None);
+
+        await fxProvider.Received(1).GetHistoryAsync(
+            "USD", "SGD", new DateOnly(2026, 7, 15), new DateOnly(2026, 7, 25), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunIfDueAsync_D51_NarrowedRetry_RequestsOnlyFromCoveredToPlusOne_NotTheFullRange()
+    {
+        var msft = new Asset
+        {
+            Id = 2, Symbol = "MSFT", Name = "Microsoft", AssetClass = AssetClass.Stock, Currency = "USD",
+            QuoteProviderKind = QuoteProviderKind.TwelveData, ProviderSymbol = "MSFT",
+        };
+        _db.Assets.Add(msft);
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = msft.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 7, 1),
+            Quantity = 1m, PricePerUnit = 300m, Fees = 0m, Currency = "USD",
+        });
+        _db.AssetPriceHistoryStates.Add(new AssetPriceHistoryState
+        {
+            AssetId = msft.Id, LastAttemptedAt = new DateTimeOffset(2026, 8, 3, 9, 0, 0, TimeSpan.Zero),
+            LastSuccessAt = new DateTimeOffset(2026, 8, 3, 9, 0, 0, TimeSpan.Zero), LastRunSuccess = true,
+            CoveredFrom = new DateOnly(2026, 7, 1), CoveredTo = new DateOnly(2026, 8, 3),
+        });
+        // Narrowing requires the newest STORED row to corroborate the state (see the class
+        // remarks) — a prior successful fetch actually returned this bar, so both agree here.
+        _db.PriceHistories.Add(new PriceHistory { AssetId = msft.Id, Date = new DateOnly(2026, 8, 3), Close = 299m, Currency = "USD" });
+
+        var closeInstant = new DateTimeOffset(2026, 8, 5, 9, 0, 0, TimeSpan.Zero);
+        var closeLocalDate = new DateOnly(2026, 8, 5);
+
+        // AAPL already holds the market's latest close — the retry's own stored-rows pre-filter
+        // must exclude it (unrelated to this test's own narrowing assertion, but needed so it's
+        // never handed to the unstubbed substitute below).
+        _db.PriceHistories.Add(new PriceHistory { AssetId = _aapl.Id, Date = closeLocalDate, Close = 200m, Currency = "USD" });
+
+        _db.RefreshRuns.Add(new RefreshRun
+        {
+            Trigger = RefreshTrigger.BackfillScheduled, AssetClass = AssetClass.Stock, Market = Market.Nyse,
+            StartedAt = closeInstant, CompletedAt = closeInstant.AddMinutes(5), Success = false, SymbolsRefreshed = 1,
+        });
+        _db.RefreshRuns.Add(new RefreshRun // SGX already covered — kept out of this run's scope
+        {
+            Trigger = RefreshTrigger.BackfillScheduled, AssetClass = AssetClass.Stock, Market = Market.Sgx,
+            StartedAt = closeInstant, CompletedAt = closeInstant, Success = true, SymbolsRefreshed = 1,
+        });
+        await _db.SaveChangesAsync();
+
+        var calendar = CalendarWithFixedClose(Market.Nyse, closeInstant, closeLocalDate);
+        var probeTime = new FixedTimeProvider(closeInstant.AddMinutes(25));
+
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(msft, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(closeLocalDate, 301m, "USD")], callInfo.ArgAt<DateOnly>(1))));
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), Substitute.For<IFxRateProvider>(), calendar: calendar, timeProvider: probeTime);
+
+        var result = await sut.RunIfDueAsync(CancellationToken.None);
+
+        result.MarketsRun.Should().Contain(Market.Nyse);
+        // The tail only — CoveredTo (2026-08-03) + 1, NOT the full 2026-07-01 earliest trade date.
+        await stockProvider.Received(1).GetHistoryAsync(
+            msft, new DateOnly(2026, 8, 4), closeLocalDate, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunIfDueAsync_D51_NarrowedRetry_LateProviderBar_StillRetriesTheCapDate_NotAlreadyCovered()
+    {
+        // Coordinator review finding: state.CoveredTo alone is not proof the cap-day bar is
+        // actually on file — a run can succeed (and record CoveredTo = cap) even though the
+        // provider's response didn't include that specific date's bar yet. D51's own retry
+        // SELECTION already guards against this by using stored rows, not state
+        // (`lastBackfilledByAsset` below) — the narrowing must use the same dual proof, or a
+        // still-missing close silently stops being retried until the market's NEXT close.
+        var msft = new Asset
+        {
+            Id = 2, Symbol = "MSFT", Name = "Microsoft", AssetClass = AssetClass.Stock, Currency = "USD",
+            QuoteProviderKind = QuoteProviderKind.TwelveData, ProviderSymbol = "MSFT",
+        };
+        _db.Assets.Add(msft);
+        _db.Transactions.Add(new Transaction
+        {
+            AssetId = msft.Id, Type = TransactionType.Buy, TradeDate = new DateOnly(2026, 7, 1),
+            Quantity = 1m, PricePerUnit = 300m, Fees = 0m, Currency = "USD",
+        });
+
+        var closeInstant = new DateTimeOffset(2026, 8, 5, 9, 0, 0, TimeSpan.Zero);
+        var closeLocalDate = new DateOnly(2026, 8, 5); // the cap
+
+        // State claims the fetch that ran at this close already covered THROUGH the cap...
+        _db.AssetPriceHistoryStates.Add(new AssetPriceHistoryState
+        {
+            AssetId = msft.Id, LastAttemptedAt = closeInstant.AddMinutes(5), LastSuccessAt = closeInstant.AddMinutes(5),
+            LastRunSuccess = true, CoveredFrom = new DateOnly(2026, 7, 1), CoveredTo = closeLocalDate,
+        });
+        // ...but the provider's response for that run did not actually include the cap-day bar —
+        // the newest MSFT row on file is one day short of what state claims.
+        _db.PriceHistories.Add(new PriceHistory { AssetId = msft.Id, Date = closeLocalDate.AddDays(-1), Close = 299m, Currency = "USD" });
+
+        // AAPL already holds the market's latest close — kept out of scope so it's never handed
+        // to the unstubbed substitute below.
+        _db.PriceHistories.Add(new PriceHistory { AssetId = _aapl.Id, Date = closeLocalDate, Close = 200m, Currency = "USD" });
+
+        _db.RefreshRuns.Add(new RefreshRun
+        {
+            Trigger = RefreshTrigger.BackfillScheduled, AssetClass = AssetClass.Stock, Market = Market.Nyse,
+            StartedAt = closeInstant, CompletedAt = closeInstant.AddMinutes(5), Success = false, SymbolsRefreshed = 1,
+        });
+        _db.RefreshRuns.Add(new RefreshRun // SGX already covered — kept out of this run's scope
+        {
+            Trigger = RefreshTrigger.BackfillScheduled, AssetClass = AssetClass.Stock, Market = Market.Sgx,
+            StartedAt = closeInstant, CompletedAt = closeInstant, Success = true, SymbolsRefreshed = 1,
+        });
+        await _db.SaveChangesAsync();
+
+        var calendar = CalendarWithFixedClose(Market.Nyse, closeInstant, closeLocalDate);
+        var probeTime = new FixedTimeProvider(closeInstant.AddMinutes(25));
+
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(msft, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(closeLocalDate, 301m, "USD")], callInfo.ArgAt<DateOnly>(1))));
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), Substitute.For<IFxRateProvider>(), calendar: calendar, timeProvider: probeTime);
+
+        var result = await sut.RunIfDueAsync(CancellationToken.None);
+
+        result.MarketsRun.Should().Contain(Market.Nyse);
+        // The cap date itself must still be requested — min(state.CoveredTo, newest stored) + 1
+        // = (cap - 1) + 1 = cap, NOT state.CoveredTo + 1 (which would be one day past the cap and
+        // read as "already covered", spending zero calls and stranding the close).
+        await stockProvider.Received(1).GetHistoryAsync(
+            msft, closeLocalDate, closeLocalDate, Arg.Any<CancellationToken>());
+        result.Summary!.AssetsAlreadyCovered.Should().NotContain("MSFT");
+    }
+
+    [Fact]
+    public async Task RunIfDueAsync_D51_FxNarrowedRetry_LateProviderBar_StillRetriesTheCapDate_NotAlreadyCovered()
+    {
+        // The FX equivalent of the test above.
+        var closeInstant = new DateTimeOffset(2026, 8, 5, 9, 0, 0, TimeSpan.Zero);
+        var closeLocalDate = new DateOnly(2026, 8, 5); // Sgx's own cap — irrelevant to the FX cap below
+        var calendar = CalendarWithFixedClose(Market.Sgx, closeInstant, closeLocalDate);
+
+        // Z74's own price is already up to date — isolates this test to the FX loop alone.
+        _db.PriceHistories.Add(new PriceHistory { AssetId = _z74.Id, Date = closeLocalDate, Close = 4m, Currency = "SGD" });
+
+        // State claims USD/SGD was already asked for through 2026-08-05 (the FX cap this probe
+        // time below resolves to)...
+        _db.FxPairBackfillStates.Add(new FxPairBackfillState
+        {
+            Base = "USD", Quote = "SGD",
+            LastAttemptedAt = closeInstant.AddMinutes(5), LastSuccessAt = closeInstant.AddMinutes(5), LastRunSuccess = true,
+            CoveredFrom = new DateOnly(2026, 7, 20), CoveredTo = new DateOnly(2026, 8, 5),
+        });
+        // ...but the newest USD/SGD rate actually on file is one day short of that.
+        _db.FxRates.Add(new FxRate { Date = new DateOnly(2026, 8, 4), Base = "USD", Quote = "SGD", Rate = 1.29m });
+
+        _db.RefreshRuns.Add(new RefreshRun // NYSE already covered — kept out of this run's scope
+        {
+            Trigger = RefreshTrigger.BackfillScheduled, AssetClass = AssetClass.Stock, Market = Market.Nyse,
+            StartedAt = closeInstant, CompletedAt = closeInstant, Success = true, SymbolsRefreshed = 1,
+        });
+        _db.RefreshRuns.Add(new RefreshRun
+        {
+            Trigger = RefreshTrigger.BackfillScheduled, AssetClass = AssetClass.Stock, Market = Market.Sgx,
+            StartedAt = closeInstant, CompletedAt = closeInstant.AddMinutes(5), Success = false, SymbolsRefreshed = 0,
+        });
+        await _db.SaveChangesAsync();
+
+        // Chosen so ComputeFxCap(now) = 2026-08-05 exactly — one UTC calendar day behind `now`,
+        // and comfortably past the default 15-minute FailedRunRetryDelay since closeInstant.
+        var probeTime = new FixedTimeProvider(new DateTimeOffset(2026, 8, 6, 0, 10, 0, TimeSpan.Zero));
+
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        var fxProvider = Substitute.For<IFxRateProvider>();
+        fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(new DateOnly(2026, 8, 5), 1.31m)]));
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider, calendar: calendar, timeProvider: probeTime);
+
+        var result = await sut.RunIfDueAsync(CancellationToken.None);
+
+        result.MarketsRun.Should().Contain(Market.Sgx);
+        await fxProvider.Received(1).GetHistoryAsync(
+            "USD", "SGD", new DateOnly(2026, 8, 5), new DateOnly(2026, 8, 5), Arg.Any<CancellationToken>());
+        result.Summary!.AssetsAlreadyCovered.Should().NotContain("FX:USD/SGD");
+    }
+
+    [Fact]
+    public async Task RunAsync_Manual_IgnoresCoveringState_AlwaysRequestsTheFullRange()
+    {
+        // The manual endpoint (RunAsync's own public entry point) must stay a full pass — narrowing
+        // is reachable only via BackfillCatchUp and a D51 retryOnlyMarkets market, neither of which
+        // this call uses.
+        _db.AssetPriceHistoryStates.Add(new AssetPriceHistoryState
+        {
+            AssetId = _aapl.Id, LastAttemptedAt = _timeProvider.GetUtcNow(), LastSuccessAt = _timeProvider.GetUtcNow(),
+            LastRunSuccess = true, CoveredFrom = new DateOnly(2026, 7, 20), CoveredTo = new DateOnly(2026, 7, 21),
+        });
+        await _db.SaveChangesAsync();
+
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(new DateOnly(2026, 7, 20), 200m, "USD")], callInfo.ArgAt<DateOnly>(1))));
+        var fxProvider = Substitute.For<IFxRateProvider>();
+        fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]));
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider);
+
+        await sut.RunAsync(RefreshTrigger.BackfillManual, BothMarkets, CancellationToken.None);
+
+        await stockProvider.Received(1).GetHistoryAsync(
+            _aapl, new DateOnly(2026, 7, 20), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunIfDueAsync_FirstScheduledPassSinceClose_IgnoresCoveringState_AlwaysRequestsTheFullRange()
+    {
+        // The first scheduled pass per close (no BackfillScheduled run yet since this close, so
+        // retryOnlyMarkets is empty — see RunIfDueAsync) must also stay a full pass — this is what
+        // fills history for a newly recorded back-dated transaction on an asset whose latest close
+        // happens to already be on file, which a tail-only request would never revisit.
+        _db.AssetPriceHistoryStates.Add(new AssetPriceHistoryState
+        {
+            AssetId = _aapl.Id, LastAttemptedAt = _timeProvider.GetUtcNow(), LastSuccessAt = _timeProvider.GetUtcNow(),
+            LastRunSuccess = true, CoveredFrom = new DateOnly(2026, 7, 20), CoveredTo = new DateOnly(2026, 7, 21),
+        });
+        await _db.SaveChangesAsync();
+
+        var stockProvider = Substitute.For<IQuoteProvider>();
+        stockProvider.GetHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(new DateOnly(2026, 7, 20), 200m, "USD")], callInfo.ArgAt<DateOnly>(1))));
+        var fxProvider = Substitute.For<IFxRateProvider>();
+        fxProvider.GetHistoryAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(FxHistoryFetchResult.Ok([new FxRatePoint(new DateOnly(2026, 7, 20), 1.29m)]));
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), fxProvider); // AlwaysClosedCalendar, no prior runs
+
+        var result = await sut.RunIfDueAsync(CancellationToken.None);
+
+        result.MarketsRun.Should().Contain(Market.Nyse);
+        await stockProvider.Received(1).GetHistoryAsync(
+            _aapl, new DateOnly(2026, 7, 20), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunCatchUpAsync_NarrowedFromLandsBeyondCap_IsReportedAsAlreadyCovered_NotDeferred()
+    {
+        // The planner and this method compute the settled cap/read coverage state at slightly
+        // different instants (see the class remarks) — simulated here directly: state.CoveredTo
+        // AND the newest actually-stored PriceHistory row both already reach the cap
+        // AlwaysClosedCalendar would compute, so the narrowed `from` lands one day beyond it. This
+        // must read as "already covered", never as "not yet settled"
+        // (AssetsSkippedTodayNotClosed), and must spend zero provider calls. Both sources must
+        // agree — see RunIfDueAsync_D51_NarrowedRetry_LateProviderBar_... below for the case where
+        // only state reaches the cap but the stored row does not, which must NOT land here.
+        _db.AssetPriceHistoryStates.Add(new AssetPriceHistoryState
+        {
+            AssetId = _aapl.Id, LastAttemptedAt = _timeProvider.GetUtcNow(), LastSuccessAt = _timeProvider.GetUtcNow(),
+            LastRunSuccess = true, CoveredFrom = new DateOnly(2026, 7, 20),
+            CoveredTo = new DateOnly(2026, 7, 25), // == AlwaysClosedCalendar's cap for this fixed "now"
+        });
+        _db.PriceHistories.Add(new PriceHistory { AssetId = _aapl.Id, Date = new DateOnly(2026, 7, 25), Close = 205m, Currency = "USD" });
+        await _db.SaveChangesAsync();
+
+        var stockProvider = Substitute.For<IQuoteProvider>();
+
+        var sut = CreateSut(RouterAlwaysReturning(stockProvider), Substitute.For<IFxRateProvider>());
+
+        var summary = await sut.RunCatchUpAsync([Market.Nyse], new HashSet<int> { _aapl.Id }, new HashSet<string>(), CancellationToken.None);
+
+        summary.AssetsAlreadyCovered.Should().Contain("AAPL");
+        summary.AssetsSkippedTodayNotClosed.Should().NotContain("AAPL");
+        summary.AssetsFailed.Should().BeEmpty();
+        summary.AssetsProcessed.Should().NotContain("AAPL");
+        await stockProvider.DidNotReceive().GetHistoryAsync(
+            _aapl, Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunCatchUpAsync_FxNarrowedFromLandsBeyondFxCap_IsReportedAsAlreadyCovered_NotDeferred()
+    {
+        _db.FxPairBackfillStates.Add(new FxPairBackfillState
+        {
+            Base = "USD", Quote = "SGD",
+            LastAttemptedAt = _timeProvider.GetUtcNow(), LastSuccessAt = _timeProvider.GetUtcNow(), LastRunSuccess = true,
+            CoveredFrom = new DateOnly(2026, 7, 20),
+            CoveredTo = new DateOnly(2026, 7, 25), // == ComputeFxCap for this fixed "now" (one UTC day behind)
+        });
+        // The newest stored FxRate must ALSO reach the cap — state alone is not enough (see the
+        // class remarks and the late-provider-bar regression tests below).
+        _db.FxRates.Add(new FxRate { Date = new DateOnly(2026, 7, 25), Base = "USD", Quote = "SGD", Rate = 1.31m });
+        await _db.SaveChangesAsync();
+
+        var fxProvider = Substitute.For<IFxRateProvider>();
+
+        var sut = CreateSut(RouterAlwaysReturning(Substitute.For<IQuoteProvider>()), fxProvider);
+
+        var summary = await sut.RunCatchUpAsync([Market.Sgx], new HashSet<int>(), new HashSet<string> { "SGD" }, CancellationToken.None);
+
+        summary.AssetsAlreadyCovered.Should().Contain("FX:USD/SGD");
+        summary.AssetsSkippedTodayNotClosed.Should().NotContain("FX:USD/SGD");
+        summary.AssetsFailed.Should().BeEmpty();
+        await fxProvider.DidNotReceive().GetHistoryAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunCatchUpAsync_NarrowedSuccess_UnionsCoverage_AndThePlannerDoesNotRePlanTheAsset()
+    {
+        // THE regression the coverage-merge trap guards against (see the class remarks and
+        // RecordPriceHistoryState's 2026-09-15 doc comment). Confirmed to FAIL against the
+        // pre-fix (straight-overwrite) code before the fix was written: see this session's report.
+        var closeInstant1 = new DateTimeOffset(2026, 8, 3, 21, 0, 0, TimeSpan.Zero);
+        var closeLocalDate1 = new DateOnly(2026, 8, 3);
+        var calendar1 = CalendarWithFixedClose(Market.Nyse, closeInstant1, closeLocalDate1);
+        var stockProvider1 = Substitute.For<IQuoteProvider>();
+        stockProvider1.GetHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(closeLocalDate1, 200m, "USD")], callInfo.ArgAt<DateOnly>(1))));
+
+        var sut1 = CreateSut(RouterAlwaysReturning(stockProvider1), Substitute.For<IFxRateProvider>(), calendar: calendar1);
+        // Full-range manual pass establishes CoveredFrom = AAPL's earliest trade date (2026-07-20),
+        // CoveredTo = closeLocalDate1 (2026-08-03).
+        await sut1.RunAsync(RefreshTrigger.BackfillManual, [Market.Nyse], CancellationToken.None);
+
+        var afterFirstRun = await _db.AssetPriceHistoryStates.SingleAsync(s => s.AssetId == _aapl.Id);
+        afterFirstRun.CoveredFrom.Should().Be(new DateOnly(2026, 7, 20));
+        afterFirstRun.CoveredTo.Should().Be(closeLocalDate1);
+
+        // A later catch-up narrows to the tail and succeeds.
+        var closeInstant2 = new DateTimeOffset(2026, 8, 5, 21, 0, 0, TimeSpan.Zero);
+        var closeLocalDate2 = new DateOnly(2026, 8, 5);
+        var calendar2 = CalendarWithFixedClose(Market.Nyse, closeInstant2, closeLocalDate2);
+        var stockProvider2 = Substitute.For<IQuoteProvider>();
+        stockProvider2.GetHistoryAsync(Arg.Any<Asset>(), Arg.Any<DateOnly>(), Arg.Any<DateOnly>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(HistoryFetchResult.Ok(
+                [new PriceHistoryPoint(closeLocalDate2, 205m, "USD")], callInfo.ArgAt<DateOnly>(1))));
+
+        var sut2 = CreateSut(RouterAlwaysReturning(stockProvider2), Substitute.For<IFxRateProvider>(), calendar: calendar2);
+
+        await sut2.RunCatchUpAsync([Market.Nyse], new HashSet<int> { _aapl.Id }, new HashSet<string>(), CancellationToken.None);
+
+        await stockProvider2.Received(1).GetHistoryAsync(
+            _aapl, closeLocalDate1.AddDays(1), closeLocalDate2, Arg.Any<CancellationToken>());
+
+        var afterCatchUp = await _db.AssetPriceHistoryStates.SingleAsync(s => s.AssetId == _aapl.Id);
+        afterCatchUp.CoveredFrom.Should().Be(
+            new DateOnly(2026, 7, 20), "the union must keep the ORIGINAL lower bound, not the narrowed request's own `from`");
+        afterCatchUp.CoveredTo.Should().Be(closeLocalDate2, "the union must advance to the new upper bound");
+
+        // The trap: a follow-up planner call must NOT read the (correctly-unioned) state as
+        // missing and re-plan a full-range fetch for this asset.
+        var plannerCalendar = Substitute.For<IMarketCalendar>();
+        plannerCalendar.LastSessionCloseAt(Arg.Any<Market>(), Arg.Any<DateTimeOffset>())
+            .Returns(callInfo => callInfo.ArgAt<DateTimeOffset>(1));
+        plannerCalendar.LocalDateOn(Market.Nyse, Arg.Any<DateTimeOffset>()).Returns(closeLocalDate2);
+        plannerCalendar.LocalDateOn(Market.Sgx, Arg.Any<DateTimeOffset>()).Returns(closeLocalDate2);
+
+        var planner = new RefreshCatchUpService(
+            _db,
+            plannerCalendar,
+            _timeProvider,
+            Options.Create(new PriceBackfillOptions()),
+            Options.Create(new DividendBackfillOptions()));
+
+        var plan = await planner.PlanAsync(CancellationToken.None);
+
+        plan.PriceHistory.ToFetch.Should().NotContain(t => t.Symbol == "AAPL");
+        plan.PriceHistory.RetryPendingSymbols.Should().NotContain("AAPL");
+        plan.PriceHistory.NotYetAvailableSymbols.Should().NotContain("AAPL");
+    }
 }

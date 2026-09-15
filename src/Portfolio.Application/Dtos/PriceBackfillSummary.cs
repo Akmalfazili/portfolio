@@ -15,8 +15,8 @@ public sealed record AssetBackfillFailure(string Symbol, string Error);
 /// <summary>
 /// Report of one <c>IPriceBackfillService.RunAsync</c> invocation. Every asset ends up in exactly
 /// one of <see cref="AssetsProcessed"/>, <see cref="AssetsSkippedForBudget"/>,
-/// <see cref="AssetsFailed"/>, or <see cref="AssetsSkippedTodayNotClosed"/> — never two, and never
-/// silently absent from all four.
+/// <see cref="AssetsFailed"/>, <see cref="AssetsSkippedTodayNotClosed"/>, or
+/// <see cref="AssetsAlreadyCovered"/> — never two, and never silently absent from all five.
 ///
 /// <paramref name="AssetsWithTruncatedHistory"/> lists assets whose history was fetched
 /// successfully but not from the full requested start date — a provider-side window limit (e.g.
@@ -48,7 +48,27 @@ public sealed record PriceBackfillSummary(
     int PriceHistoryPointsInserted,
     int FxRatePointsInserted,
     int ProviderCallsUsed,
-    IReadOnlyList<string> AssetsWithTruncatedHistory);
+    IReadOnlyList<string> AssetsWithTruncatedHistory,
+    /// <summary>Never attempted, and not a failure, a budget skip, or "not yet settled" — added
+    /// 2026-09-15 alongside the catch-up/retry <c>from</c>-narrowing (see
+    /// <c>PriceBackfillService</c>'s class remarks). Only reachable on the two paths that narrow a
+    /// request to what a prior attempt proves is already on file
+    /// (<see cref="Domain.Entities.RefreshTrigger.BackfillCatchUp"/>, and a D51 narrowed retry
+    /// market): the narrowed <c>from</c> — the EARLIER of the coverage state's own
+    /// <c>CoveredTo + 1</c> and the newest actually-stored row's date + 1 — landed beyond this
+    /// market's settled cap, meaning BOTH "already asked for" (state) AND "actually on file"
+    /// (stored data) already reach it, not merely one of the two. A coordinator review caught the
+    /// state-alone version of this rule as unsafe: a run can succeed and record
+    /// <c>CoveredTo = cap</c> even when the provider's own response happened not to include that
+    /// specific date's bar (a late-publishing provider, or a partial response) — D51's own retry
+    /// SELECTION already guards against exactly this by using stored rows
+    /// (<c>lastBackfilledByAsset</c>), not state, so the narrowing has to agree or it would quietly
+    /// stop retrying a close that is still genuinely missing until the market's NEXT session close.
+    /// See <c>PriceBackfillService</c>'s class remarks for the full reasoning. Distinct from
+    /// <see cref="AssetsSkippedTodayNotClosed"/> on purpose: conflating the two would tell a reader
+    /// "the market hasn't settled" about an asset that is, in fact, already fully covered — the
+    /// same asserts-a-single-reason defect family as D10/D26/D33/D35/D38/D45/D47.</summary>
+    IReadOnlyList<string> AssetsAlreadyCovered);
 
 /// <summary>
 /// Why <c>IPriceBackfillService.RunIfDueAsync</c> decided one particular market was not due this

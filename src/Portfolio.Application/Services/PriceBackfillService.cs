@@ -109,6 +109,94 @@ namespace Portfolio.Application.Services;
 /// in depth, for a Twelve Data asset specifically: if `end_date` turns out to be inclusive after
 /// all, the `+1` day asks for (and may receive) one real day beyond the cap, and these filters are
 /// the only thing stopping it from reaching <c>PriceHistory</c>/<c>FxRates</c>.</para>
+///
+/// <para><b>2026-09-15: BackfillCatchUp and a D51 narrowed retry request only the TAIL that is
+/// missing — not the full range from the asset's earliest trade date.</b> Live evidence: a queued
+/// catch-up requested USD/SGD with `start_date=2020-07-10` to obtain one missing day, and a
+/// scheduled NYSE retry requested AAPL from `start_date=2022-10-08` — both discarding almost the
+/// entire response via the per-date uniqueness check, on every run, forever. Credits are unaffected
+/// (Twelve Data charges one credit per symbol regardless of range), but a multi-year payload is far
+/// more exposed to a 10-second HTTP timeout on a weak connection than the one or two rows actually
+/// missing.
+///
+/// <para><b>The narrowed `from` must be proven by BOTH coverage state AND stored data — state alone
+/// is unsafe.</b> The first version of this fix narrowed to <c>state.CoveredTo + 1</c> alone. A
+/// coordinator review caught the gap: a run can succeed and record <c>CoveredTo = cap</c> even when
+/// the provider's own response did not actually include that specific date's bar (a late-publishing
+/// provider, or a partial response) — this is exactly why D51's own retry SELECTION already filters
+/// by stored rows (<c>lastBackfilledByAsset</c> below and the newest stored <c>FxRate</c> for a
+/// pair), not by state: an asset can be "successfully asked" through the cap while still genuinely
+/// missing the cap's own bar. Narrowing on state alone would then compute
+/// <c>from = state.CoveredTo + 1</c>, land one day past the cap, and file the asset under
+/// <see cref="Dtos.PriceBackfillSummary.AssetsAlreadyCovered"/> with ZERO calls spent — silently
+/// stopping the retry of a close that is still missing until the market's NEXT session close, D47's
+/// own lateness family one layer further in. Fixed by narrowing to
+/// <c>min(state.CoveredTo, newest stored date) + 1</c> instead — see the asset loop's and FX loop's
+/// own `narrowingApplies` checks below, both of which now query the newest actually-stored row/rate
+/// alongside the state before narrowing, and fall back to the FULL range (no narrowing at all) when
+/// there is no stored data whatsoever to corroborate state with. A back-dated transaction that moves
+/// the asset's own earliest trade date BEFORE `state.CoveredFrom` also falls back to the full range:
+/// the state does not prove that newly-relevant early history was ever asked for. Applies to exactly
+/// two paths, by design — <see cref="Domain.Enums.RefreshTrigger.BackfillCatchUp"/>
+/// (<see cref="RunCatchUpAsync"/>) and a market in <c>retryOnlyMarkets</c> (D51's own narrowed
+/// retry) — never the first scheduled pass per close or the manual endpoint, both of which stay a
+/// full pass unchanged: a full pass is also what backfills a newly recorded back-dated transaction
+/// on an asset whose latest close happens to already be on file, which a tail-only request would
+/// never revisit. The consequence of the fix: a late-publishing-bar retry now makes a genuine 1-2
+/// day call (the same credit it always cost) rather than narrowing past it — this is a deliberately
+/// slightly larger request than the state-alone version, in exchange for never silently stopping a
+/// retry that is still needed.</para>
+///
+/// <para><b>The coverage-merge trap.</b> <c>RecordPriceHistoryState</c>/<c>RecordFxPairState</c>
+/// used to set <c>CoveredFrom</c>/<c>CoveredTo</c> straight from the requested range. A narrowed
+/// request's own `from` can be later than the state's existing <c>CoveredFrom</c> — passing it
+/// straight through would overwrite <c>CoveredFrom</c> with that later date, and the very next
+/// planner check (<c>RefreshCatchUpService</c>'s <c>coveredFrom &lt;= firstTrade</c> test) would then
+/// read the EARLIER history as newly uncovered and re-request the full range — which narrows back
+/// down next time, then goes full again: the exact "re-spends credits every click, forever" loop
+/// tracker.md's 2026-09-14 entry exists to prevent, one layer further down. Fixed by making both
+/// methods take the UNION of the existing and newly-requested range (min <c>CoveredFrom</c>, max
+/// <c>CoveredTo</c>) on every success, narrowed or full — a full-range success's own range is always
+/// a superset of whatever was already covered, so the union is a no-op for it. A non-contiguous
+/// union (a gap between the old covered range and the new one) does not occur by construction: every
+/// caller either requests the full range from the asset's/currency's own lower bound, or resumes at
+/// <c>min(state.CoveredTo, newest stored date) + 1</c>, which is never later than
+/// <c>state.CoveredTo + 1</c> — there is never a requested range that starts strictly after the
+/// state's own existing upper bound, so the two ranges are always contiguous or overlapping. Note
+/// what this union does NOT paper over: <c>CoveredTo</c> itself is still recorded as the REQUESTED
+/// cap on success (see the per-asset/per-currency call sites below), not the newest point actually
+/// returned — the dual state-AND-stored check above is what keeps a still-missing cap-day bar from
+/// being narrowed past, precisely because it does not trust <c>CoveredTo</c> alone.</para>
+///
+/// <para><b>A narrowed `from` landing beyond the cap means BOTH sources already reach it — "already
+/// covered", not "not yet settled".</b> The planner (<c>RefreshCatchUpService</c>) and this method
+/// compute the settled cap and read coverage state at slightly different instants, so a narrowed
+/// `from` can legitimately land past `cap`/`fxCap` even though the planner judged the asset/currency
+/// missing (most plausibly a concurrent run advancing coverage between the planner's decision and
+/// this run's execution). Filing that under
+/// <see cref="Dtos.PriceBackfillSummary.AssetsSkippedTodayNotClosed"/> — whose name and doc comment
+/// both assert "not yet settled" — would be exactly the asserts-a-single-reason defect CLAUDE.md
+/// calls out (D10/D26/D33/D35/D38/D45/D47): it is not true here, the market HAS settled, coverage
+/// just already reaches it. Filed instead under
+/// <see cref="Dtos.PriceBackfillSummary.AssetsAlreadyCovered"/> — reachable now only when the newest
+/// STORED row/rate reaches the cap too, not merely the state, so the label is honest in the sense
+/// that matters: the close really is on file, not just "asked for" — still zero calls spent, still
+/// not a failure, just an honest different reason.</para>
+///
+/// <para><b>Left deliberately unnarrowed: a legitimately empty narrowed FX range.</b> A narrowed
+/// asset request's range always includes `cap` itself, which is by construction a trading day (it
+/// comes from <c>LastSessionCloseAt</c> walking back to an actual session) — it can never be
+/// entirely non-trading days. FX has no such guarantee: `fxCap` is one UTC calendar day behind `now`
+/// with no session to anchor it, and Twelve Data's own FX weekend coverage is known to be
+/// incomplete (tracker.md's refresh-catch-up entry measured 54 Fridays against only 35 Sundays on
+/// file). A narrowed one-or-two-day FX range can therefore legitimately contain no bar at all, and
+/// if Twelve Data answers that with an error payload rather than an empty list (unconfirmed — not
+/// observed live, and not reproducible without calling the real API), this method reports it as a
+/// failure exactly as any other FX error — see the FX loop below. This is a pre-existing, not a new,
+/// exposure (a full multi-year range could always coincidentally end on such a gap too), simply more
+/// likely once ranges narrow to a day or two; it never erodes recorded coverage (a failure never
+/// touches <c>CoveredFrom</c>/<c>CoveredTo</c>), and D51's bounded, paced retry already exists to
+/// stop a persistently "failing" pair from re-spending credits without bound.</para>
 /// </summary>
 public sealed class PriceBackfillService(
     IPortfolioDbContext db,
@@ -312,6 +400,12 @@ public sealed class PriceBackfillService(
         var assetsSkippedForBudget = new List<string>();
         var assetsFailed = new List<AssetBackfillFailure>();
         var assetsSkippedTodayNotClosed = new List<string>();
+        // 2026-09-15: a narrowed request (see the class remarks) whose `from` landed beyond the
+        // cap because BOTH coverage state and the newest actually-stored row/rate already reach
+        // it — "already covered", never "not yet settled". Kept separate from
+        // assetsSkippedTodayNotClosed on purpose; see that list's own doc comment and
+        // PriceBackfillSummary.AssetsAlreadyCovered.
+        var assetsAlreadyCovered = new List<string>();
         var assetsTruncated = new List<string>();
         var priceHistoryInserted = 0;
         var fxRateInserted = 0;
@@ -496,17 +590,68 @@ public sealed class PriceBackfillService(
             // skipped by the narrowing above) must cover the full range every in-scope asset in
             // this currency needs, not just the narrowed subset a retry happens to be fetching
             // prices for.
-            var from = assetsInScope
+            var earliestNeeded = assetsInScope
                 .Where(a => a.Currency == currency && earliestTradeDateByAsset.ContainsKey(a.Id))
                 .Select(a => earliestTradeDateByAsset[a.Id])
                 .DefaultIfEmpty(today)
                 .Min();
+            var from = earliestNeeded;
+
+            // 2026-09-15: narrow `from` to the tail that is missing — see the class remarks. Only
+            // on BackfillCatchUp, or when every market that needs this currency is a D51 narrowed
+            // retry market (mirrors the pre-filter above, which decides whether to fetch AT ALL —
+            // this decides, given that it IS being fetched, how far back to start). Narrowing
+            // requires BOTH the state's own `CoveredTo` AND the newest actually-stored `FxRate`
+            // for this pair to corroborate each other — state alone is not proof the cap-day rate
+            // is on file (a coordinator review caught this: a run can succeed and record
+            // `CoveredTo = cap` even though the provider's response didn't include that specific
+            // date's rate). No stored rate at all for this pair means nothing to narrow against,
+            // so `from` stays the full range.
+            var requiringMarkets = marketsByCurrency.TryGetValue(currency, out var rm) ? rm : [];
+            var fxNarrowingApplies = trigger == RefreshTrigger.BackfillCatchUp
+                || (retryOnlyMarketSet.Count > 0 && requiringMarkets.Count > 0 && requiringMarkets.All(retryOnlyMarketSet.Contains));
+            var fxAlreadyCovered = false;
+            if (fxNarrowingApplies
+                && fxPairStatesByCurrency.TryGetValue(currency, out var existingFxState)
+                && existingFxState.CoveredFrom is { } fxCoveredFrom
+                && existingFxState.CoveredTo is { } fxCoveredTo
+                && fxCoveredFrom <= earliestNeeded)
+            {
+                var newestStoredFxDate = await db.FxRates
+                    .Where(f => f.Base == ReportingCurrency && f.Quote == currency)
+                    .Select(f => (DateOnly?)f.Date)
+                    .MaxAsync(cancellationToken);
+
+                if (newestStoredFxDate is { } storedFxDate)
+                {
+                    var boundedCoveredTo = fxCoveredTo < storedFxDate ? fxCoveredTo : storedFxDate;
+                    var narrowedFrom = boundedCoveredTo.AddDays(1);
+                    if (narrowedFrom > from)
+                    {
+                        from = narrowedFrom;
+                        fxAlreadyCovered = from > fxCap;
+                    }
+                }
+            }
 
             if (from > fxCap)
             {
-                // D53: same "deferred, not yet settled" bucket as the per-asset guard below — `from`
-                // is beyond the FX day-cap (see `fxCap` above), so there is nothing to fetch yet.
-                assetsSkippedTodayNotClosed.Add($"FX:{ReportingCurrency}/{currency}");
+                if (fxAlreadyCovered)
+                {
+                    // 2026-09-15: the narrowed `from` outran `fxCap` because both state AND the
+                    // stored FxRate table already cover it, not because the day hasn't settled —
+                    // see AssetsAlreadyCovered's own doc comment for why this must not share
+                    // AssetsSkippedTodayNotClosed.
+                    assetsAlreadyCovered.Add($"FX:{ReportingCurrency}/{currency}");
+                }
+                else
+                {
+                    // D53: same "deferred, not yet settled" bucket as the per-asset guard below —
+                    // `from` is beyond the FX day-cap (see `fxCap` above), so there is nothing to
+                    // fetch yet.
+                    assetsSkippedTodayNotClosed.Add($"FX:{ReportingCurrency}/{currency}");
+                }
+
                 continue;
             }
 
@@ -594,7 +739,7 @@ public sealed class PriceBackfillService(
 
         foreach (var asset in assets)
         {
-            if (!earliestTradeDateByAsset.TryGetValue(asset.Id, out var from))
+            if (!earliestTradeDateByAsset.TryGetValue(asset.Id, out var earliestTrade))
             {
                 // No transactions yet for this asset — nothing to backfill against.
                 continue;
@@ -602,9 +747,51 @@ public sealed class PriceBackfillService(
 
             var market = marketByAssetSymbol[asset.Symbol];
             var cap = capByMarket[market];
+            var from = earliestTrade;
+
+            // 2026-09-15: narrow `from` to the tail that is missing — see the class remarks. Only
+            // on BackfillCatchUp, or when this asset's own market is a D51 narrowed retry market:
+            // the first scheduled pass per close and the manual endpoint must stay a full pass,
+            // unchanged. Narrowing requires BOTH the state's own `CoveredTo` AND the newest
+            // actually-stored `PriceHistory` row (`lastBackfilledByAsset`, the same source D51's
+            // own retry SELECTION already trusts) to corroborate each other — state alone is not
+            // proof the cap-day bar is on file (a coordinator review caught this: a run can
+            // succeed and record `CoveredTo = cap` even though the provider's response didn't
+            // include that specific date's bar, silently stopping the retry of a close that is
+            // still missing). No stored row at all for this asset means nothing to narrow against,
+            // so `from` stays the full range. A back-dated transaction that moved `earliestTrade`
+            // before the state's own CoveredFrom also falls back to the full range — the state
+            // does not prove that newly-relevant early history was ever asked for.
+            var narrowingApplies = trigger == RefreshTrigger.BackfillCatchUp || retryOnlyMarketSet.Contains(market);
+            var alreadyCovered = false;
+            if (narrowingApplies
+                && priceHistoryStatesByAsset.TryGetValue(asset.Id, out var existingState)
+                && existingState.CoveredFrom is { } stateCoveredFrom
+                && existingState.CoveredTo is { } stateCoveredTo
+                && stateCoveredFrom <= earliestTrade
+                && lastBackfilledByAsset.TryGetValue(asset.Id, out var newestStoredDate))
+            {
+                var boundedCoveredTo = stateCoveredTo < newestStoredDate ? stateCoveredTo : newestStoredDate;
+                var narrowedFrom = boundedCoveredTo.AddDays(1);
+                if (narrowedFrom > from)
+                {
+                    from = narrowedFrom;
+                    // A narrowed `from` beyond `cap` means BOTH state AND the stored PriceHistory
+                    // table already cover this market's settled cap — "already covered", not "not
+                    // yet settled" (see the class remarks and AssetsAlreadyCovered's own doc
+                    // comment).
+                    alreadyCovered = from > cap;
+                }
+            }
 
             if (from > cap)
             {
+                if (alreadyCovered)
+                {
+                    assetsAlreadyCovered.Add(asset.Symbol);
+                    continue;
+                }
+
                 // D53: `from` is beyond this asset's own market's settled cap — either because it
                 // was bought today (the original guard this replaces) or because that market's most
                 // recent session hasn't finished SETTLING yet (mid-session, SGX's lunch break, or
@@ -743,7 +930,7 @@ public sealed class PriceBackfillService(
         // NYSE asset failed. ErrorMessage stays whole-run text (not scoped per market) — it is a
         // human-facing diagnostic string, never machine-read (RefreshRun.Success is the only field
         // RunIfDueAsync's gate consults), so one shared summary is simplest and loses nothing.
-        var runSummaryText = BuildRunSummary(assetsSkippedForBudget, assetsFailed, assetsSkippedTodayNotClosed, assetsTruncated);
+        var runSummaryText = BuildRunSummary(assetsSkippedForBudget, assetsFailed, assetsSkippedTodayNotClosed, assetsTruncated, assetsAlreadyCovered);
         var completedAt = timeProvider.GetUtcNow();
         foreach (var market in markets)
         {
@@ -778,7 +965,8 @@ public sealed class PriceBackfillService(
             priceHistoryInserted,
             fxRateInserted,
             callsUsed,
-            assetsTruncated);
+            assetsTruncated,
+            assetsAlreadyCovered);
     }
 
     /// <summary>
@@ -791,6 +979,20 @@ public sealed class PriceBackfillService(
     /// <c>LastRunSuccess</c>/<c>LastError</c> but must never touch <c>CoveredFrom</c>/<c>CoveredTo</c>:
     /// shrinking known coverage on a failed retry would make the catch-up planner re-fetch an asset
     /// it has already, successfully, asked about.
+    ///
+    /// <para><b>2026-09-15: a success takes the UNION of the existing and newly-requested range,
+    /// never overwrites it.</b> A narrowed request's own <paramref name="coveredFrom"/> is the
+    /// state's own prior <c>CoveredTo + 1</c> — writing it straight through would move
+    /// <c>CoveredFrom</c> LATER, and the very next planner check
+    /// (<c>RefreshCatchUpService</c>'s <c>coveredFrom &lt;= firstTrade</c> test) would then read the
+    /// earlier history as newly uncovered and re-request the full range on the next run. Taking
+    /// <c>min(existing CoveredFrom, coveredFrom)</c>/<c>max(existing CoveredTo, coveredTo)</c>
+    /// instead is a no-op for a full-range success (its own range is already a superset of whatever
+    /// was covered before) and is exactly what lets a narrowed success extend <c>CoveredTo</c>
+    /// without ever losing the earlier <c>CoveredFrom</c> a prior full pass established. A
+    /// non-contiguous union (a gap between the old and new ranges) does not occur by construction:
+    /// every caller requests either the full range from the asset's own lower bound, or resumes at
+    /// exactly <c>CoveredTo + 1</c> — never a range starting strictly later than that.</para>
     /// </summary>
     private void RecordPriceHistoryState(
         Dictionary<int, AssetPriceHistoryState> statesByAsset,
@@ -815,8 +1017,8 @@ public sealed class PriceBackfillService(
         if (success)
         {
             state.LastSuccessAt = now;
-            state.CoveredFrom = coveredFrom;
-            state.CoveredTo = coveredTo;
+            state.CoveredFrom = MinDate(state.CoveredFrom, coveredFrom);
+            state.CoveredTo = MaxDate(state.CoveredTo, coveredTo);
         }
     }
 
@@ -824,7 +1026,9 @@ public sealed class PriceBackfillService(
     /// Refresh-catch-up feature: upserts <see cref="Domain.Entities.FxPairBackfillState"/> for ONE
     /// currency pair's attempt this run — the FX mirror of <see cref="RecordPriceHistoryState"/>,
     /// same rules: <paramref name="coveredFrom"/>/<paramref name="coveredTo"/> supplied only on
-    /// success, and a failure must never touch them.
+    /// success, a failure must never touch them, and a success takes the union of the existing and
+    /// newly-requested range rather than overwriting it — see
+    /// <see cref="RecordPriceHistoryState"/>'s 2026-09-15 remarks for why.
     /// </summary>
     private void RecordFxPairState(
         Dictionary<string, FxPairBackfillState> statesByCurrency,
@@ -849,10 +1053,21 @@ public sealed class PriceBackfillService(
         if (success)
         {
             state.LastSuccessAt = now;
-            state.CoveredFrom = coveredFrom;
-            state.CoveredTo = coveredTo;
+            state.CoveredFrom = MinDate(state.CoveredFrom, coveredFrom);
+            state.CoveredTo = MaxDate(state.CoveredTo, coveredTo);
         }
     }
+
+    /// <summary>The earlier of two nullable dates, treating null as "no bound yet" rather than as
+    /// the smallest possible value — <c>null</c> only when BOTH inputs are null. Shared by
+    /// <see cref="RecordPriceHistoryState"/>/<see cref="RecordFxPairState"/>'s coverage-union fix;
+    /// see their 2026-09-15 remarks.</summary>
+    private static DateOnly? MinDate(DateOnly? a, DateOnly? b) =>
+        a is null ? b : b is null ? a : a < b ? a : b;
+
+    /// <summary>The later of two nullable dates, same null handling as <see cref="MinDate"/>.</summary>
+    private static DateOnly? MaxDate(DateOnly? a, DateOnly? b) =>
+        a is null ? b : b is null ? a : a > b ? a : b;
 
     /// <summary>Best-effort backfill has no single pass/fail flag — a skipped or truncated asset
     /// is not an error, just something worth a human noticing in the audit trail. Kept separated
@@ -863,7 +1078,8 @@ public sealed class PriceBackfillService(
         IReadOnlyList<string> skippedForBudget,
         IReadOnlyList<AssetBackfillFailure> failed,
         IReadOnlyList<string> skippedTodayNotClosed,
-        IReadOnlyList<string> truncated)
+        IReadOnlyList<string> truncated,
+        IReadOnlyList<string> alreadyCovered)
     {
         var parts = new List<string>();
         if (skippedForBudget.Count > 0)
@@ -884,6 +1100,15 @@ public sealed class PriceBackfillService(
         if (truncated.Count > 0)
         {
             parts.Add($"{truncated.Count} truncated: {string.Join(", ", truncated)}");
+        }
+
+        if (alreadyCovered.Count > 0)
+        {
+            // 2026-09-15: benign — a narrowed (BackfillCatchUp/D51-retry) request found BOTH the
+            // state and the stored data already reaching the cap, before spending a call.
+            // Reported for visibility, not because it needs a human response; see
+            // PriceBackfillSummary.AssetsAlreadyCovered.
+            parts.Add($"{alreadyCovered.Count} already covered: {string.Join(", ", alreadyCovered)}");
         }
 
         return parts.Count == 0 ? null : string.Join("; ", parts);
