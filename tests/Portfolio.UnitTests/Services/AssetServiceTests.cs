@@ -390,6 +390,108 @@ public sealed class AssetServiceTests : IDisposable
         updated.Value!.ProviderHasEverSucceeded.Should().BeTrue();
     }
 
+    // --- ExcludeFromCloseCoverage: the declared per-asset opt-out from the refresh panel's
+    // per-market closing-price floor (PriceRefreshStatusEnricher). See Asset.ExcludeFromCloseCoverage.
+
+    [Fact]
+    public async Task CreateAsync_DefaultsExcludeFromCloseCoverageToFalse()
+    {
+        var request = new CreateAssetRequest("AAPL", "Apple Inc.", AssetClass.Stock, "NASDAQ", "USD", QuoteProviderKind.TwelveData, "AAPL", null);
+
+        var result = await _sut.CreateAsync(request, CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.ExcludeFromCloseCoverage.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task CreateAsync_AcceptsExcludeFromCloseCoverageTrue_ForAStockAsset()
+    {
+        var request = new CreateAssetRequest(
+            "ARVLF", "Arrival SA", AssetClass.Stock, "NASDAQ", "USD", QuoteProviderKind.TwelveData, "ARVLF", null,
+            ExcludeFromCloseCoverage: true);
+
+        var result = await _sut.CreateAsync(request, CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.ExcludeFromCloseCoverage.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task CreateAsync_RejectsExcludeFromCloseCoverageTrue_ForACryptoAsset()
+    {
+        var request = new CreateAssetRequest(
+            "ETH", "Ethereum", AssetClass.Crypto, null, "USD", QuoteProviderKind.CoinGecko, null, "ethereum",
+            ExcludeFromCloseCoverage: true);
+
+        var result = await _sut.CreateAsync(request, CancellationToken.None);
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error!.ValidationErrors.Should().ContainKey("excludeFromCloseCoverage");
+    }
+
+    [Fact]
+    public async Task UpdateAsync_RoundTripsExcludeFromCloseCoverage_AsAFullReplace()
+    {
+        var created = await _sut.CreateAsync(
+            new CreateAssetRequest("ARVLF", "Arrival SA", AssetClass.Stock, "NASDAQ", "USD", QuoteProviderKind.TwelveData, "ARVLF", null),
+            CancellationToken.None);
+        created.Value!.ExcludeFromCloseCoverage.Should().BeFalse();
+        var id = created.Value.Id;
+
+        var updated = await _sut.UpdateAsync(
+            id,
+            new UpdateAssetRequest(
+                "ARVLF", "Arrival SA", AssetClass.Stock, "NASDAQ", "USD", QuoteProviderKind.TwelveData, "ARVLF", null, true,
+                ExcludeFromCloseCoverage: true),
+            CancellationToken.None);
+
+        updated.IsSuccess.Should().BeTrue();
+        updated.Value!.ExcludeFromCloseCoverage.Should().BeTrue();
+
+        var reread = await _sut.GetByIdAsync(id, CancellationToken.None);
+        reread!.ExcludeFromCloseCoverage.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task UpdateAsync_OmittingExcludeFromCloseCoverage_ClearsAPreviouslySetFlag()
+    {
+        // A full replace: leaving the parameter at its default in the update request must clear a
+        // previously-true flag, the same way IsActive or any other field would.
+        var created = await _sut.CreateAsync(
+            new CreateAssetRequest(
+                "ARVLF", "Arrival SA", AssetClass.Stock, "NASDAQ", "USD", QuoteProviderKind.TwelveData, "ARVLF", null,
+                ExcludeFromCloseCoverage: true),
+            CancellationToken.None);
+        var id = created.Value!.Id;
+
+        var updated = await _sut.UpdateAsync(
+            id,
+            new UpdateAssetRequest("ARVLF", "Arrival SA", AssetClass.Stock, "NASDAQ", "USD", QuoteProviderKind.TwelveData, "ARVLF", null, true),
+            CancellationToken.None);
+
+        updated.Value!.ExcludeFromCloseCoverage.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task UpdateAsync_RejectsExcludeFromCloseCoverageTrue_ForACryptoAsset()
+    {
+        var created = await _sut.CreateAsync(
+            new CreateAssetRequest("ETH", "Ethereum", AssetClass.Crypto, null, "USD", QuoteProviderKind.CoinGecko, null, "ethereum"),
+            CancellationToken.None);
+        var id = created.Value!.Id;
+
+        var updated = await _sut.UpdateAsync(
+            id,
+            new UpdateAssetRequest(
+                "ETH", "Ethereum", AssetClass.Crypto, null, "USD", QuoteProviderKind.CoinGecko, null, "ethereum", true,
+                ExcludeFromCloseCoverage: true),
+            CancellationToken.None);
+
+        updated.IsSuccess.Should().BeFalse();
+        updated.Error!.ValidationErrors.Should().ContainKey("excludeFromCloseCoverage");
+    }
+
     // --- UpdateAsync / deactivate (Phase 12)
 
     [Fact]

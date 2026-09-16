@@ -19,6 +19,7 @@ import {
 } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
+import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
@@ -50,6 +51,7 @@ interface AssetFormControls {
   providerCoinId: FormControl<string | null>;
   fiscalYearEndMonth: FormControl<number | null>;
   fiscalYearEndDay: FormControl<number | null>;
+  excludeFromCloseCoverage: FormControl<boolean>;
 }
 
 /**
@@ -73,6 +75,7 @@ const SERVER_ERROR_FIELDS: (keyof AssetFormControls)[] = [
   'providerCoinId',
   'fiscalYearEndMonth',
   'fiscalYearEndDay',
+  'excludeFromCloseCoverage',
 ];
 
 /**
@@ -120,6 +123,7 @@ function fiscalYearEndPairValidator(counterpartName: keyof AssetFormControls): V
     ReactiveFormsModule,
     MatButtonModule,
     MatDialogModule,
+    MatCheckboxModule,
     MatFormFieldModule,
     MatIconModule,
     MatInputModule,
@@ -189,6 +193,14 @@ export class AssetFormDialog {
         fiscalYearEndPairValidator('fiscalYearEndMonth'),
       ],
     }),
+    // Stocks only — meaningless for Crypto (no price history at all), and the
+    // server 400s on `true` there. Cleared and disabled alongside the fiscal
+    // year end fields whenever Crypto is selected — see the assetClass
+    // valueChanges subscription below.
+    excludeFromCloseCoverage: new FormControl<boolean>(
+      this.existing?.excludeFromCloseCoverage ?? false,
+      { nonNullable: true },
+    ),
   });
 
   readonly assetClassValue = signal<AssetClass>(this.existing?.assetClass ?? 'Stock');
@@ -239,6 +251,12 @@ export class AssetFormDialog {
         this.form.controls.fiscalYearEndDay.setValue(null);
         this.form.controls.fiscalYearEndMonth.disable({ emitEvent: false });
         this.form.controls.fiscalYearEndDay.disable({ emitEvent: false });
+        // Meaningless for Crypto (no price history at all, never enters the
+        // refresh panel's closing-price floor) and rejected with a 400 if
+        // sent `true` — cleared AND disabled, same rule as the fiscal year
+        // end fields above.
+        this.form.controls.excludeFromCloseCoverage.setValue(false);
+        this.form.controls.excludeFromCloseCoverage.disable({ emitEvent: false });
       } else {
         this.form.controls.quoteProviderKind.enable({ emitEvent: false });
         if (this.form.controls.quoteProviderKind.value === 'CoinGecko') {
@@ -246,6 +264,7 @@ export class AssetFormDialog {
         }
         this.form.controls.fiscalYearEndMonth.enable({ emitEvent: false });
         this.form.controls.fiscalYearEndDay.enable({ emitEvent: false });
+        this.form.controls.excludeFromCloseCoverage.enable({ emitEvent: false });
       }
     });
 
@@ -285,6 +304,7 @@ export class AssetFormDialog {
       if (this.assetClassValue() === 'Crypto') {
         this.form.controls.fiscalYearEndMonth.disable({ emitEvent: false });
         this.form.controls.fiscalYearEndDay.disable({ emitEvent: false });
+        this.form.controls.excludeFromCloseCoverage.disable({ emitEvent: false });
       }
     }
   }
@@ -347,6 +367,7 @@ export class AssetFormDialog {
       providerCoinId: raw.providerCoinId?.trim() ? raw.providerCoinId.trim() : null,
       fiscalYearEndMonth: raw.fiscalYearEndMonth,
       fiscalYearEndDay: raw.fiscalYearEndDay,
+      excludeFromCloseCoverage: raw.excludeFromCloseCoverage,
     };
 
     this.submitting.set(true);

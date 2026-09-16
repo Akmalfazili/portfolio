@@ -33,6 +33,7 @@ const AAPL: AssetDto = {
   providerHasEverSucceeded: true,
   fiscalYearEndMonth: null,
   fiscalYearEndDay: null,
+  excludeFromCloseCoverage: false,
 };
 
 const AAPL_HOLDING: HoldingDto = {

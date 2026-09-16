@@ -84,6 +84,25 @@
                   </span>
                 }
               }
+              <!--
+                A declared opt-out (never inferred), so it must stay visible
+                after it's set — otherwise the refresh panel's "closing
+                prices through" date silently changed and nothing on this
+                page would explain why. Icon-only: the full sentence as a
+                native tooltip (`title`) and an `aria-label` for the
+                accessible name, so the identifier column never wraps to
+                several lines and blows out this row's height relative to
+                its neighbours.
+              -->
+              @if (asset.excludeFromCloseCoverage) {
+                <span
+                  class="asset-management__price-hint asset-management__price-hint--icon-only"
+                  title="Excluded from the refresh panel's closing-price coverage. Live quotes, history and reports are unaffected."
+                  aria-label="Excluded from closing-price coverage"
+                >
+                  <mat-icon aria-hidden="true">visibility_off</mat-icon>
+                </span>
+              }
             </td>
             <td>
               @if (asset.isActive) {

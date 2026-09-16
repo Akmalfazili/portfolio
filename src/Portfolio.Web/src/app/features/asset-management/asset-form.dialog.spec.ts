@@ -24,6 +24,7 @@ const CREATED: AssetDto = {
   providerHasEverSucceeded: false,
   fiscalYearEndMonth: null,
   fiscalYearEndDay: null,
+  excludeFromCloseCoverage: false,
 };
 
 describe('AssetFormDialog', () => {
@@ -133,6 +134,7 @@ describe('AssetFormDialog', () => {
       providerCoinId: null,
       fiscalYearEndMonth: null,
       fiscalYearEndDay: null,
+      excludeFromCloseCoverage: false,
     });
     req.flush(CREATED);
 
@@ -293,6 +295,7 @@ describe('AssetFormDialog', () => {
       providerHasEverSucceeded: true,
       fiscalYearEndMonth: null,
       fiscalYearEndDay: null,
+      excludeFromCloseCoverage: false,
     };
 
     it('pre-fills from the existing asset and disables identity/provider fields', () => {
@@ -345,6 +348,7 @@ describe('AssetFormDialog', () => {
         providerCoinId: null,
         fiscalYearEndMonth: 6,
         fiscalYearEndDay: 30,
+        excludeFromCloseCoverage: false,
         isActive: true,
       });
       req.flush({ ...EXISTING, fiscalYearEndMonth: 6, fiscalYearEndDay: 30 });
@@ -352,6 +356,87 @@ describe('AssetFormDialog', () => {
       expect(dialogRef.close).toHaveBeenCalledWith({
         kind: 'saved',
         asset: { ...EXISTING, fiscalYearEndMonth: 6, fiscalYearEndDay: 30 },
+      });
+    });
+
+    // --- excludeFromCloseCoverage — declared opt-out for a delisted symbol
+    // whose provider has stopped publishing daily closes (see AssetDto's doc
+    // comment). Stocks only; the server 400s on `true` for Crypto.
+
+    it('shows the excludeFromCloseCoverage checkbox for a Stock asset, enabled', () => {
+      const fixture = setup({ mode: 'edit', asset: EXISTING });
+      const { componentInstance } = fixture;
+
+      expect(componentInstance.form.controls.excludeFromCloseCoverage.disabled).toBe(false);
+      const checkbox = fixture.nativeElement.querySelector('mat-checkbox');
+      expect(checkbox).not.toBeNull();
+    });
+
+    it('hides the excludeFromCloseCoverage checkbox and disables the control for an existing Crypto asset', () => {
+      const cryptoAsset: AssetDto = {
+        ...EXISTING,
+        assetClass: 'Crypto',
+        quoteProviderKind: 'CoinGecko',
+        currency: 'USD',
+        providerSymbol: null,
+        providerCoinId: 'ethereum',
+      };
+      const fixture = setup({ mode: 'edit', asset: cryptoAsset });
+      const { componentInstance } = fixture;
+
+      expect(componentInstance.form.controls.excludeFromCloseCoverage.disabled).toBe(true);
+      expect(componentInstance.form.controls.excludeFromCloseCoverage.value).toBe(false);
+      const checkbox = fixture.nativeElement.querySelector('mat-checkbox');
+      expect(checkbox).toBeNull();
+    });
+
+    it('clears excludeFromCloseCoverage back to false when switching from Stock to Crypto, so a stale true is never submitted', () => {
+      const excluded: AssetDto = { ...EXISTING, excludeFromCloseCoverage: true };
+      const fixture = setup({ mode: 'edit', asset: excluded });
+      const { componentInstance } = fixture;
+
+      expect(componentInstance.form.controls.excludeFromCloseCoverage.value).toBe(true);
+
+      componentInstance.form.controls.assetClass.setValue('Crypto');
+      fixture.detectChanges();
+
+      expect(componentInstance.form.controls.excludeFromCloseCoverage.value).toBe(false);
+      expect(componentInstance.form.controls.excludeFromCloseCoverage.disabled).toBe(true);
+    });
+
+    it('submits excludeFromCloseCoverage: false for a newly-created Crypto asset', () => {
+      const fixture = setup();
+      const { componentInstance } = fixture;
+      const { form } = componentInstance;
+
+      form.controls.symbol.setValue('ETH');
+      form.controls.name.setValue('Ethereum');
+      form.controls.assetClass.setValue('Crypto');
+      fixture.detectChanges();
+      form.controls.providerCoinId.setValue('ethereum');
+      componentInstance.submit();
+
+      const req = httpMock.expectOne(API_ROUTES.assets);
+      expect(req.request.body.excludeFromCloseCoverage).toBe(false);
+      req.flush({ ...CREATED, assetClass: 'Crypto', excludeFromCloseCoverage: false });
+    });
+
+    it('round-trips excludeFromCloseCoverage: true on edit for a Stock asset', () => {
+      const fixture = setup({ mode: 'edit', asset: EXISTING });
+      const { componentInstance } = fixture;
+
+      componentInstance.form.controls.excludeFromCloseCoverage.setValue(true);
+      componentInstance.submit();
+
+      const req = httpMock.expectOne(API_ROUTES.asset(EXISTING.id));
+      expect(req.request.body).toEqual(
+        expect.objectContaining({ excludeFromCloseCoverage: true }),
+      );
+      req.flush({ ...EXISTING, excludeFromCloseCoverage: true });
+
+      expect(dialogRef.close).toHaveBeenCalledWith({
+        kind: 'saved',
+        asset: { ...EXISTING, excludeFromCloseCoverage: true },
       });
     });
   });

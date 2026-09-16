@@ -186,6 +186,63 @@ public sealed class PriceRefreshStatusEnricherTests : IDisposable
         result.Closes!.Single(c => c.Market == Market.Nyse).LatestCloseDate.Should().Be(new DateOnly(2026, 9, 11));
     }
 
+    // ---- ExcludeFromCloseCoverage: the declared, per-asset opt-out ----
+
+    [Fact]
+    public async Task EnrichAsync_Closes_ExcludedAssetWithAnOlderMaxClose_DoesNotDragTheFloorDown()
+    {
+        var aapl = StockAsset(1, "AAPL", QuoteProviderKind.TwelveData);
+        var arvlf = StockAsset(2, "ARVLF", QuoteProviderKind.TwelveData);
+        arvlf.ExcludeFromCloseCoverage = true;
+        _db.Assets.AddRange(aapl, arvlf);
+        _db.Transactions.AddRange(Buy(1), Buy(2));
+        _db.PriceHistories.AddRange(
+            Close(1, new DateOnly(2026, 9, 15)),
+            Close(2, new DateOnly(2026, 9, 14))); // ARVLF's stale close — excluded, must not win the min
+        await _db.SaveChangesAsync();
+
+        var result = await CreateSut().EnrichAsync(BareStatus, CancellationToken.None);
+
+        result.Closes!.Single(c => c.Market == Market.Nyse).LatestCloseDate.Should().Be(new DateOnly(2026, 9, 15));
+    }
+
+    [Fact]
+    public async Task EnrichAsync_Closes_ExcludedAssetWithNoPriceHistoryAtAll_DoesNotForceTheFloorNull()
+    {
+        // The general rule nulls the floor if ANY qualifying asset has no history at all (see the
+        // "null cases" tests above) — an excluded asset must not count as "qualifying" for that
+        // rule either, precisely because it is excluded from the query entirely.
+        var aapl = StockAsset(1, "AAPL", QuoteProviderKind.TwelveData);
+        var arvlf = StockAsset(2, "ARVLF", QuoteProviderKind.TwelveData);
+        arvlf.ExcludeFromCloseCoverage = true;
+        _db.Assets.AddRange(aapl, arvlf);
+        _db.Transactions.AddRange(Buy(1), Buy(2));
+        _db.PriceHistories.Add(Close(1, new DateOnly(2026, 9, 15)));
+        // ARVLF has no PriceHistory row at all — would force null if it counted as qualifying.
+        await _db.SaveChangesAsync();
+
+        var result = await CreateSut().EnrichAsync(BareStatus, CancellationToken.None);
+
+        result.Closes!.Single(c => c.Market == Market.Nyse).LatestCloseDate.Should().Be(new DateOnly(2026, 9, 15));
+    }
+
+    [Fact]
+    public async Task EnrichAsync_Closes_AllAssetsExcluded_LatestCloseDateIsNull_NotAFalseFloor()
+    {
+        var arvlf = StockAsset(1, "ARVLF", QuoteProviderKind.TwelveData);
+        arvlf.ExcludeFromCloseCoverage = true;
+        _db.Assets.Add(arvlf);
+        _db.Transactions.Add(Buy(1));
+        _db.PriceHistories.Add(Close(1, new DateOnly(2026, 9, 14)));
+        await _db.SaveChangesAsync();
+
+        var result = await CreateSut().EnrichAsync(BareStatus, CancellationToken.None);
+
+        // The correct, honest outcome when every qualifying asset is excluded — the same "no
+        // reading yet" null the frontend already renders for "never attempted", not a special case.
+        result.Closes!.Single(c => c.Market == Market.Nyse).LatestCloseDate.Should().BeNull();
+    }
+
     [Fact]
     public async Task EnrichAsync_Closes_ExcludesCrypto_WhichHasNoMarketAtAll()
     {

@@ -26,6 +26,7 @@ const AAPL: AssetDto = {
   providerHasEverSucceeded: true,
   fiscalYearEndMonth: null,
   fiscalYearEndDay: null,
+  excludeFromCloseCoverage: false,
 };
 
 // D24 real gap — GET /api/assets returns inactive assets too (confirmed
@@ -47,6 +48,7 @@ const MSFT_INACTIVE: AssetDto = {
   providerHasEverSucceeded: true,
   fiscalYearEndMonth: null,
   fiscalYearEndDay: null,
+  excludeFromCloseCoverage: false,
 };
 
 describe('AssetManagementPage', () => {
@@ -257,6 +259,42 @@ describe('AssetManagementPage', () => {
     expect(text).not.toContain('No price');
   });
 
+  // --- excludeFromCloseCoverage — a declared opt-out, so it must stay
+  // visible on the row that carries it once set, not just live in the edit
+  // dialog nobody re-opens.
+
+  // Icon-only (no visible label text) so the identifier column never wraps
+  // into several lines and blows out this row's height relative to its
+  // neighbours — the full sentence lives in `title`/`aria-label` instead.
+
+  it('shows a quiet icon-only indicator, with its meaning reachable via aria-label, for an asset excluded from closing-price coverage', async () => {
+    fixture.detectChanges();
+    httpMock
+      .expectOne(API_ROUTES.assets)
+      .flush([{ ...AAPL, symbol: 'ARVLF', excludeFromCloseCoverage: true }]);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const indicator = fixture.nativeElement.querySelector(
+      '.asset-management__price-hint--icon-only',
+    ) as HTMLElement | null;
+    expect(indicator).not.toBeNull();
+    expect(indicator!.getAttribute('aria-label')).toBe('Excluded from closing-price coverage');
+    // Not rendered as visible row text — that's the whole point of the fix.
+    expect(fixture.nativeElement.textContent).not.toContain('Excluded from closing-price coverage');
+  });
+
+  it('shows no such indicator for an ordinary asset', async () => {
+    fixture.detectChanges();
+    httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(
+      fixture.nativeElement.querySelector('.asset-management__price-hint--icon-only'),
+    ).toBeNull();
+  });
+
   it('adds a newly-created asset to the list without a full reload', async () => {
     fixture.detectChanges();
     httpMock.expectOne(API_ROUTES.assets).flush([AAPL]);
@@ -280,6 +318,7 @@ describe('AssetManagementPage', () => {
       providerHasEverSucceeded: false,
       fiscalYearEndMonth: null,
       fiscalYearEndDay: null,
+      excludeFromCloseCoverage: false,
     };
     vi.spyOn(dialog, 'open').mockReturnValue({
       afterClosed: () => of({ kind: 'saved', asset: created }),
@@ -345,6 +384,7 @@ describe('AssetManagementPage', () => {
       providerCoinId: null,
       fiscalYearEndMonth: null,
       fiscalYearEndDay: null,
+      excludeFromCloseCoverage: false,
       isActive: false,
     });
     req.flush('boom', { status: 500, statusText: 'Server Error' });

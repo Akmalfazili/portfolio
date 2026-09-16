@@ -174,6 +174,82 @@ public sealed class PriceRefreshStatusEnricherTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// The live D53-follow-up shape this ships to fix: ARVLF's provider has permanently stopped
+    /// publishing daily closes, so its own max PriceHistory date lags a genuinely up-to-date sibling.
+    /// Declaring <see cref="Asset.ExcludeFromCloseCoverage"/> on it removes it from the min-of-max
+    /// entirely, against real SQL Server's translation of the added <c>!a.ExcludeFromCloseCoverage</c>
+    /// predicate — not just LINQ-to-Objects.
+    /// </summary>
+    [Fact]
+    public async Task EnrichAsync_Closes_Nyse_ExcludedAssetsStaleCloseDoesNotPinTheFloor_AgainstSqlServer()
+    {
+        await using (var context = CreateContext())
+        {
+            // AAPL is already seeded (HasData) — give it a transaction and an up-to-date close.
+            var aaplId = await context.Assets.Where(a => a.Symbol == "AAPL").Select(a => a.Id).SingleAsync();
+            context.Transactions.Add(new Transaction
+            {
+                AssetId = aaplId,
+                Type = TransactionType.Buy,
+                TradeDate = new DateOnly(2026, 1, 2),
+                Quantity = 10,
+                PricePerUnit = 190m,
+                Fees = 0,
+                Currency = "USD",
+            });
+            context.PriceHistories.Add(new PriceHistory
+            {
+                AssetId = aaplId,
+                Date = new DateOnly(2026, 9, 15),
+                Close = 191m,
+                Currency = "USD",
+            });
+
+            var arvlf = new Asset
+            {
+                Symbol = "ARVLF",
+                Name = "Arrival SA",
+                AssetClass = AssetClass.Stock,
+                Currency = "USD",
+                QuoteProviderKind = QuoteProviderKind.TwelveData,
+                ProviderSymbol = "ARVLF",
+                IsActive = true,
+                ExcludeFromCloseCoverage = true,
+                CreatedAt = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
+            };
+            context.Assets.Add(arvlf);
+            await context.SaveChangesAsync();
+
+            context.Transactions.Add(new Transaction
+            {
+                AssetId = arvlf.Id,
+                Type = TransactionType.Buy,
+                TradeDate = new DateOnly(2026, 1, 2),
+                Quantity = 4,
+                PricePerUnit = 0.0001m,
+                Fees = 0,
+                Currency = "USD",
+            });
+            context.PriceHistories.Add(new PriceHistory
+            {
+                AssetId = arvlf.Id,
+                Date = new DateOnly(2026, 9, 14), // stale — its provider has stopped publishing closes
+                Close = 0.0001m,
+                Currency = "USD",
+            });
+            await context.SaveChangesAsync();
+        }
+
+        await using var readContext = CreateContext();
+        var enricher = new PriceRefreshStatusEnricher(readContext, FullBudgetThrottle(), Options.Create(new PriceRefreshOptions()));
+
+        var result = await enricher.EnrichAsync(BareStatus, CancellationToken.None);
+
+        // ARVLF's stale 9/14 close must not drag the floor down from AAPL's genuine 9/15.
+        result.Closes!.Single(c => c.Market == Market.Nyse).LatestCloseDate.Should().Be(new DateOnly(2026, 9, 15));
+    }
+
+    /// <summary>
     /// The specific translation the InMemory suite cannot prove: a legacy pre-D47 row (<c>Market ==
     /// null</c>) must vanish under SQL's three-valued NULL logic, not merely under LINQ-to-Objects'
     /// C# <c>!= null</c> semantics — the two agree here, but only running against a real server rules

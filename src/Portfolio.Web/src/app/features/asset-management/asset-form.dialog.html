@@ -179,6 +179,15 @@
         the company's own filings; a wrong year end produces a confident wrong zakat figure with
         nothing downstream able to detect it. Used only by the Zakat report.
       </p>
+
+      <mat-checkbox class="asset-form__checkbox" [formControl]="form.controls.excludeFromCloseCoverage">
+        Exclude from closing-price coverage
+      </mat-checkbox>
+      <p class="asset-form__note">
+        For a delisted symbol whose provider has stopped publishing daily closes. Keeps it out of
+        the refresh panel's "closing prices through" date. Prices, history and reports are
+        unaffected.
+      </p>
     }
 
     @if (serverError(); as error) {

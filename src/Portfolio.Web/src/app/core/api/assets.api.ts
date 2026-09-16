@@ -98,6 +98,7 @@ export class AssetsApi {
       providerCoinId: asset.providerCoinId,
       fiscalYearEndMonth: asset.fiscalYearEndMonth,
       fiscalYearEndDay: asset.fiscalYearEndDay,
+      excludeFromCloseCoverage: asset.excludeFromCloseCoverage,
       isActive: asset.isActive,
     };
   }

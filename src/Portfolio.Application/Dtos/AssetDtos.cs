@@ -17,6 +17,9 @@ public sealed record AssetDto(
     string? ProviderSymbol,
     string? ProviderCoinId,
     bool IsActive,
+
+    /// <summary>See <see cref="Domain.Entities.Asset.ExcludeFromCloseCoverage"/>.</summary>
+    bool ExcludeFromCloseCoverage,
     DateTimeOffset CreatedAt,
 
     /// <summary>
@@ -89,7 +92,12 @@ public sealed record CreateAssetRequest(
     /// valid state for a <see cref="AssetClass.Crypto"/> request) or both set — validated in
     /// <c>AssetService</c>.</summary>
     int? FiscalYearEndMonth = null,
-    int? FiscalYearEndDay = null);
+    int? FiscalYearEndDay = null,
+
+    /// <summary>See <see cref="Domain.Entities.Asset.ExcludeFromCloseCoverage"/>. Rejected when
+    /// true alongside <see cref="AssetClass"/> <see cref="Enums.AssetClass.Crypto"/> — validated
+    /// in <c>AssetService</c>.</summary>
+    bool ExcludeFromCloseCoverage = false);
 
 /// <summary>Full replace of an existing asset, including <see cref="IsActive"/> — the only way to
 /// deactivate one (D23/Phase 12). Same D23 provider-routing coherence rules as
@@ -107,4 +115,7 @@ public sealed record UpdateAssetRequest(
 
     /// <summary>See <see cref="CreateAssetRequest.FiscalYearEndMonth"/>.</summary>
     int? FiscalYearEndMonth = null,
-    int? FiscalYearEndDay = null);
+    int? FiscalYearEndDay = null,
+
+    /// <summary>See <see cref="CreateAssetRequest.ExcludeFromCloseCoverage"/>.</summary>
+    bool ExcludeFromCloseCoverage = false);

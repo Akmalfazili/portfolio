@@ -102,6 +102,20 @@ export interface AssetDto {
    *  (clamped to 28 Feb in non-leap years at resolution time); `2/30`,
    *  `4/31` and similar are rejected server-side. */
   fiscalYearEndDay: number | null;
+
+  /**
+   * A declared opt-out, never inferred from staleness — for a delisted
+   * symbol whose provider has stopped publishing daily closes (ARVLF: stuck
+   * on its last close while every other US holding keeps moving). `true`
+   * only removes this asset from `MarketCloseStatus.latestCloseDate`'s
+   * per-market floor on the refresh panel; it does nothing else — live
+   * quotes, price-history backfill, dividend backfill/catch-up, holdings,
+   * totals and every report are unaffected. Meaningless for `Crypto` (which
+   * keeps no price history and never enters that calculation at all) — the
+   * server rejects `true` on a crypto asset with a `400`, so this must
+   * always be `false` there.
+   */
+  excludeFromCloseCoverage: boolean;
 }
 
 /**
@@ -125,6 +139,10 @@ export interface CreateAssetRequest {
   /** See `AssetDto.fiscalYearEndMonth`. Both-or-neither; always `null` for `Crypto`. */
   fiscalYearEndMonth: number | null;
   fiscalYearEndDay: number | null;
+  /** See `AssetDto.excludeFromCloseCoverage`. Optional — omitted/undefined
+   *  defaults to `false` server-side. Must always be `false` (or omitted)
+   *  for `Crypto` — the server 400s on `true` there. */
+  excludeFromCloseCoverage?: boolean;
 }
 
 /** PUT /api/assets/{id} is a FULL REPLACE — the only way to flip `isActive`;

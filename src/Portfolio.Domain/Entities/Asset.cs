@@ -44,6 +44,32 @@ public class Asset
     public bool IsActive { get; set; } = true;
 
     /// <summary>
+    /// Excludes this asset from the refresh panel's per-market closing-price floor
+    /// (<c>MarketCloseStatus.LatestCloseDate</c>, computed in
+    /// <c>PriceRefreshStatusEnricher.BuildMarketCloseStatusesAsync</c>) — nothing else. It does not
+    /// stop live quotes, price-history backfill, dividend backfill, or catch-up for this asset, and
+    /// it does not affect holdings, totals, or any other report.
+    ///
+    /// <para>Exists for a symbol whose provider has permanently stopped publishing daily closes
+    /// (a delisted shell still held at a token quantity, for instance): the floor is a min-of-max
+    /// across every qualifying asset's own newest close, so one such asset would otherwise pin the
+    /// whole market's reading to its last close forever, even though every other holding keeps
+    /// moving and the backfill for it keeps succeeding — Twelve Data is genuinely being asked for
+    /// the missing date and genuinely has no bar to return, which is not a backfill failure.</para>
+    ///
+    /// <para>This is a <b>declared</b> exclusion, set by a human, never inferred from staleness. An
+    /// inferred threshold would silently drop a symbol whose provider call is genuinely failing out
+    /// of the floor too — exactly the "attempted vs succeeded" confusion this project's D10/D26/D33/
+    /// D35/D38/D45 honesty family exists to prevent. The declaration itself is the honesty: someone
+    /// looked at this specific asset and said so, rather than a rule guessing it from a date.</para>
+    ///
+    /// <para>Meaningless for <see cref="Domain.Enums.AssetClass.Crypto"/>, which keeps no price
+    /// history at all and never appears in this query — rejected at write time in
+    /// <c>AssetService</c> rather than silently ignored.</para>
+    /// </summary>
+    public bool ExcludeFromCloseCoverage { get; set; }
+
+    /// <summary>
     /// Calendar month of this company's financial year end, 1-12. Null means "not configured" —
     /// a distinct, reported state (see <c>ZakatAssetStatus.FiscalYearEndNotConfigured</c>), never
     /// silently assumed to be 31 December. Always null for <see cref="Domain.Enums.AssetClass.Crypto"/>,

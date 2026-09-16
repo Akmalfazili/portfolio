@@ -79,9 +79,12 @@ public sealed class PriceRefreshStatusEnricher(
     {
         // One grouped query: every active Stock asset with at least one transaction, alongside the
         // newest PriceHistory date it has on file (null if it has none at all). AssetClass.Crypto is
-        // excluded by construction — crypto keeps no price history and has no Market.
+        // excluded by construction — crypto keeps no price history and has no Market. An asset with
+        // ExcludeFromCloseCoverage set is excluded too — a declared, per-asset opt-out (never an
+        // inferred staleness threshold) for a symbol whose provider has permanently stopped
+        // publishing daily closes; see Asset.ExcludeFromCloseCoverage.
         var assetRows = await db.Assets
-            .Where(a => a.AssetClass == AssetClass.Stock && a.IsActive)
+            .Where(a => a.AssetClass == AssetClass.Stock && a.IsActive && !a.ExcludeFromCloseCoverage)
             .Where(a => db.Transactions.Any(t => t.AssetId == a.Id))
             .Select(a => new
             {
@@ -112,9 +115,14 @@ public sealed class PriceRefreshStatusEnricher(
             var assetsForMarket = assetRows.Where(a => ProviderMarkets.For(a.QuoteProviderKind) == market).ToList();
 
             // Min-of-max, and null wherever no honest floor exists yet: either this market has no
-            // qualifying asset at all, or at least one of them has never received a single
-            // PriceHistory row. Using the max instead would claim "closes are current through
-            // Friday" when only one asset actually got Friday's close.
+            // qualifying asset at all (which now includes the case where every asset that would
+            // otherwise qualify is ExcludeFromCloseCoverage), or at least one of the assets that DO
+            // qualify has never received a single PriceHistory row. Using the max instead would
+            // claim "closes are current through Friday" when only one asset actually got Friday's
+            // close. If every asset in a market is excluded, assetsForMarket.Count is 0 and this is
+            // null — the frontend already renders null as "no reading yet" rather than a false
+            // claim, so that is the correct, honest outcome here too, not a case to special-case
+            // around.
             DateOnly? latestCloseDate = assetsForMarket.Count > 0 && assetsForMarket.All(a => a.LatestClose is not null)
                 ? assetsForMarket.Min(a => a.LatestClose!.Value)
                 : null;

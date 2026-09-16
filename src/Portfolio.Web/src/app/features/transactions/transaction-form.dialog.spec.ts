@@ -24,6 +24,7 @@ const ANVL: AssetDto = {
   providerHasEverSucceeded: true,
   fiscalYearEndMonth: null,
   fiscalYearEndDay: null,
+  excludeFromCloseCoverage: false,
 };
 
 const AAPL: AssetDto = {
@@ -42,6 +43,7 @@ const AAPL: AssetDto = {
   providerHasEverSucceeded: true,
   fiscalYearEndMonth: null,
   fiscalYearEndDay: null,
+  excludeFromCloseCoverage: false,
 };
 
 const EXISTING: TransactionDto = {

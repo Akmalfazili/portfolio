@@ -95,6 +95,17 @@
   }
 }
 
+/* Icon-only variant (excludeFromCloseCoverage) — no visible label text, so no
+   flex gap to reserve and no risk of the identifier column wrapping to
+   several lines. The full explanation lives in `title`/`aria-label` instead. */
+.asset-management__price-hint--icon-only {
+  display: inline-flex;
+  gap: 0;
+  margin-top: 0;
+  margin-left: var(--ui-space-1);
+  vertical-align: middle;
+}
+
 /* Past the provider's threshold. Same amber as every other "this is not what it
    looks like" signal in the app (the `Close ·` caption, the unpriced-holdings
    banner) — a new colour here would imply a new category of problem. */

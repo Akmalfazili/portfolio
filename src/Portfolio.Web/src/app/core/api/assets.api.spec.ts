@@ -22,6 +22,7 @@ const EXISTING: AssetDto = {
   providerHasEverSucceeded: true,
   fiscalYearEndMonth: null,
   fiscalYearEndDay: null,
+  excludeFromCloseCoverage: false,
 };
 
 describe('AssetsApi', () => {
@@ -91,6 +92,28 @@ describe('AssetsApi', () => {
     req.flush(EXISTING);
   });
 
+  it("create() POSTs excludeFromCloseCoverage when explicitly supplied, even though it's optional", () => {
+    api
+      .create({
+        symbol: 'ARVLF',
+        name: 'Arrival SA',
+        assetClass: 'Stock',
+        exchange: null,
+        currency: 'USD',
+        quoteProviderKind: 'TwelveData',
+        providerSymbol: 'ARVLF',
+        providerCoinId: null,
+        fiscalYearEndMonth: null,
+        fiscalYearEndDay: null,
+        excludeFromCloseCoverage: true,
+      })
+      .subscribe();
+
+    const req = httpMock.expectOne(API_ROUTES.assets);
+    expect(req.request.body.excludeFromCloseCoverage).toBe(true);
+    req.flush({ ...EXISTING, excludeFromCloseCoverage: true });
+  });
+
   it('delete() DELETEs /api/assets/{id}', () => {
     api.delete(3).subscribe();
     const req = httpMock.expectOne(API_ROUTES.asset(3));
@@ -119,9 +142,21 @@ describe('AssetsApi', () => {
       providerCoinId: null,
       fiscalYearEndMonth: null,
       fiscalYearEndDay: null,
+      excludeFromCloseCoverage: false,
       isActive: false,
     });
     req.flush({ ...EXISTING, isActive: false });
+  });
+
+  it('replace() with only { isActive } carries excludeFromCloseCoverage through unchanged when the existing asset has it set true (the flag must never reset to false on an unrelated edit)', () => {
+    const excluded: AssetDto = { ...EXISTING, excludeFromCloseCoverage: true };
+    api.replace(excluded, { isActive: false }).subscribe();
+
+    const req = httpMock.expectOne(API_ROUTES.asset(excluded.id));
+    expect(req.request.body).toEqual(
+      expect.objectContaining({ excludeFromCloseCoverage: true, isActive: false }),
+    );
+    req.flush({ ...excluded, isActive: false });
   });
 
   it('replace() with a full CreateAssetRequest plus no isActive override carries the existing isActive through unchanged (AssetFormDialog edit-submit shape)', () => {
@@ -153,8 +188,33 @@ describe('AssetsApi', () => {
       providerCoinId: null,
       fiscalYearEndMonth: 6,
       fiscalYearEndDay: 30,
+      excludeFromCloseCoverage: false, // carried through from EXISTING, never part of `changes` here
       isActive: true, // carried through from EXISTING, never part of `changes` here
     });
     req.flush({ ...EXISTING, fiscalYearEndMonth: 6, fiscalYearEndDay: 30 });
+  });
+
+  it('replace() with a full CreateAssetRequest plus no excludeFromCloseCoverage override carries the existing flag through unchanged when it is true (AssetFormDialog edit-submit shape)', () => {
+    const excluded: AssetDto = { ...EXISTING, excludeFromCloseCoverage: true };
+    api
+      .replace(excluded, {
+        symbol: 'MSFT',
+        name: 'Microsoft Corporation',
+        assetClass: 'Stock',
+        exchange: 'NASDAQ',
+        currency: 'USD',
+        quoteProviderKind: 'TwelveData',
+        providerSymbol: 'MSFT',
+        providerCoinId: null,
+        fiscalYearEndMonth: 6,
+        fiscalYearEndDay: 30,
+      })
+      .subscribe();
+
+    const req = httpMock.expectOne(API_ROUTES.asset(excluded.id));
+    expect(req.request.body).toEqual(
+      expect.objectContaining({ excludeFromCloseCoverage: true, isActive: true }),
+    );
+    req.flush({ ...excluded, fiscalYearEndMonth: 6, fiscalYearEndDay: 30 });
   });
 });

@@ -90,6 +90,7 @@ const ASSET: AssetDto = {
   providerHasEverSucceeded: true,
   fiscalYearEndMonth: null,
   fiscalYearEndDay: null,
+  excludeFromCloseCoverage: false,
 };
 
 const PAYMENT: ZakatPaymentDto = { id: 1, paidOn: '2026-03-01', amountSgd: 250.75 };

@@ -31,6 +31,7 @@ public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvid
                 a.ProviderSymbol,
                 a.ProviderCoinId,
                 a.IsActive,
+                a.ExcludeFromCloseCoverage,
                 a.CreatedAt,
                 a.FiscalYearEndMonth,
                 a.FiscalYearEndDay,
@@ -60,6 +61,7 @@ public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvid
                 a.ProviderSymbol,
                 a.ProviderCoinId,
                 a.IsActive,
+                a.ExcludeFromCloseCoverage,
                 a.CreatedAt,
                 a.FiscalYearEndMonth,
                 a.FiscalYearEndDay,
@@ -75,6 +77,7 @@ public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvid
     {
         var errors = ValidateCore(request.Symbol, request.Name, request.Currency, request.QuoteProviderKind, request.ProviderSymbol, request.ProviderCoinId);
         ValidateFiscalYearEnd(request.AssetClass, request.FiscalYearEndMonth, request.FiscalYearEndDay, errors);
+        ValidateExcludeFromCloseCoverage(request.AssetClass, request.ExcludeFromCloseCoverage, errors);
 
         if (errors.Count == 0 &&
             await db.Assets.AnyAsync(a => a.Symbol == request.Symbol, cancellationToken))
@@ -98,6 +101,7 @@ public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvid
             ProviderSymbol = request.ProviderSymbol,
             ProviderCoinId = request.ProviderCoinId,
             IsActive = true,
+            ExcludeFromCloseCoverage = request.ExcludeFromCloseCoverage,
             CreatedAt = timeProvider.GetUtcNow(),
             FiscalYearEndMonth = request.FiscalYearEndMonth,
             FiscalYearEndDay = request.FiscalYearEndDay,
@@ -127,6 +131,7 @@ public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvid
 
         var errors = ValidateCore(request.Symbol, request.Name, request.Currency, request.QuoteProviderKind, request.ProviderSymbol, request.ProviderCoinId);
         ValidateFiscalYearEnd(request.AssetClass, request.FiscalYearEndMonth, request.FiscalYearEndDay, errors);
+        ValidateExcludeFromCloseCoverage(request.AssetClass, request.ExcludeFromCloseCoverage, errors);
 
         if (errors.Count == 0 &&
             await db.Assets.AnyAsync(a => a.Id != id && a.Symbol == request.Symbol, cancellationToken))
@@ -148,6 +153,7 @@ public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvid
         asset.ProviderSymbol = request.ProviderSymbol;
         asset.ProviderCoinId = request.ProviderCoinId;
         asset.IsActive = request.IsActive;
+        asset.ExcludeFromCloseCoverage = request.ExcludeFromCloseCoverage;
         asset.FiscalYearEndMonth = request.FiscalYearEndMonth;
         asset.FiscalYearEndDay = request.FiscalYearEndDay;
         // CreatedAt is deliberately not settable through an update: D27's hint measures how long
@@ -291,6 +297,24 @@ public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvid
         }
     }
 
+    /// <summary>
+    /// Mirrors <see cref="ValidateFiscalYearEnd"/>'s crypto rule: <see cref="Asset.ExcludeFromCloseCoverage"/>
+    /// only means anything for the per-market closing-price floor
+    /// (<c>PriceRefreshStatusEnricher.BuildMarketCloseStatusesAsync</c>), which crypto never
+    /// participates in — it keeps no price history at all. <c>true</c> on a crypto asset is
+    /// incoherent rather than merely redundant, so it is rejected at write time instead of being
+    /// silently accepted and ignored.
+    /// </summary>
+    private static void ValidateExcludeFromCloseCoverage(
+        AssetClass assetClass, bool excludeFromCloseCoverage, Dictionary<string, string[]> errors)
+    {
+        if (assetClass == AssetClass.Crypto && excludeFromCloseCoverage)
+        {
+            errors["excludeFromCloseCoverage"] =
+                ["Crypto assets keep no price history and never appear in the close-coverage floor — ExcludeFromCloseCoverage must be false."];
+        }
+    }
+
     private static AssetDto ToDto(Asset a, bool hasEverBeenPriced, bool providerHasEverSucceeded) => new(
         a.Id,
         a.Symbol,
@@ -302,6 +326,7 @@ public sealed class AssetService(IPortfolioDbContext db, TimeProvider timeProvid
         a.ProviderSymbol,
         a.ProviderCoinId,
         a.IsActive,
+        a.ExcludeFromCloseCoverage,
         a.CreatedAt,
         a.FiscalYearEndMonth,
         a.FiscalYearEndDay,

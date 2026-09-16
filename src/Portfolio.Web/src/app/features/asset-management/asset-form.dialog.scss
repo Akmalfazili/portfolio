@@ -62,6 +62,10 @@
   gap: var(--ui-space-3);
 }
 
+.asset-form__checkbox {
+  margin-bottom: var(--ui-space-1);
+}
+
 .asset-form__note {
   margin: 0 0 var(--ui-space-2);
   color: var(--ui-color-on-surface-muted);
