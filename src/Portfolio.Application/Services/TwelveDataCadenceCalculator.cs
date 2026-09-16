@@ -9,12 +9,16 @@ namespace Portfolio.Application.Services;
 ///
 /// <para>Reasoning: over a <c>sessionLength</c>-minute session, a sweep every <c>T</c> minutes
 /// costs <c>(sessionLength / T) * N</c> credits. The daily backfill needs <c>N + 1</c> more
-/// credits (one history call per symbol, plus one FX call) out of whatever the day's remaining
-/// budget is, so the sweeps alone must fit inside <c>remainingDailyBudget - (N + 1)</c>. Solving
-/// for <c>T</c>: <c>T &gt;= sessionLength * N / (remainingDailyBudget - N - 1)</c>. At N=21 and a
-/// fresh 800-credit day this comes out to roughly 11 minutes; at N=40, roughly 21 minutes; at
-/// N=100, roughly 56 minutes — all comfortably above the 5-minute floor this replaces at small N,
-/// and widening automatically as N grows past it.</para>
+/// credits (one history call per symbol, plus one FX call), and the credit throttle itself spends
+/// <see cref="TwelveDataCreditPolicy.DailyReconciliationCreditReserve"/> more on its own
+/// <c>GET /api_usage</c> seed-and-reconcile probes (D45) — credits spent on neither a quote nor a
+/// backfill call, but still billed against the same daily budget. Both reserves must come out of
+/// whatever the day's remaining budget is before the sweeps get a look at it, so the sweeps alone
+/// must fit inside <c>remainingDailyBudget - (N + 1) - reconciliationReserve</c>. Solving for
+/// <c>T</c>: <c>T &gt;= sessionLength * N / (remainingDailyBudget - N - 1 - reconciliationReserve)</c>.
+/// At N=21 and a fresh 800-credit day this comes out to roughly 11 minutes; at N=40, roughly 22
+/// minutes; at N=100, roughly 58 minutes — all comfortably above the 5-minute floor this replaces
+/// at small N, and widening automatically as N grows past it.</para>
 /// </summary>
 public static class TwelveDataCadenceCalculator
 {
@@ -34,13 +38,17 @@ public static class TwelveDataCadenceCalculator
         }
 
         var reserveForDailyBackfill = activeSymbolCount + 1;
-        var availableForSweeps = remainingDailyBudget - reserveForDailyBackfill;
+        var reserveForReconciliation = TwelveDataCreditPolicy.DailyReconciliationCreditReserve;
+        var availableForSweeps = remainingDailyBudget - reserveForDailyBackfill - reserveForReconciliation;
 
         if (availableForSweeps <= 0)
         {
             // No budget left today for even one more sweep — the credit throttle's own daily-
             // budget gate is what actually stops the spend; this just avoids dividing by a
             // non-positive number and falls back to the floor rather than an infinite interval.
+            // The reconciliation reserve above means this triggers at a lower N (or a smaller
+            // remaining budget) than it would from reserveForDailyBackfill alone — correct, since
+            // those probe credits are just as real a claim on the day as the backfill's.
             return floor;
         }
 

@@ -91,7 +91,8 @@ public sealed class TwelveDataFxProvider(
         // drop, not merely defence-in-depth.
         var requestUri =
             $"time_series?symbol={Uri.EscapeDataString(pair)}&interval=1day" +
-            $"&start_date={from:yyyy-MM-dd}&end_date={to.AddDays(1):yyyy-MM-dd}&apikey={options.Value.ApiKey}";
+            $"&start_date={from:yyyy-MM-dd}&end_date={to.AddDays(1):yyyy-MM-dd}" +
+            $"&outputsize={TwelveDataTimeSeriesDefaults.MaxOutputSize}&apikey={options.Value.ApiKey}";
 
         using var response = await httpClient.GetAsync(requestUri, cancellationToken);
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -119,6 +120,10 @@ public sealed class TwelveDataFxProvider(
             return FxHistoryFetchResult.Failed(payload?.Message ?? "Twelve Data returned an error.");
         }
 
+        // outputsize is pinned above (TwelveDataTimeSeriesDefaults.MaxOutputSize) for the same
+        // reason as TwelveDataQuoteProvider.GetHistoryAsync — see its remarks for the full
+        // reasoning on why a cap hit is not separately detected here either. FxHistoryFetchResult
+        // has no Truncated field at all (see its own remarks), which would need adding first.
         var points = (payload.Values ?? [])
             .Where(v => v.Datetime is not null)
             .Select(v => new FxRatePoint(

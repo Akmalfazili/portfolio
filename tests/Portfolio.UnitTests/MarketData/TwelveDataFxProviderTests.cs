@@ -153,6 +153,21 @@ public sealed class TwelveDataFxProviderTests
     }
 
     [Fact]
+    public async Task GetHistoryAsync_PinsOutputSizeToTheDocumentedMaximum_RatherThanRelyingOnTheObservedDefaultOverride()
+    {
+        // Mirrors TwelveDataQuoteProviderTests' identical assertion — both /time_series callers
+        // must state the outputsize they need rather than relying on the observed (undocumented)
+        // behaviour that a date range overrides the documented 30-row default.
+        var handler = new StubHttpMessageHandler(HttpStatusCode.OK, """{"values":[],"status":"ok"}""");
+        var sut = CreateSut(handler);
+
+        await sut.GetHistoryAsync("USD", "SGD", new DateOnly(2026, 9, 1), new DateOnly(2026, 9, 12), CancellationToken.None);
+
+        var query = Uri.UnescapeDataString(handler.LastRequest!.RequestUri!.Query);
+        query.Should().Contain("outputsize=5000");
+    }
+
+    [Fact]
     public async Task GetSpotRateAsync_ThrottleDenies_ReturnsNull_WithoutCallingTheProvider()
     {
         var throttle = Substitute.For<ITwelveDataCreditThrottle>();

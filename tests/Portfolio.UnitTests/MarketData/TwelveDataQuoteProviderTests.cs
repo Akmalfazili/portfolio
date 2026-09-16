@@ -238,6 +238,22 @@ public sealed class TwelveDataQuoteProviderTests
     }
 
     [Fact]
+    public async Task GetHistoryAsync_PinsOutputSizeToTheDocumentedMaximum_RatherThanRelyingOnTheObservedDefaultOverride()
+    {
+        // Twelve Data's documented default for `outputsize` is 30 rows, and the documented max is
+        // 5000. The code has only ever relied on OBSERVED behaviour that a date range overrides the
+        // 30-row default (D39's 1,668-row AAPL measurement) - this pins the request to state what it
+        // needs explicitly instead of leaning on an undocumented override forever.
+        var handler = new StubHttpMessageHandler(HttpStatusCode.OK, """{"values":[],"status":"ok"}""");
+        var sut = CreateSut(handler);
+
+        await sut.GetHistoryAsync(Aapl, new DateOnly(2026, 9, 1), new DateOnly(2026, 9, 8), CancellationToken.None);
+
+        var query = Uri.UnescapeDataString(handler.LastRequest!.RequestUri!.Query);
+        query.Should().Contain("outputsize=5000");
+    }
+
+    [Fact]
     public async Task GetQuotesAsync_ThrottleDeniesAChunk_ReportsBudgetExhausted_WithoutCallingTheProvider()
     {
         var throttle = Substitute.For<ITwelveDataCreditThrottle>();

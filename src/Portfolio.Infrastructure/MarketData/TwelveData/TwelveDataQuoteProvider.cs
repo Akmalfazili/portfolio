@@ -167,7 +167,8 @@ public sealed class TwelveDataQuoteProvider(
         // defence-in-depth — never assume this call alone respects the inclusive contract.
         var requestUri =
             $"time_series?symbol={Uri.EscapeDataString(asset.ProviderSymbol)}&interval=1day" +
-            $"&start_date={from:yyyy-MM-dd}&end_date={to.AddDays(1):yyyy-MM-dd}&apikey={options.Value.ApiKey}";
+            $"&start_date={from:yyyy-MM-dd}&end_date={to.AddDays(1):yyyy-MM-dd}" +
+            $"&outputsize={TwelveDataTimeSeriesDefaults.MaxOutputSize}&apikey={options.Value.ApiKey}";
 
         using var response = await httpClient.GetAsync(requestUri, cancellationToken);
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -195,8 +196,24 @@ public sealed class TwelveDataQuoteProvider(
         var currency = payload.Meta?.Currency ?? asset.Currency;
 
         // Verified live against a real key: unlike CoinGecko's keyless tier, Twelve Data's free
-        // /time_series does not truncate multi-year ranges (2019 data returned for AAPL and
-        // USD/SGD alike on a start_date years back), so there is nothing to clamp here.
+        // /time_series does not truncate multi-year ranges under its documented 30-row default
+        // (2019 data returned in full for AAPL and USD/SGD alike on a start_date years back) — but
+        // that was an observation about undocumented behaviour, not a guarantee, so the request now
+        // pins &outputsize={TwelveDataTimeSeriesDefaults.MaxOutputSize} explicitly instead of relying
+        // on it. There is still nothing to clamp against RequestedFrom/EffectiveFrom here: this
+        // provider does not set HistoryFetchResult.Truncated even though the 5000-row cap is a real
+        // ceiling, considered and deliberately not detected. Reasoning: (1) 5000 daily bars is
+        // roughly 19-20 years of trading days, well beyond every asset this portfolio currently
+        // backfills in one request — the exposure is narrow, a brand-new asset with a very long
+        // history on its first-ever backfill; (2) for every asset already on file, a cap hit would
+        // return only the newest 5000 rows, which the caller's own per-date uniqueness check
+        // (PriceBackfillService) makes a no-op — nothing is lost because the early rows are already
+        // stored; (3) PriceBackfillService's CoveredFrom/CoveredTo bookkeeping is deliberately
+        // requested-range, not received-range, by design (see its own class remarks on the
+        // coverage-merge union) — wiring Truncated through here would either be silently ignored by
+        // that convention or require reopening that already-carefully-reasoned state machine, which
+        // is a materially larger change than pinning a query parameter. If an asset with 20+ years
+        // of continuous daily history is ever added, revisit this.
         var points = (payload.Values ?? [])
             .Where(v => v.Datetime is not null)
             .Select(v => new PriceHistoryPoint(

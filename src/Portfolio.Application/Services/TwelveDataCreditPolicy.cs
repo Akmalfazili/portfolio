@@ -40,4 +40,20 @@ public static class TwelveDataCreditPolicy
     /// that endpoint itself costs 1 credit, so reconciling more often than this would make credit
     /// monitoring a meaningful drain on the very budget it protects.</summary>
     public const int ReconciliationIntervalMinutes = 60;
+
+    /// <summary>Credits <see cref="TwelveDataCreditThrottle"/> spends on <b>itself</b> over a full
+    /// UTC day via <c>GET /api_usage</c> — never on a quote or history call. One probe seeds a new
+    /// day, plus one probe per <see cref="ReconciliationIntervalMinutes"/> thereafter
+    /// (<c>1440 / ReconciliationIntervalMinutes</c> reconciliations, each billed exactly like any
+    /// other Twelve Data request per D45). At the default 60-minute interval this is 24 + 1 = 25.
+    ///
+    /// <para>These credits still count against <see cref="DailyCreditBudget"/>, so anything that
+    /// budgets the day's remaining spend — currently only
+    /// <see cref="TwelveDataCadenceCalculator"/> — must reserve for them explicitly. Left
+    /// unreserved, the shortfall doesn't show up as an error anywhere; it lands on whichever caller
+    /// happens to ask last in the day, silently, the same "not attempted vs attempted and failed"
+    /// shape as D10/D26/D33/D35/D38/D45. This is the one place that knows the number — do not
+    /// hardcode 25 elsewhere.</para>
+    /// </summary>
+    public const int DailyReconciliationCreditReserve = 1440 / ReconciliationIntervalMinutes + 1;
 }
